@@ -57,4 +57,20 @@ describe("Conclave product UI", () => {
     fireEvent.click(evidenceButton);
     expect(await screen.findByText("setSession(null);")).toBeTruthy();
   });
+
+  it("keeps graph, retrieval, and server-owned provider settings reachable by keyboard-labelled controls", async () => {
+    mockFetch();
+    render(<App />);
+    await screen.findByText("auth-repository");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Workspace navigation" })).getByRole("button", { name: "Investigate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run investigate" }));
+    await screen.findByText("Evidence-backed diagnosis.");
+    fireEvent.click(screen.getByRole("tab", { name: "Retrieval" }));
+    expect(screen.getByText("Retrieval inspector")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    expect(screen.getByRole("region", { name: "Graph explorer" })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Workspace navigation" })).getByRole("button", { name: /Settings/ }));
+    expect(screen.getByRole("region", { name: "Provider and role configuration" })).toBeTruthy();
+    expect(screen.getByText(/Browser code never receives provider credentials/i)).toBeTruthy();
+  });
 });

@@ -6,7 +6,8 @@ import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
 import { loadReasoningConfiguration } from "./config/reasoning-config.js";
 import { loadTaskConfiguration } from "./config/task-config.js";
-import { LocalHashEmbeddingProvider } from "./embeddings/local-hash-embedding.js";
+import { createEmbeddingProvider } from "./embeddings/embedding-factory.js";
+import type { EmbeddingProvider } from "./domain/embedding.js";
 import {
   loadEvaluationCases,
   runGraphAwareRetrievalEvaluation,
@@ -20,6 +21,10 @@ import { FileSystemCodeIndexStore } from "./indexing/file-system-index-store.js"
 import { InMemoryCodeIndexStore } from "./indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "./indexing/repository-indexer.js";
 import { createProvider } from "./providers/provider-factory.js";
+import { diagnoseProvider } from "./providers/provider-diagnostics.js";
+import { ConclaveMcpService } from "./mcp/conclave-mcp-service.js";
+import { runMcpStdio } from "./mcp/server.js";
+import { ConclaveProductService } from "./web/product-service.js";
 import { LocalFolderRepository } from "./repositories/local-folder-repository.js";
 import { CodeRetrievalService } from "./retrieval/code-retrieval-service.js";
 import type { RetrievalStrategy } from "./retrieval/hybrid-retriever.js";
@@ -49,6 +54,8 @@ Usage:
   conclave eval-reasoning <path> <reasoning-cases.json> [--json]
   conclave config [--json]
   conclave provider-check
+  conclave demo
+  conclave mcp <path>
   conclave help
 
 Retrieval returns repository Evidence and deterministic graph context only. It does not generate an answer or run agents.`;
@@ -252,9 +259,9 @@ async function scan(args: readonly string[]): Promise<void> {
 
 function createIndexer(): {
   readonly indexer: RepositoryIndexer;
-  readonly embeddingProvider: LocalHashEmbeddingProvider;
+  readonly embeddingProvider: EmbeddingProvider;
 } {
-  const embeddingProvider = new LocalHashEmbeddingProvider();
+  const embeddingProvider = createEmbeddingProvider(process.env, new EnvironmentCredentialSource());
   return {
     embeddingProvider,
     indexer: new RepositoryIndexer({
@@ -275,7 +282,7 @@ async function updateIndex(requestedPath: string) {
 
 async function createEphemeralIndex(requestedPath: string) {
   const rootPath = resolve(requestedPath);
-  const embeddingProvider = new LocalHashEmbeddingProvider();
+  const embeddingProvider = createEmbeddingProvider(process.env, new EnvironmentCredentialSource());
   const result = await new RepositoryIndexer({
     repositorySource: new LocalFolderRepository(),
     parser: new TypeScriptCodeParser(),
@@ -731,27 +738,38 @@ function showConfig(args: readonly string[]): void {
 async function providerCheck(): Promise<void> {
   const credentials = new EnvironmentCredentialSource();
   const config = loadRuntimeConfig();
-  const model = config.providerSelection.model;
-  if (model === undefined) {
-    throw new Error(
-      config.mode === "free"
-        ? "CONCLAVE_FREE_MODEL is required for provider-check"
-        : "CONCLAVE_MODEL is required for provider-check",
-    );
-  }
-  const provider = createProvider(config, credentials);
-  const response = await provider.generate({
-    model,
-    messages: [
-      {
-        role: "system",
-        content: "This is a connectivity check. Reply with exactly CONCLAVE_PROVIDER_OK.",
-      },
-      { role: "user", content: "Check provider connectivity." },
-    ],
-    maxOutputTokens: 32,
+  print(await diagnoseProvider(config, credentials), true);
+}
+
+async function startMcp(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  if (requestedPath === undefined) throw new Error("mcp requires one repository path; clients cannot select arbitrary host paths");
+  const runtimeConfig = loadRuntimeConfig();
+  const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
+  const taskRequested = args.includes("--allow-task-mode");
+  if (taskRequested) throw new Error("MCP Task Mode is not exposed in this release; the MCP server is read-only");
+  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const service = await ConclaveMcpService.open({
+    repositoryRoot: requestedPath,
+    allowedRoot: process.env["CONCLAVE_MCP_ALLOWED_ROOT"] ?? requestedPath,
+    embeddingProvider: createEmbeddingProvider(process.env, new EnvironmentCredentialSource()),
+    createReasoning: (retrieval) => new ReasoningEngine({
+      retrieval,
+      runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoningConfig.assignments, DEFAULT_REASONING_LIMITS),
+      preset: reasoningConfig.preset,
+    }),
   });
-  console.log(`${response.provider}/${response.model}: ${response.text}`);
+  await runMcpStdio(service);
+}
+
+async function runDemo(): Promise<void> {
+  const product = new ConclaveProductService();
+  const project = await product.openDemo();
+  const ask = await product.run(project.id, "ask", "Where is bootstrapSession called?");
+  const investigate = await product.run(project.id, "investigate", "Why might authentication disappear after refresh?");
+  const task = await product.task(project.id, "Fix authentication disappearing after refresh.", false, { allowFileEdits: true, allowCommands: false, allowRepositoryScripts: false, allowNetwork: false });
+  print({ deterministicDemo: true, project, ask, investigate, task }, true);
 }
 
 async function main(): Promise<void> {
@@ -801,6 +819,12 @@ async function main(): Promise<void> {
       return;
     case "provider-check":
       await providerCheck();
+      return;
+    case "mcp":
+      await startMcp(args);
+      return;
+    case "demo":
+      await runDemo();
       return;
     case "help":
     case "--help":

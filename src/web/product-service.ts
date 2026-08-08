@@ -10,6 +10,7 @@ import type { Evidence } from "../domain/evidence.js";
 import { DEFAULT_REASONING_LIMITS, type ReasoningResult } from "../domain/reasoning.js";
 import type { ExecutionPermissions, TaskExecutionResult } from "../domain/task-execution.js";
 import { DEFAULT_TASK_EXECUTION_LIMITS } from "../domain/task-execution.js";
+import { createEmbeddingProvider } from "../embeddings/embedding-factory.js";
 import { LocalHashEmbeddingProvider } from "../embeddings/local-hash-embedding.js";
 import { TaskExecutionEngine } from "../execution/task-execution-engine.js";
 import { StructuredTaskAgentRuntime } from "../execution/task-agent-runtime.js";
@@ -294,7 +295,9 @@ export class ConclaveProductService {
   }
 
   async #open(root: string, source: "demo" | "local"): Promise<ProjectView> {
-    const embedding = new LocalHashEmbeddingProvider();
+    const embedding = source === "demo"
+      ? new LocalHashEmbeddingProvider()
+      : createEmbeddingProvider(process.env, new EnvironmentCredentialSource());
     const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
     const id = `${source}:${indexed.index.repository.id}`;
     const languages = [...new Set(Object.values(indexed.index.files).map((file) => file.language))].sort();

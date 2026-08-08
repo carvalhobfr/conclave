@@ -4,6 +4,7 @@ import { loadRuntimeConfig } from "../src/config/runtime-config.js";
 import { FakeProvider } from "../src/providers/fake-provider.js";
 import { OpenAiCompatibleProvider } from "../src/providers/openai-compatible-provider.js";
 import { createProvider } from "../src/providers/provider-factory.js";
+import { diagnoseProvider } from "../src/providers/provider-diagnostics.js";
 import { EnvironmentCredentialSource } from "../src/storage/environment-credential-source.js";
 
 describe("providers", () => {
@@ -130,5 +131,14 @@ describe("providers", () => {
       provider.generate({ model: "model-a", messages: [{ role: "user", content: "Hello" }] }),
     ).rejects.toThrow("Rejected key [REDACTED]");
     expect(JSON.stringify(provider)).not.toContain("do-not-leak-this-key");
+  });
+
+  it("reports bounded Local Mode diagnostics without exposing credentials", async () => {
+    const environment = { CONCLAVE_MODE: "local", CONCLAVE_PROVIDER: "ollama", CONCLAVE_MODEL: "coder" };
+    const config = loadRuntimeConfig(environment);
+    const diagnostics = await diagnoseProvider(config, new EnvironmentCredentialSource(environment));
+
+    expect(diagnostics).toEqual(expect.objectContaining({ mode: "local", modelConfigured: true, retrievalLocal: true, externalCallsDisabled: true }));
+    expect(JSON.stringify(diagnostics)).not.toContain("CONCLAVE_");
   });
 });

@@ -1,0 +1,14 @@
+[
+  {"id":"auth-bootstrap","question":"Where is the authentication session restored on application startup?","expectedFiles":["src/auth/AuthProvider.tsx","src/auth/storage.ts"],"expectedSymbols":["bootstrapSession","getStoredToken"]},
+  {"id":"auth-storage","question":"Which function writes the authentication token to storage?","expectedFiles":["src/auth/storage.ts"],"expectedSymbols":["persistToken"]},
+  {"id":"auth-caller","question":"Who calls bootstrapSession?","expectedFiles":["src/auth/AuthProvider.tsx"],"expectedSymbols":["AuthProvider","bootstrapSession"],"graphResolvable":true},
+  {"id":"storage-dependency","question":"Show the path from AuthProvider to getStoredToken","expectedFiles":["src/auth/AuthProvider.tsx","src/auth/storage.ts"],"expectedSymbols":["AuthProvider","bootstrapSession","getStoredToken"],"graphResolvable":true},
+  {"id":"player-events","question":"How are player event subscriptions cleaned up?","expectedFiles":["src/player/events.ts","src/player/usePlayerEvents.ts"],"expectedSymbols":["subscribeToPlayerEvents","usePlayerEvents"]},
+  {"id":"event-caller","question":"What calls subscribeToPlayerEvents?","expectedFiles":["src/player/usePlayerEvents.ts","src/player/events.ts"],"expectedSymbols":["usePlayerEvents","subscribeToPlayerEvents"],"graphResolvable":true},
+  {"id":"analytics-overlap","question":"Where is the analytics window event listener registered?","expectedFiles":["src/analytics/windowEvents.ts"],"expectedSymbols":["registerAnalyticsListener"]},
+  {"id":"ambiguous-restore","question":"Find restoreState related to authentication, not editor or player state.","expectedFiles":["src/auth/sessionRestore.ts"],"expectedSymbols":["restoreState"]},
+  {"id":"auth-type","question":"Which type represents an authentication session snapshot?","expectedFiles":["src/auth/sessionRestore.ts"],"expectedSymbols":["AuthSessionSnapshot"]},
+  {"id":"listener-symbol","question":"Find the PlayerEventHandler type and its dependency flow.","expectedFiles":["src/player/events.ts"],"expectedSymbols":["PlayerEventHandler","subscribeToPlayerEvents"]},
+  {"id":"token-read","question":"Where does the code read the stored token before setting session state?","expectedFiles":["src/auth/AuthProvider.tsx","src/auth/storage.ts"],"expectedSymbols":["bootstrapSession","getStoredToken"]},
+  {"id":"misleading-state","question":"Why can state restoration differ between editor and authentication?","expectedFiles":["src/auth/sessionRestore.ts","src/editor/restoreState.ts"],"expectedSymbols":["restoreState"]}
+]

@@ -16,17 +16,21 @@
     "build": "npm run build:core && npm run build:web",
     "dev": "npm run build --silent && node dist/cli.js",
     "dev:web": "vite --host 127.0.0.1",
+    "demo": "npm run build --silent && node dist/cli.js demo",
     "start:web": "npm run build:core --silent && node dist/web/server.js",
     "eval": "npm run dev -- eval tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json --json",
     "eval:graph": "npm run dev -- eval-graph tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json tests/fixtures/code-rag/graph-eval-cases.json --json",
+    "eval:release": "npm run dev -- eval-graph tests/fixtures/code-rag tests/fixtures/code-rag/release-eval-cases.json --json",
     "eval:reasoning": "vitest run tests/reasoning-evaluation.test.ts --maxWorkers=1",
     "eval:task": "vitest run tests/task-evaluation.test.ts --maxWorkers=1",
+    "audit": "npm audit --omit=dev",
     "lint": "eslint .",
     "start": "node dist/cli.js",
     "test": "vitest run",
     "test:web": "vitest run --config vitest.web.config.ts --maxWorkers=1",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "verify": "npm test && npm run test:web && npm run typecheck && npm run lint && npm run build && npm run eval && npm run eval:graph && npm run eval:release && npm run eval:reasoning && npm run eval:task && npm run audit"
   },
   "dependencies": {
     "ignore": "7.0.6",

@@ -1,10 +1,10 @@
 # Conclave
 
-Conclave is an evidence-driven Code RAG application built around a simple product idea:
+**Ask your code. Let the models argue.**
 
-> Ask your code. Let the models argue.
+Conclave is an evidence-driven code intelligence and execution system. It retrieves bounded repository facts, challenges explanations, verifies claims against deterministic code relationships, and only then returns a verdict or isolated patch.
 
-The project currently contains **Phase 5 — Product and Web UI**. The local-first web application presents evidence, claims, disagreement, graph relations, retrieval efficiency, structured task progress, isolated diffs, and safety boundaries without giving the browser authority over the core.
+It supports Ask, Investigate, Task, a deterministic code graph, provenance-backed evidence, Free/API/Local configuration, a loopback web workspace, and a compact read-only MCP server.
 
 ## What exists
 
@@ -57,6 +57,12 @@ npm run lint
 npm run build
 ```
 
+Run the deterministic end-to-end demo without an API key:
+
+```bash
+npm run demo
+```
+
 Run the local product with the deterministic demo:
 
 ```bash
@@ -66,6 +72,14 @@ npm run start:web
 ```
 
 For frontend iteration, run `npm run dev:web` alongside `npm run start:web`; Vite proxies `/api` to the local application server. Demo Mode works without provider credentials. To open another folder, configure `CONCLAVE_WEB_ALLOWED_ROOT` and choose a repository beneath that root. The local server listens only on loopback.
+
+Use Conclave from an MCP-compatible coding agent (read-only):
+
+```bash
+conclave mcp /path/to/repository
+```
+
+The MCP server has no Task, shell, provider-configuration, or arbitrary-path tools. See [Phase 6 release readiness](docs/phase-6-release-readiness.md).
 
 Index and inspect a repository:
 
@@ -196,6 +210,8 @@ tests/fixtures/        realistic retrieval/evaluation repositories
 ```
 
 See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), [Phase 4 task execution](docs/phase-4-task-execution.md), [Phase 5 product UI](docs/phase-5-product-ui.md), and [security boundaries](docs/security.md).
+
+For a release check, run `npm run verify`. It includes deterministic fixtures and dependency audit; configured real providers remain opt-in and are never invoked by CI.
 
 ## Current limitations
 
