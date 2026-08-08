@@ -18,6 +18,7 @@ class TrackingEmbeddingProvider implements EmbeddingProvider {
   readonly #delegate = new LocalHashEmbeddingProvider();
   public readonly id = this.#delegate.id;
   public readonly dimensions = this.#delegate.dimensions;
+  public readonly kind = this.#delegate.kind;
   public calls = 0;
 
   public embed(requests: readonly EmbeddingRequest[]): Promise<readonly EmbeddingResult[]> {

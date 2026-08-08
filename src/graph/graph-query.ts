@@ -153,19 +153,20 @@ export class GraphQueryService {
   }
 
   public getNodeBySymbol(symbol: string, path?: string, maxResults = 50): GraphNodeResolution {
-    const candidates = deterministicUnits(
+    const matches = deterministicUnits(
       Object.values(this.#index.units).filter(
         (unit) => unit.symbol === symbol && (path === undefined || unit.path === path),
       ),
-    )
-      .slice(0, Math.max(0, Math.min(Math.floor(maxResults), 500)))
+    );
+    const candidates = matches
+      .slice(0, Math.max(1, Math.min(Math.floor(maxResults), 500)))
       .map((unit) => this.#node({ kind: "symbol", id: unit.id }))
       .filter((node): node is GraphNode => node !== undefined);
     const query = path === undefined ? symbol : `${path}::${symbol}`;
     if (candidates.length === 0) {
       return { status: "not-found", query };
     }
-    if (candidates.length > 1) {
+    if (matches.length > 1) {
       return { status: "ambiguous", query, candidates };
     }
     const node = candidates[0];
@@ -340,15 +341,15 @@ export class GraphQueryService {
       }
     }
     const included = new Set(visited.keys());
-    const edges = this.#index.graphEdges
+    const eligibleEdges = this.#index.graphEdges
       .filter(
         (edge) =>
           included.has(nodeKey(edge.from)) &&
           included.has(nodeKey(edge.to)) &&
           (relations === undefined || relations.has(edge.relation)),
-      )
-      .slice(0, normalized.maxEdges);
-    if (edges.length >= normalized.maxEdges && this.#index.graphEdges.length > edges.length) {
+      );
+    const edges = eligibleEdges.slice(0, normalized.maxEdges);
+    if (eligibleEdges.length > edges.length) {
       truncated = true;
     }
     return { center: centerNode, nodes: [...visited.values()], edges, truncated, limits: normalized };

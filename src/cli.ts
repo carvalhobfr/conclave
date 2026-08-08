@@ -7,6 +7,7 @@ import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-confi
 import { LocalHashEmbeddingProvider } from "./embeddings/local-hash-embedding.js";
 import {
   loadEvaluationCases,
+  runGraphAwareRetrievalEvaluation,
   runRetrievalEvaluation,
 } from "./evaluation/retrieval-evaluation.js";
 import { FileSystemCodeIndexStore } from "./indexing/file-system-index-store.js";
@@ -23,20 +24,39 @@ Usage:
   conclave scan [path] [--json]
   conclave index [path] [--json]
   conclave search <path> <query> [--strategy hybrid|lexical|semantic] [--limit N] [--json]
+  conclave retrieve <path> <query> [--depth N] [--limit N] [--source-bytes N] [--tokens N] [--json]
   conclave symbol <path> <symbol> [--json]
   conclave text <path> <exact text> [--json]
+  conclave graph <path> <symbol-or-file> [--operation neighbors|callers|callees|imports|exports|references|containing|contained|related] [--depth N] [--limit N] [--json]
+  conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
   conclave eval <path> <cases.json> [--json]
+  conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
   conclave config [--json]
   conclave provider-check
   conclave help
 
-Search returns repository Evidence only. It does not generate an answer or run agents.`;
+Retrieval returns repository Evidence and deterministic graph context only. It does not generate an answer or run agents.`;
+
+type GraphOperation =
+  | "neighbors"
+  | "callers"
+  | "callees"
+  | "imports"
+  | "exports"
+  | "references"
+  | "containing"
+  | "contained"
+  | "related";
 
 interface ParsedArguments {
   readonly positionals: readonly string[];
   readonly json: boolean;
   readonly strategy: RetrievalStrategy;
   readonly limit: number;
+  readonly depth: number;
+  readonly sourceBytes: number;
+  readonly tokens: number;
+  readonly graphOperation: GraphOperation;
 }
 
 function parseArguments(args: readonly string[]): ParsedArguments {
@@ -44,6 +64,10 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let json = false;
   let strategy: RetrievalStrategy = "hybrid";
   let limit = 10;
+  let depth = 2;
+  let sourceBytes = 24_000;
+  let tokens = 6_000;
+  let graphOperation: GraphOperation = "neighbors";
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
@@ -68,6 +92,45 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       index += 1;
       continue;
     }
+    if (argument === "--depth") {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value <= 0 || value > 10) {
+        throw new Error("--depth must be an integer between 1 and 10");
+      }
+      depth = value;
+      index += 1;
+      continue;
+    }
+    if (argument === "--source-bytes" || argument === "--tokens") {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value <= 0) {
+        throw new Error(`${argument} must be a positive integer`);
+      }
+      if (argument === "--source-bytes") sourceBytes = value;
+      else tokens = value;
+      index += 1;
+      continue;
+    }
+    if (argument === "--operation") {
+      const value = args[index + 1];
+      const operations: readonly GraphOperation[] = [
+        "neighbors",
+        "callers",
+        "callees",
+        "imports",
+        "exports",
+        "references",
+        "containing",
+        "contained",
+        "related",
+      ];
+      if (value === undefined || !operations.includes(value as GraphOperation)) {
+        throw new Error(`--operation must be one of: ${operations.join(", ")}`);
+      }
+      graphOperation = value as GraphOperation;
+      index += 1;
+      continue;
+    }
     if (argument?.startsWith("--") === true) {
       throw new Error(`Unknown option: ${argument}`);
     }
@@ -75,7 +138,7 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       positionals.push(argument);
     }
   }
-  return { positionals, json, strategy, limit };
+  return { positionals, json, strategy, limit, depth, sourceBytes, tokens, graphOperation };
 }
 
 function print(value: unknown, json: boolean): void {
@@ -214,6 +277,132 @@ async function searchRepository(args: readonly string[]): Promise<void> {
   printEvidenceResults(results);
 }
 
+async function retrievePlannedContext(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const query = parsed.positionals.slice(1).join(" ").trim();
+  if (requestedPath === undefined || query === "") {
+    throw new Error("retrieve requires a repository path and query");
+  }
+  const indexed = await updateIndex(requestedPath);
+  const service = new CodeRetrievalService(indexed.index, indexed.embeddingProvider);
+  const retrieval = await service.retrieve(query, {
+    budget: {
+      graphDepth: parsed.depth,
+      finalEvidence: parsed.limit,
+      sourceBytes: parsed.sourceBytes,
+      approximateTokens: parsed.tokens,
+    },
+  });
+  const context = service.packContext(retrieval);
+  if (parsed.json) {
+    print({ query, indexStats: indexed.stats, retrieval, context }, true);
+    return;
+  }
+  console.log(`Plan: ${retrieval.plan.reasons.join("; ")}`);
+  for (const item of retrieval.plan.operations) {
+    console.log(`${item.status}: ${item.kind} (${String(item.resultCount)}) — ${item.reason}`);
+  }
+  console.log(`Context: ${JSON.stringify(context.stats)}`);
+  printEvidenceResults(
+    context.evidence.map((item) => ({
+      evidence: {
+        path: item.path,
+        startLine: item.startLine,
+        endLine: item.endLine,
+        excerpt: item.excerpt,
+        ...(item.symbols[0]?.name === undefined ? {} : { symbol: item.symbols[0].name }),
+      },
+      rank: item.rank,
+      reasons: item.reasons,
+    })),
+  );
+}
+
+async function queryGraph(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const entity = parsed.positionals[1];
+  if (requestedPath === undefined || entity === undefined) {
+    throw new Error("graph requires a repository path and symbol or indexed file");
+  }
+  const indexed = await updateIndex(requestedPath);
+  const graph = new CodeRetrievalService(indexed.index, indexed.embeddingProvider).graph;
+  const fileResolution = graph.getNodeByFile(entity);
+  const resolution = fileResolution.status === "resolved" ? fileResolution : graph.getNodeBySymbol(entity);
+  if (resolution.status !== "resolved") {
+    print({ entity, resolution }, parsed.json);
+    return;
+  }
+  const limits = { maxDepth: parsed.depth, maxNodes: parsed.limit };
+  const reference = resolution.node.reference;
+  const results = (() => {
+    switch (parsed.graphOperation) {
+      case "neighbors":
+        return graph.neighbors(reference, limits);
+      case "callers":
+        return graph.callers(reference, limits);
+      case "callees":
+        return graph.callees(reference, limits);
+      case "imports":
+        return graph.imports(reference, limits);
+      case "exports":
+        return graph.exports(reference, limits);
+      case "references":
+        return graph.references(reference, limits);
+      case "containing":
+        return graph.containingSymbol(reference, limits);
+      case "contained":
+        return graph.containedSymbols(reference, limits);
+      case "related":
+        return graph.relatedFiles(reference, limits);
+    }
+  })();
+  if (parsed.json) {
+    print({ entity, operation: parsed.graphOperation, resolution, limits, results }, true);
+    return;
+  }
+  console.log(`${resolution.node.path} :: ${resolution.node.symbol ?? "<file>"}`);
+  for (const result of results) {
+    console.log(
+      `${result.direction} ${result.edge.relation} -> ${result.node.path} :: ${result.node.symbol ?? "<file>"}`,
+    );
+    console.log(
+      `  ${result.edge.provenance.kind}/${result.edge.provenance.resolutionMethod} at ${result.edge.provenance.path}:${String(result.edge.provenance.line ?? 1)} — ${result.edge.provenance.reason}`,
+    );
+  }
+}
+
+async function queryPath(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const from = parsed.positionals[1];
+  const to = parsed.positionals[2];
+  if (requestedPath === undefined || from === undefined || to === undefined) {
+    throw new Error("path requires a repository path, source symbol, and target symbol");
+  }
+  const indexed = await updateIndex(requestedPath);
+  const graph = new CodeRetrievalService(indexed.index, indexed.embeddingProvider).graph;
+  const result = graph.shortestPathBetweenSymbols(from, to, {
+    maxDepth: parsed.depth,
+    maxNodes: parsed.limit,
+  });
+  if (parsed.json) {
+    print({ from, to, result }, true);
+    return;
+  }
+  if (result.status !== "found") {
+    print(result, false);
+    return;
+  }
+  console.log(result.nodes.map((node) => node.symbol ?? node.path).join(" -> "));
+  for (const edge of result.edges) {
+    console.log(
+      `${edge.relation} at ${edge.provenance.path}:${String(edge.provenance.line ?? 1)} (${edge.provenance.kind}/${edge.provenance.resolutionMethod})`,
+    );
+  }
+}
+
 async function findSymbol(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
@@ -261,6 +450,20 @@ async function evaluateRetrieval(args: readonly string[]): Promise<void> {
   print(report, parsed.json);
 }
 
+async function evaluateGraphRetrieval(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const casePaths = parsed.positionals.slice(1);
+  if (requestedPath === undefined || casePaths.length === 0) {
+    throw new Error("eval-graph requires a repository path and one or more evaluation-case JSON paths");
+  }
+  const indexed = await updateIndex(requestedPath);
+  const service = new CodeRetrievalService(indexed.index, indexed.embeddingProvider);
+  const caseGroups = await Promise.all(casePaths.map((path) => loadEvaluationCases(resolve(path))));
+  const report = await runGraphAwareRetrievalEvaluation(service, caseGroups.flat());
+  print(report, parsed.json);
+}
+
 function showConfig(args: readonly string[]): void {
   const credentials = new EnvironmentCredentialSource();
   const report = describeRuntimeConfig(loadRuntimeConfig(), credentials);
@@ -305,14 +508,26 @@ async function main(): Promise<void> {
     case "search":
       await searchRepository(args);
       return;
+    case "retrieve":
+      await retrievePlannedContext(args);
+      return;
     case "symbol":
       await findSymbol(args);
       return;
     case "text":
       await searchExactText(args);
       return;
+    case "graph":
+      await queryGraph(args);
+      return;
+    case "path":
+      await queryPath(args);
+      return;
     case "eval":
       await evaluateRetrieval(args);
+      return;
+    case "eval-graph":
+      await evaluateGraphRetrieval(args);
       return;
     case "config":
       showConfig(args);

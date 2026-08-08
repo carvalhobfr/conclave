@@ -6,7 +6,11 @@ import { GraphQueryService } from "../graph/graph-query.js";
 import { HybridRetriever, type SearchOptions } from "./hybrid-retriever.js";
 import { CodeIndexReader, type FileRange, type TextSearchOptions } from "./index-reader.js";
 import { RetrievalPlanner, type RetrievalPlannerOptions } from "./retrieval-planner.js";
-import type { PlannedRetrieval } from "../domain/retrieval-plan.js";
+import {
+  DEFAULT_EVIDENCE_BUDGET,
+  type EvidenceBudget,
+  type PlannedRetrieval,
+} from "../domain/retrieval-plan.js";
 import type { ContextBundle } from "../domain/context-bundle.js";
 import { ContextPacker } from "./context-packer.js";
 
@@ -39,6 +43,10 @@ export class CodeRetrievalService {
     return this.#graphQueries;
   }
 
+  public get embedding(): RepositoryCodeIndex["embedding"] {
+    return this.#index.embedding;
+  }
+
   public search(query: string, options?: SearchOptions): Promise<readonly RetrievalResult[]> {
     return this.#retriever.search(query, options);
   }
@@ -49,6 +57,14 @@ export class CodeRetrievalService {
 
   public packContext(retrieval: PlannedRetrieval): ContextBundle {
     return this.#contextPacker.pack(retrieval.results, retrieval.graphEdges, retrieval.budget);
+  }
+
+  public packResults(
+    results: readonly RetrievalResult[],
+    graphEdges: readonly GraphEdge[] = [],
+    budget: EvidenceBudget = DEFAULT_EVIDENCE_BUDGET,
+  ): ContextBundle {
+    return this.#contextPacker.pack(results, graphEdges, budget);
   }
 
   public searchText(text: string, options?: TextSearchOptions): readonly Evidence[] {

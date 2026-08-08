@@ -1,0 +1,30 @@
+[
+  {
+    "id": "callers-bootstrap-session",
+    "question": "Where is bootstrapSession called?",
+    "expectedFiles": ["src/auth/AuthProvider.tsx"],
+    "expectedSymbols": ["bootstrapSession", "AuthProvider"],
+    "graphResolvable": true
+  },
+  {
+    "id": "path-provider-to-storage",
+    "question": "What path connects AuthProvider to getStoredToken?",
+    "expectedFiles": ["src/auth/AuthProvider.tsx", "src/auth/storage.ts"],
+    "expectedSymbols": ["AuthProvider", "bootstrapSession", "getStoredToken"],
+    "graphResolvable": true
+  },
+  {
+    "id": "depends-on-stored-token",
+    "question": "What code directly depends on getStoredToken?",
+    "expectedFiles": ["src/auth/AuthProvider.tsx", "src/auth/storage.ts"],
+    "expectedSymbols": ["getStoredToken", "bootstrapSession"],
+    "graphResolvable": true
+  },
+  {
+    "id": "semantic-to-player-graph",
+    "question": "How is the player listener attached and then cleaned up?",
+    "expectedFiles": ["src/player/events.ts", "src/player/usePlayerEvents.ts"],
+    "expectedSymbols": ["subscribeToPlayerEvents", "usePlayerEvents", "scopedHandler"],
+    "graphResolvable": false
+  }
+]

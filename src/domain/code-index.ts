@@ -108,7 +108,7 @@ export interface RepositoryCodeIndex {
   readonly indexingVersion: number;
   readonly repository: RepositoryDescriptor;
   readonly parserId: string;
-  readonly embedding: Pick<EmbeddingProvider, "id" | "dimensions">;
+  readonly embedding: Pick<EmbeddingProvider, "id" | "dimensions" | "kind">;
   readonly files: Readonly<Record<string, IndexedFile>>;
   readonly units: Readonly<Record<string, IndexedCodeUnit>>;
   readonly embeddingCache: Readonly<Record<string, readonly number[]>>;

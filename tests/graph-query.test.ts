@@ -94,6 +94,7 @@ describe("first-class graph queries", () => {
         "src/storage.ts",
       ]);
     }
+    expect(graph.getNodeBySymbol("duplicate", undefined, 1).status).toBe("ambiguous");
   });
 
   it("queries incoming, outgoing, callers, callees, references, imports, and exports", async () => {

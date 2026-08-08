@@ -66,6 +66,7 @@ function normalizedVector(text: string, dimensions: number): readonly number[] {
 export class LocalHashEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "conclave-local-hash-v1";
   public readonly dimensions = LOCAL_HASH_EMBEDDING_DIMENSIONS;
+  public readonly kind = "deterministic-feature-hash" as const;
 
   public embed(requests: readonly EmbeddingRequest[]): Promise<readonly EmbeddingResult[]> {
     return Promise.resolve(

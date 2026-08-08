@@ -342,6 +342,20 @@ export class RetrievalPlanner {
       );
       reasons.push("broader lexical and feature-vector retrieval required");
       results = this.#dedupeResults([...deterministicResults, ...broad]).slice(0, budget.finalEvidence);
+      const representedUnits = new Set(
+        results
+          .map((result) => result.evidence.provenance.unitId)
+          .filter((id): id is string => id !== undefined),
+      );
+      graphEdges.push(
+        ...this.#index.graphEdges.filter(
+          (edge) =>
+            edge.from.kind === "symbol" &&
+            edge.to.kind === "symbol" &&
+            representedUnits.has(edge.from.id) &&
+            representedUnits.has(edge.to.id),
+        ),
+      );
     }
 
     const plan = { operations, reasons, deterministicEvidenceSufficient };

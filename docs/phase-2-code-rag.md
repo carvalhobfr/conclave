@@ -29,7 +29,7 @@ Persisted indexes store source text once per file. Indexed structural units reta
 
 ## Index lifecycle
 
-The index schema is `code-index-v1` and persists to `.conclave/code-index-v1.json` with owner-only file permissions and atomic replacement.
+Phase 2 originally used schema 1. Phase 2.5 advances graph provenance to schema 2, persisted at `.conclave/code-index-v2.json`, with owner-only file permissions and atomic replacement.
 
 Indexing:
 
@@ -121,4 +121,4 @@ The fixture benchmark defines expectations before retrieval runs. Metrics are ma
 - first relevant rank: first result whose path and symbol satisfy the case expectations;
 - MRR: mean reciprocal first relevant rank, with missing evidence scored as zero.
 
-Current committed results are in the root README and can be reproduced with `npm run eval`.
+The original Phase 2 results remain reproducible with `npm run eval`. The additive graph-aware benchmark is documented in the Phase 2.5 architecture and runs with `npm run eval:graph`.

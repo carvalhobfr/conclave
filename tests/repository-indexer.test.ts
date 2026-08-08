@@ -24,6 +24,7 @@ import { CodeIndexReader } from "../src/retrieval/index-reader.js";
 class CountingEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "counting-test-v1";
   public readonly dimensions = 4;
+  public readonly kind = "deterministic-feature-hash" as const;
   public readonly batches: EmbeddingRequest[][] = [];
 
   public embed(requests: readonly EmbeddingRequest[]): Promise<readonly EmbeddingResult[]> {

@@ -179,7 +179,8 @@ export class HybridRetriever {
   ) {
     if (
       index.embedding.id !== embeddingProvider.id ||
-      index.embedding.dimensions !== embeddingProvider.dimensions
+      index.embedding.dimensions !== embeddingProvider.dimensions ||
+      index.embedding.kind !== embeddingProvider.kind
     ) {
       throw new Error("Retrieval embedding provider does not match the persisted index");
     }

@@ -29,6 +29,28 @@ function isSafeRelativePath(path: string): boolean {
   );
 }
 
+const GRAPH_RELATIONS = new Set([
+  "belongs-to-file",
+  "exports-symbol",
+  "contains-symbol",
+  "imports-file",
+  "imports-symbol",
+  "references-symbol",
+  "calls-symbol",
+  "extends-symbol",
+  "implements-symbol",
+]);
+
+const RESOLUTION_METHODS = new Set([
+  "parser-symbol-ownership",
+  "explicit-export",
+  "nested-source-range",
+  "relative-import-path",
+  "explicit-import-binding",
+  "imported-identifier",
+  "unique-same-file-identifier",
+]);
+
 function validatePersistedIndex(value: unknown, canonicalRoot: string): RepositoryCodeIndex {
   if (!isRecord(value) || value["schemaVersion"] !== CODE_INDEX_SCHEMA_VERSION) {
     throw new UnsupportedCodeIndexSchemaError();
@@ -55,7 +77,8 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
   if (
     typeof embedding["id"] !== "string" ||
     typeof embedding["dimensions"] !== "number" ||
-    embedding["dimensions"] <= 0
+    embedding["dimensions"] <= 0 ||
+    (embedding["kind"] !== "deterministic-feature-hash" && embedding["kind"] !== "learned-semantic")
   ) {
     throw new Error("Code index embedding metadata is invalid");
   }
@@ -83,7 +106,15 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
       typeof unit["startLine"] !== "number" ||
       typeof unit["endLine"] !== "number" ||
       typeof unit["embeddingKey"] !== "string" ||
-      !Array.isArray(unit["heritage"])
+      !Array.isArray(unit["heritage"]) ||
+      !unit["heritage"].every(
+        (heritage) =>
+          isRecord(heritage) &&
+          typeof heritage["name"] === "string" &&
+          (heritage["relation"] === "extends" || heritage["relation"] === "implements") &&
+          typeof heritage["line"] === "number" &&
+          Number.isInteger(heritage["line"]),
+      )
     ) {
       throw new Error("Code index contains an invalid unit path");
     }
@@ -118,7 +149,18 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
     const from = edge["from"];
     const to = edge["to"];
     const provenance = edge["provenance"];
+    const provenancePath = provenance["path"];
+    const provenanceFile = typeof provenancePath === "string" ? files[provenancePath] : undefined;
+    const provenanceLineCount =
+      isRecord(provenanceFile) && typeof provenanceFile["sourceText"] === "string"
+        ? provenanceFile["sourceText"].split("\n").length
+        : 0;
+    const provenanceLine = provenance["line"];
+    const provenanceEndLine = provenance["endLine"];
     if (
+      typeof edge["id"] !== "string" ||
+      typeof edge["relation"] !== "string" ||
+      !GRAPH_RELATIONS.has(edge["relation"]) ||
       (from["kind"] !== "file" && from["kind"] !== "symbol") ||
       (to["kind"] !== "file" && to["kind"] !== "symbol") ||
       typeof from["id"] !== "string" ||
@@ -126,7 +168,19 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
       typeof provenance["path"] !== "string" ||
       (provenance["kind"] !== "extracted" && provenance["kind"] !== "resolved") ||
       typeof provenance["resolutionMethod"] !== "string" ||
+      !RESOLUTION_METHODS.has(provenance["resolutionMethod"]) ||
       typeof provenance["reason"] !== "string" ||
+      (provenanceLine !== undefined &&
+        (typeof provenanceLine !== "number" ||
+          !Number.isInteger(provenanceLine) ||
+          provenanceLine < 1 ||
+          provenanceLine > provenanceLineCount)) ||
+      (provenanceEndLine !== undefined &&
+        (typeof provenanceEndLine !== "number" ||
+          !Number.isInteger(provenanceEndLine) ||
+          typeof provenanceLine !== "number" ||
+          provenanceEndLine < provenanceLine ||
+          provenanceEndLine > provenanceLineCount)) ||
       !isSafeRelativePath(provenance["path"]) ||
       !(provenance["path"] in files) ||
       (from["kind"] === "file" ? !(from["id"] in files) : !(from["id"] in units)) ||

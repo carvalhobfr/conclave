@@ -83,7 +83,8 @@ function compatibleIndex(
     index.indexingVersion === CODE_INDEXING_VERSION &&
     index.parserId === parser.id &&
     index.embedding.id === embedder.id &&
-    index.embedding.dimensions === embedder.dimensions
+    index.embedding.dimensions === embedder.dimensions &&
+    index.embedding.kind === embedder.kind
   );
 }
 
@@ -265,7 +266,11 @@ export class RepositoryIndexer {
       indexingVersion: CODE_INDEXING_VERSION,
       repository: snapshot.repository,
       parserId: this.#parser.id,
-      embedding: { id: this.#embeddingProvider.id, dimensions: this.#embeddingProvider.dimensions },
+      embedding: {
+        id: this.#embeddingProvider.id,
+        dimensions: this.#embeddingProvider.dimensions,
+        kind: this.#embeddingProvider.kind,
+      },
       files,
       units,
       embeddingCache,
