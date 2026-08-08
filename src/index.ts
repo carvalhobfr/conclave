@@ -1,4 +1,5 @@
 export * from "./config/runtime-config.js";
+export * from "./config/reasoning-config.js";
 export * from "./code-intelligence/typescript-parser.js";
 export * from "./domain/code-intelligence.js";
 export * from "./domain/code-index.js";
@@ -32,6 +33,9 @@ export * from "./retrieval/hybrid-retriever.js";
 export * from "./retrieval/index-reader.js";
 export * from "./retrieval/retrieval-planner.js";
 export * from "./retrieval/tokenizer.js";
+export * from "./reasoning/structured-outputs.js";
+export * from "./reasoning/agent-runtime.js";
+export * from "./reasoning/role-prompts.js";
 export * from "./security/repository-context.js";
 export * from "./storage/environment-credential-source.js";
 export * from "./storage/in-memory-store.js";
