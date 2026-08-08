@@ -1,0 +1,2 @@
+# Conclave-specific exclusions in addition to .gitignore and built-in safety rules.
+fixtures/private/

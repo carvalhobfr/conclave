@@ -1,0 +1,31 @@
+import eslint from "@eslint/js";
+import globals from "globals";
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  {
+    ignores: ["coverage/", "dist/", "node_modules/", "eslint.config.js"],
+  },
+  eslint.configs.recommended,
+  ...tseslint.configs.strictTypeChecked,
+  {
+    files: ["**/*.ts"],
+    languageOptions: {
+      globals: globals.node,
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/consistent-type-imports": ["error", { "fixStyle": "inline-type-imports" }],
+      "@typescript-eslint/no-confusing-void-expression": ["error", { "ignoreArrowShorthand": true }],
+    },
+  },
+  {
+    files: ["tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+);
