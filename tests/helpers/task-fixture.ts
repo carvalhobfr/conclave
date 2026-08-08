@@ -9,7 +9,11 @@ import { StructuredTaskAgentRuntime } from "../../src/execution/task-agent-runti
 import { FakeProvider } from "../../src/providers/fake-provider.js";
 import { createReasoningFixtureEngine, reasoningFixtureProvider } from "./reasoning-fixture.js";
 
-export type TaskFixtureBehavior = "wrong-then-correct" | "false-success" | "unrelated-then-correct";
+export type TaskFixtureBehavior =
+  | "wrong-then-correct"
+  | "false-success"
+  | "false-claim-after-correct"
+  | "unrelated-then-correct";
 
 export const taskFixturePath = resolve("tests/fixtures/task-auth");
 export const taskObjective = "Fix authentication disappearing after refresh across the auth modules";
@@ -205,7 +209,10 @@ function taskProvider(behavior: TaskFixtureBehavior): FakeProvider {
             verification: {
               kind: "source-contains",
               path: "src/auth/AuthProvider.ts",
-              text: "const persistedToken = getStoredToken();",
+              text:
+                behavior === "false-claim-after-correct"
+                  ? "const impossibleClaim = true;"
+                  : "const persistedToken = getStoredToken();",
               expectation: "present",
             },
           },

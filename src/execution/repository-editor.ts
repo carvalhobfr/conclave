@@ -95,6 +95,10 @@ export interface RepositoryFileView {
 export class RepositoryEditor {
   readonly #root: string;
   readonly #limits: TaskExecutionLimits;
+  readonly #changedPaths = new Set<string>();
+  readonly #changedLinesByPath = new Map<string, number>();
+  #consumedChangedLines = 0;
+  #consumedPatchBytes = 0;
 
   private constructor(root: string, limits: TaskExecutionLimits) {
     this.#root = root;
@@ -119,8 +123,9 @@ export class RepositoryEditor {
     plannedFiles: ReadonlySet<string>,
   ): Promise<PatchRecord> {
     if (patches.length === 0) throw new RepositoryEditError("At least one patch is required");
-    if (Buffer.byteLength(JSON.stringify(patches)) > this.#limits.maxPatchBytes) {
-      throw new RepositoryEditError("Patch exceeds the configured byte budget");
+    const patchBytes = Buffer.byteLength(JSON.stringify(patches));
+    if (this.#consumedPatchBytes + patchBytes > this.#limits.maxPatchBytes) {
+      throw new RepositoryEditError("Task patches exceed the configured cumulative byte budget");
     }
     const byPath = new Map<string, ProposedFilePatch[]>();
     for (const patch of patches) {
@@ -129,8 +134,9 @@ export class RepositoryEditor {
       existing.push({ ...patch, path });
       byPath.set(path, existing);
     }
-    if (byPath.size > this.#limits.maxFilesChanged) {
-      throw new RepositoryEditError("Patch exceeds the changed-file budget");
+    const cumulativePaths = new Set([...this.#changedPaths, ...byPath.keys()]);
+    if (cumulativePaths.size > this.#limits.maxFilesChanged) {
+      throw new RepositoryEditError("Task patches exceed the cumulative changed-file budget");
     }
     const prepared = await Promise.all(
       [...byPath.entries()].map(([path, filePatches]) => this.#prepare(path, filePatches)),
@@ -139,12 +145,14 @@ export class RepositoryEditor {
       (total, file) => total + file.additions + file.deletions,
       0,
     );
-    if (totalChangedLines > this.#limits.maxTotalChangedLines) {
-      throw new RepositoryEditError("Patch exceeds the total changed-line budget");
+    if (this.#consumedChangedLines + totalChangedLines > this.#limits.maxTotalChangedLines) {
+      throw new RepositoryEditError("Task patches exceed the cumulative changed-line budget");
     }
     for (const file of prepared) {
-      if (file.additions + file.deletions > this.#limits.maxChangedLinesPerFile) {
-        throw new RepositoryEditError(`Patch exceeds the per-file line budget: ${file.path}`);
+      const cumulativeFileLines =
+        (this.#changedLinesByPath.get(file.path) ?? 0) + file.additions + file.deletions;
+      if (cumulativeFileLines > this.#limits.maxChangedLinesPerFile) {
+        throw new RepositoryEditError(`Task patches exceed the cumulative per-file line budget: ${file.path}`);
       }
       if (!assessRepositoryContent(file.resulting).externalTransmissionAllowed) {
         throw new RepositoryEditError(`Patch introduces protected content: ${file.path}`);
@@ -166,6 +174,16 @@ export class RepositoryEditor {
       for (const file of written) await writeFile(file.absolutePath, file.original);
       throw new RepositoryEditError(
         `Patch application failed and written files were restored: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+
+    this.#consumedPatchBytes += patchBytes;
+    this.#consumedChangedLines += totalChangedLines;
+    for (const file of prepared) {
+      this.#changedPaths.add(file.path);
+      this.#changedLinesByPath.set(
+        file.path,
+        (this.#changedLinesByPath.get(file.path) ?? 0) + file.additions + file.deletions,
       );
     }
 

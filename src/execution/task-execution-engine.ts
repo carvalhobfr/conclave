@@ -382,6 +382,8 @@ export class TaskExecutionEngine {
         );
         const approvedPatches = implementer.patches.filter((patch) => approvedPatchIds.has(patch.id));
         let patchRecord: PatchRecord | undefined;
+        let patchApplicationFailed = false;
+        let patchApplicationError: string | undefined;
         if (approvedPatches.length > 0) {
           for (const path of new Set(approvedPatches.map((patch) => patch.path))) {
             if (!originalHashes.has(path)) originalHashes.set(path, (await editor.read(path)).hash);
@@ -396,6 +398,8 @@ export class TaskExecutionEngine {
             });
           } catch (error) {
             if (!(error instanceof RepositoryEditError)) throw error;
+            patchApplicationFailed = true;
+            patchApplicationError = error.message;
             state.review = {
               status: "revision-required",
               summary: error.message,
@@ -427,7 +431,7 @@ export class TaskExecutionEngine {
         for (const item of authorizations.filter((entry) => entry.capability.kind === "run-command")) {
           if (item.capability.kind !== "run-command") continue;
           const approved = item.authorization.commandAuthorization?.approved;
-          if (approved === undefined) {
+          if (approved === undefined || patchApplicationFailed) {
             const rejected: CheckResult = {
               requestId: item.capability.id,
               command: item.capability.command,
@@ -436,7 +440,9 @@ export class TaskExecutionEngine {
               stderr: "",
               outputTruncated: false,
               durationMs: 0,
-              policyReason: item.authorization.decision.reason,
+              policyReason: patchApplicationFailed
+                ? "Check was not executed because patch application failed"
+                : item.authorization.decision.reason,
             };
             roundChecks.push(rejected);
             state.checks.push(rejected);
@@ -478,9 +484,15 @@ export class TaskExecutionEngine {
 
         for (const item of authorizations.filter((entry) => entry.capability.kind === "retrieve")) {
           if (item.capability.kind !== "retrieve" || item.authorization.decision.outcome !== "allowed") continue;
+          const existingEvidenceIds = new Set(state.postEvidence.map((evidence) => evidence.id));
+          const remainingEvidence = Math.max(
+            0,
+            this.#limits.maxAdditionalEvidence - existingEvidenceIds.size,
+          );
+          if (remainingEvidence === 0) continue;
           const result = await new FollowUpRetrievalExecutor(
             retrieval,
-            this.#limits.maxAdditionalEvidence,
+            remainingEvidence,
             4,
           ).execute({
             id: item.capability.id,
@@ -488,7 +500,9 @@ export class TaskExecutionEngine {
             requestedBy: "verifier",
             iteration: round,
           });
-          state.postEvidence.push(...result.evidence);
+          state.postEvidence.push(
+            ...result.evidence.filter((evidence) => !existingEvidenceIds.has(evidence.id)).slice(0, remainingEvidence),
+          );
         }
 
         state.finalChangedFiles = await this.#netChangedFiles(
@@ -512,6 +526,8 @@ export class TaskExecutionEngine {
           claim,
           execution: verifier.verifyClaim(claim),
         }));
+        const currentClaimIds = new Set(implementer.claims.map((claim) => claim.id));
+        const currentClaimExecutions = claimExecutions.filter(({ claim }) => currentClaimIds.has(claim.id));
         for (const { claim, execution } of claimExecutions) {
           if (!state.finalClaimOutcomes.has(claim.id)) {
             state.finalClaimOutcomes.set(claim.id, execution.result.outcome);
@@ -548,6 +564,8 @@ export class TaskExecutionEngine {
           state.finalRequirements,
           state.finalChangedFiles,
           roundChecks,
+          currentClaimExecutions.map(({ claim, execution }) => ({ claim, result: execution.result })),
+          patchApplicationError,
           round,
         );
         const requiredSatisfied = plan.requirements
@@ -689,9 +707,25 @@ export class TaskExecutionEngine {
     requirements: readonly RequirementVerification[],
     changedFiles: readonly ChangedFile[],
     roundChecks: readonly CheckResult[],
+    currentClaims: readonly {
+      readonly claim: ImplementationClaim;
+      readonly result: RequirementVerification;
+    }[],
+    patchApplicationError: string | undefined,
     round: number,
   ): ReviewResult {
     const findings: ReviewFinding[] = [...model.findings];
+    if (patchApplicationError !== undefined) {
+      findings.push({
+        id: stableId("finding", round, "patch", patchApplicationError),
+        type: "security",
+        severity: "blocking",
+        statement: patchApplicationError,
+        requirementIds: [],
+        paths: [],
+        evidenceIds: [],
+      });
+    }
     for (const file of changedFiles.filter((item) => !item.expectedByPlan)) {
       findings.push({
         id: stableId("finding", round, "unrelated", file.path),
@@ -725,11 +759,33 @@ export class TaskExecutionEngine {
         evidenceIds: [],
       });
     }
+    for (const { claim, result } of currentClaims.filter((item) => item.result.outcome === "rejected")) {
+      findings.push({
+        id: stableId("finding", round, "claim", claim.id, "rejected"),
+        type: "unsupported-claim",
+        severity: "blocking",
+        statement: `Current implementation claim is rejected: ${claim.statement}`,
+        requirementIds: claim.requirementIds,
+        paths: [],
+        evidenceIds: result.evidenceIds,
+      });
+    }
+    for (const { claim, result } of currentClaims.filter((item) => item.result.outcome === "uncertain")) {
+      findings.push({
+        id: stableId("finding", round, "claim", claim.id, "uncertain"),
+        type: "unsupported-claim",
+        severity: "warning",
+        statement: `Current implementation claim remains uncertain: ${claim.statement}`,
+        requirementIds: claim.requirementIds,
+        paths: [],
+        evidenceIds: result.evidenceIds,
+      });
+    }
     const deduped = [...new Map(findings.map((finding) => [finding.id, finding])).values()];
+    const hasBlocking = deduped.some((finding) => finding.severity === "blocking");
+    const hasUncertainClaim = currentClaims.some((item) => item.result.outcome === "uncertain");
     return {
-      status: deduped.some((finding) => finding.severity === "blocking")
-        ? "revision-required"
-        : model.status,
+      status: hasBlocking ? "revision-required" : hasUncertainClaim ? "uncertain" : model.status,
       summary: model.summary,
       findings: deduped,
     };

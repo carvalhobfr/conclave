@@ -92,6 +92,24 @@ describe("TaskExecutionEngine", () => {
     expect(result.review.status).toBe("revision-required");
   });
 
+  it("blocks a false current implementation claim even when requirements pass", async () => {
+    const root = await taskRepositoryCopy();
+    const result = await (await createTaskFixtureEngine("false-claim-after-correct", 1)).execute({
+      intent: "task",
+      repositoryRoot: root,
+      objective: taskObjective,
+    });
+
+    expect(result.verdict.status).toBe("failed");
+    expect(result.verdict.requirements.every((requirement) => requirement.outcome === "supported")).toBe(true);
+    expect(result.verdict.rejectedClaims.map((claim) => claim.id)).toContain("claim_restore_round_1");
+    expect(result.review.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "unsupported-claim", severity: "blocking" }),
+      ]),
+    );
+  });
+
   it("detects an unrelated edit and requires its removal before completion", async () => {
     const root = await taskRepositoryCopy();
     const result = await (await createTaskFixtureEngine("unrelated-then-correct")).execute({

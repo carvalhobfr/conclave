@@ -118,4 +118,40 @@ describe("RepositoryEditor", () => {
       ),
     ).rejects.toThrow("changed-line budget");
   });
+
+  it("enforces diff budgets cumulatively across revision rounds", async () => {
+    const root = await fixture();
+    const editor = await RepositoryEditor.create(root, {
+      ...DEFAULT_TASK_EXECUTION_LIMITS,
+      maxTotalChangedLines: 3,
+    });
+    const first = await editor.read("src/session.ts");
+    await editor.apply(
+      [
+        {
+          id: "patch_round_1",
+          implementationStepId: "step_1",
+          path: first.path,
+          expectedHash: first.hash,
+          replacements: [{ oldText: "false", newText: "true", expectedOccurrences: 1 }],
+        },
+      ],
+      new Set([first.path]),
+    );
+    const second = await editor.read("src/session.ts");
+    await expect(
+      editor.apply(
+        [
+          {
+            id: "patch_round_2",
+            implementationStepId: "step_1",
+            path: second.path,
+            expectedHash: second.hash,
+            replacements: [{ oldText: "true", newText: "false", expectedOccurrences: 1 }],
+          },
+        ],
+        new Set([second.path]),
+      ),
+    ).rejects.toThrow("cumulative changed-line budget");
+  });
 });

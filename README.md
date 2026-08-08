@@ -4,7 +4,7 @@ Conclave is an evidence-driven Code RAG application built around a simple produc
 
 > Ask your code. Let the models argue.
 
-The project currently contains **Phase 3 — Conclave Reasoning Engine**. It indexes TypeScript and JavaScript repositories, retrieves provenance-backed evidence, proposes explicit claims, selectively challenges them, performs bounded follow-up retrieval, verifies them, and returns an inspectable verdict.
+The project currently contains **Phase 4 — Task Execution**. It turns a provenance-backed diagnosis into a bounded implementation plan, applies hash-bound patches in an isolated workspace, gates every capability through host policy, reindexes the changed snapshot, and independently verifies the result before reporting completion.
 
 ## What exists
 
@@ -33,7 +33,13 @@ The project currently contains **Phase 3 — Conclave Reasoning Engine**. It ind
 - Deterministic verification that takes precedence over model agreement and preserves uncertainty.
 - Injection-resistant role prompts that frame repository source as untrusted data.
 - Per-role model-call, token, provider usage, latency, retrieval, and final-claim metrics.
-- CLI commands for indexing, retrieval inspection, graph queries, evidence-grounded questions, and evaluation.
+- Explicit `ask`, `investigate`, and `task` intents; Task Mode never treats a normal question as permission to mutate a repository.
+- Independent Planner, Implementer, and Reviewer assignments with strict structured outputs and injection-resistant role prompts.
+- Plan-only by default, explicit edit/check/repository-code/network permissions, clean-worktree enforcement, and temporary detached Git worktrees.
+- Hash-bound replacement patches, protected/ignored/secret path controls, rollback, file/line/byte budgets, and unrelated-change rejection.
+- Structured command capabilities with fixed executable mappings, host allowlists, filtered child environments, timeouts, bounded output, and `shell: false`.
+- Post-change incremental reindexing, deterministic requirement and implementation-claim verification, bounded revisions, and no-progress detection.
+- CLI commands for indexing, retrieval inspection, graph queries, evidence-grounded questions, bounded tasks, and evaluation.
 
 ## Quick start
 
@@ -58,6 +64,8 @@ npm run dev -- text /path/to/repository "AUTH_RESTORE_FAILED"
 npm run dev -- graph /path/to/repository bootstrapSession --operation callers
 npm run dev -- path /path/to/repository LoginButton persistToken --depth 4
 npm run dev -- ask /path/to/repository "Why might authentication disappear after refreshing?" --debug
+npm run dev -- task /path/to/repository "Persist the restored session" --plan-only
+npm run dev -- task /path/to/repository "Persist the restored session" --allow-edits
 ```
 
 Search output includes rank, source location, structural symbol, retrieval score, component signals, graph/relationship reasons, and the exact repository excerpt. Retrieval scores are ranking values, not confidence estimates.
@@ -117,6 +125,20 @@ npm run eval:reasoning
 npm run dev -- eval-reasoning /path/to/repository /path/to/reasoning-cases.json --json
 ```
 
+The fixed Phase 4 task benchmark compares a naive single Implementer, Planner + Implementer without independent enforcement, and the complete Conclave task loop. It uses a deliberately bad implementation, a false completion claim, and an unrelated edit.
+
+| Strategy | Reported completion | True task success | Requirement satisfaction | False success | Unrelated edits | Revision success |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Single Implementer | 1.0000 | 0.0000 | 0.5000 | 1.0000 | 0.0000 | 0.0000 |
+| Planner + Implementer | 1.0000 | 0.0000 | 1.0000 | 1.0000 | 1.0000 | 0.0000 |
+| Conclave Task | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
+
+These are deterministic regression fixtures, not a claim of broad real-world task accuracy. Run them with:
+
+```bash
+npm run eval:task
+```
+
 ## Execution modes
 
 Free, API, and Local Mode configuration from Phase 1 now drives reasoning inference. Retrieval remains local and performs no LLM call.
@@ -131,6 +153,8 @@ npm run dev -- config --json
 - No credential is persisted in the code index.
 - `CONCLAVE_REASONING_PRESET` selects `free-like`, `full`, or `local` behavior.
 - `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` override each role independently.
+- Planner, Implementer, and Reviewer have their own `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` overrides.
+- `CONCLAVE_ALLOWED_PACKAGE_SCRIPTS` is the host-controlled comma-separated allowlist used only when privileged repository checks are explicitly enabled.
 
 See `.env.example` for provider-connectivity examples. `provider-check` exercises only the provider adapter and is separate from retrieval.
 
@@ -141,7 +165,8 @@ src/
   code-intelligence/  structural parser adapters
   domain/             repository, evidence, index, graph, and provider ports
   embeddings/         interchangeable embedding implementations
-  evaluation/         retrieval and reasoning benchmark runners
+  evaluation/         retrieval, reasoning, and task benchmark runners
+  execution/          task agents, isolated edits, capability policy, runner, review, and verification
   graph/              deterministic code relationship extraction
   indexing/           persistent and incremental index lifecycle
   retrieval/          tokenizer, BM25, fusion, evidence, and query services
@@ -152,7 +177,7 @@ src/
 tests/fixtures/        realistic retrieval/evaluation repositories
 ```
 
-See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), and [security boundaries](docs/security.md).
+See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), [Phase 4 task execution](docs/phase-4-task-execution.md), and [security boundaries](docs/security.md).
 
 ## Current limitations
 
@@ -165,12 +190,16 @@ See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG arch
 - Context tokens use a deterministic bytes/4 estimate, not an exact provider tokenizer.
 - The CLI constructs the configured runtime provider. Heterogeneous role providers require embedding multiple configured adapters in a future host process; unsupported assignments fail cleanly.
 - Structured output uses strict JSON validation, not provider-specific JSON Schema transport.
+- Task patches modify existing regular files through exact replacements. Creating, deleting, renaming, or applying arbitrary unified diffs is not yet supported.
+- Task Mode requires a clean Git worktree; non-Git folders are copied to an isolated temporary directory with ignored and secret paths excluded.
+- Static `node --check` is the only low-privilege command capability. Node tests and allowlisted package scripts execute repository code, so they require explicit checks, repository-script, and network permissions. Portable filesystem and network sandboxing for those child processes is not implemented; use them only for trusted repositories.
+- Task execution returns a patch and verdict but does not merge the detached worktree into the original repository automatically.
 - Root `.gitignore` and `.conclaveignore` files are honored; nested ignore-file composition remains unimplemented.
 - The JSON index is atomic and owner-readable but not encrypted or cross-process locked.
 - Source files classified as likely secrets are excluded completely, but heuristic secret detection can have false positives and false negatives.
 - Local Git working trees can be indexed as folders; remote Git cloning is not implemented.
-- No repository edits, patches, shell execution against target repositories, hosted backend, rate limiter, or web UI exists.
+- No arbitrary shell command capability, hosted backend, rate limiter, or web UI exists.
 
 ## Recommended next phase
 
-Proceed with **Phase 4 — Task Execution** on top of the structured Verdict. Keep repository mutation, command authorization, patch generation, validation, and rollback boundaries separate from the Phase 3 reasoning engine.
+Proceed with **Phase 5 — Product/UI** while preserving default-deny execution permissions and making plan, capability decisions, diff, checks, review findings, uncertainty, and final verdict visible. Do not expose privileged repository-code execution as a one-click default until stronger process sandboxing exists.

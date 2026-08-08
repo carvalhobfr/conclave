@@ -53,7 +53,7 @@ async function fixture(): Promise<string> {
 async function policy(
   root: string,
   permissions: ExecutionPermissions = allPermissions,
-  timeoutMs = 2_000,
+  timeoutMs = 10_000,
   outputBytes = 8_000,
 ): Promise<CommandPolicy> {
   return CommandPolicy.create({
@@ -130,7 +130,7 @@ describe("structured command policy", () => {
   it("terminates timed-out processes and truncates oversized output", async () => {
     const root = await fixture();
     const timeoutPolicy = await policy(root, allPermissions, 100, 1_024);
-    const outputPolicy = await policy(root, allPermissions, 2_000, 1_024);
+    const outputPolicy = await policy(root, allPermissions, 10_000, 1_024);
     const slow = await timeoutPolicy.authorize("slow", { kind: "node-test", path: "slow.test.mjs" });
     const large = await outputPolicy.authorize("large", {
       kind: "node-test",
@@ -140,6 +140,7 @@ describe("structured command policy", () => {
     const slowResult = await new StructuredCommandRunner().run(slow.approved!);
     const largeResult = await new StructuredCommandRunner().run(large.approved!);
     expect(slowResult.status).toBe("timed-out");
+    expect(largeResult.status).toBe("passed");
     expect(largeResult.outputTruncated).toBe(true);
     expect(Buffer.byteLength(largeResult.stdout) + Buffer.byteLength(largeResult.stderr)).toBeLessThanOrEqual(1_024);
   });

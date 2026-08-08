@@ -87,6 +87,39 @@ describe("structured task agents", () => {
         new Set(["src/auth/AuthProvider.ts"]),
       ),
     ).toThrow("not allowed");
+    expect(() =>
+      parseImplementerResult(
+        JSON.stringify({
+          ...base,
+          capabilityRequests: [
+            {
+              id: "cap_unknown_path",
+              kind: "run-command",
+              command: { kind: "node-test", path: "ignored/secret.test.js" },
+              reason: "run an unindexed repository file",
+            },
+          ],
+        }),
+        plan,
+        new Set(["evidence_auth"]),
+        new Set(["src/auth/AuthProvider.ts"]),
+      ),
+    ).toThrow("unknown path");
+  });
+
+  it("rejects duplicate structured IDs", () => {
+    const duplicatedSteps = {
+      ...plan,
+      steps: [plan.steps[0], plan.steps[0]],
+    };
+    expect(() =>
+      parseImplementationPlan(
+        JSON.stringify(duplicatedSteps),
+        new Set(["claim_diagnosis"]),
+        new Set(["evidence_auth"]),
+        new Set(["src/auth/AuthProvider.ts"]),
+      ),
+    ).toThrow("step IDs must be unique");
   });
 
   it("does not accept a self-reported success without structured state", () => {

@@ -63,10 +63,13 @@ function identifier(value: unknown, label: string): string {
   return result;
 }
 
-function path(value: unknown, label: string): string {
+function path(value: unknown, label: string, allowed?: ReadonlySet<string>): string {
   const result = text(value, label, 500);
   if (result.startsWith("/") || result.startsWith("../") || result.includes("\\") || result.includes("\0")) {
     throw new StructuredOutputError(`${label} is not repository-relative`);
+  }
+  if (allowed !== undefined && !allowed.has(result)) {
+    throw new StructuredOutputError(`${label} references unknown path: ${result}`);
   }
   return result;
 }
@@ -207,6 +210,9 @@ export function parseImplementationPlan(
       ),
     };
   });
+  if (new Set(constraints.map((item) => item.id)).size !== constraints.length) {
+    throw new StructuredOutputError("Plan constraint IDs must be unique");
+  }
   const steps = array(parsed["steps"], "Plan steps", 20).map((item) => {
     const step = record(item, "Implementation step");
     keys(
@@ -226,6 +232,9 @@ export function parseImplementationPlan(
   if (steps.length === 0 || steps.some((step) => step.rationaleClaimIds.length === 0)) {
     throw new StructuredOutputError("Every implementation step requires supported diagnosis rationale");
   }
+  if (new Set(steps.map((item) => item.id)).size !== steps.length) {
+    throw new StructuredOutputError("Plan step IDs must be unique");
+  }
   return {
     id: identifier(parsed["id"], "Plan id"),
     summary: text(parsed["summary"], "Plan summary"),
@@ -236,13 +245,16 @@ export function parseImplementationPlan(
   };
 }
 
-function parseCommand(value: unknown): AllowedCommand {
+function parseCommand(value: unknown, allowedPaths: ReadonlySet<string>): AllowedCommand {
   const parsed = record(value, "Allowed command");
   switch (parsed["kind"]) {
     case "node-syntax":
     case "node-test":
       keys(parsed, ["kind", "path"], "Node command");
-      return { kind: parsed["kind"], path: path(parsed["path"], "Command path") };
+      return {
+        kind: parsed["kind"],
+        path: path(parsed["path"], "Command path", allowedPaths),
+      };
     case "package-script":
       keys(parsed, ["kind", "name"], "Package script command");
       return { kind: "package-script", name: identifier(parsed["name"], "Package script name") };
@@ -251,7 +263,11 @@ function parseCommand(value: unknown): AllowedCommand {
   }
 }
 
-function parsePatch(value: unknown, stepIds: ReadonlySet<string>): ProposedFilePatch {
+function parsePatch(
+  value: unknown,
+  stepIds: ReadonlySet<string>,
+  allowedPaths: ReadonlySet<string>,
+): ProposedFilePatch {
   const parsed = record(value, "Proposed patch");
   keys(parsed, ["id", "implementationStepId", "path", "expectedHash", "replacements"], "Proposed patch");
   const implementationStepId = identifier(parsed["implementationStepId"], "Patch step id");
@@ -275,7 +291,7 @@ function parsePatch(value: unknown, stepIds: ReadonlySet<string>): ProposedFileP
   return {
     id: identifier(parsed["id"], "Patch id"),
     implementationStepId,
-    path: path(parsed["path"], "Patch path"),
+    path: path(parsed["path"], "Patch path", allowedPaths),
     expectedHash,
     replacements,
   };
@@ -284,6 +300,7 @@ function parsePatch(value: unknown, stepIds: ReadonlySet<string>): ProposedFileP
 function parseCapability(
   value: unknown,
   patchIds: ReadonlySet<string>,
+  allowedPaths: ReadonlySet<string>,
 ): CapabilityRequest {
   const parsed = record(value, "Capability request");
   const id = identifier(parsed["id"], "Capability id");
@@ -294,7 +311,7 @@ function parseCapability(
       return { id, kind: "apply-patches", patchIds: ids(parsed["patchIds"], "Capability patchIds", patchIds), reason };
     case "run-command":
       keys(parsed, ["id", "kind", "command", "reason"], "Command capability");
-      return { id, kind: "run-command", command: parseCommand(parsed["command"]), reason };
+      return { id, kind: "run-command", command: parseCommand(parsed["command"], allowedPaths), reason };
     case "read-file":
       keys(parsed, ["id", "kind", "path", "reason"], "Read capability");
       return { id, kind: "read-file", path: path(parsed["path"], "Read path"), reason };
@@ -316,7 +333,9 @@ export function parseImplementerResult(
   keys(parsed, ["summary", "patches", "claims", "capabilityRequests"], "Implementer result");
   const stepIds = new Set(plan.steps.map((step) => step.id));
   const requirementIds = new Set(plan.requirements.map((requirement) => requirement.id));
-  const patches = array(parsed["patches"], "Patches", 30).map((item) => parsePatch(item, stepIds));
+  const patches = array(parsed["patches"], "Patches", 30).map((item) =>
+    parsePatch(item, stepIds, allowedPaths),
+  );
   const patchIds = new Set(patches.map((patch) => patch.id));
   if (patchIds.size !== patches.length) throw new StructuredOutputError("Patch IDs must be unique");
   const claims = array(parsed["claims"], "Implementation claims", 30).map((item): ImplementationClaim => {
@@ -330,13 +349,20 @@ export function parseImplementerResult(
       verification: verification(claim["verification"], allowedPaths),
     };
   });
+  if (new Set(claims.map((claim) => claim.id)).size !== claims.length) {
+    throw new StructuredOutputError("Implementation claim IDs must be unique");
+  }
+  const capabilityRequests = array(parsed["capabilityRequests"], "Capability requests", 30).map((item) =>
+    parseCapability(item, patchIds, allowedPaths),
+  );
+  if (new Set(capabilityRequests.map((request) => request.id)).size !== capabilityRequests.length) {
+    throw new StructuredOutputError("Capability request IDs must be unique");
+  }
   return {
     summary: text(parsed["summary"], "Implementer summary"),
     patches,
     claims,
-    capabilityRequests: array(parsed["capabilityRequests"], "Capability requests", 30).map((item) =>
-      parseCapability(item, patchIds),
-    ),
+    capabilityRequests,
   };
 }
 
@@ -377,6 +403,9 @@ export function parseReviewResult(
       evidenceIds: ids(finding["evidenceIds"], "Finding evidenceIds", evidenceIds),
     };
   });
+  if (new Set(findings.map((finding) => finding.id)).size !== findings.length) {
+    throw new StructuredOutputError("Review finding IDs must be unique");
+  }
   return {
     status: enumValue(
       parsed["status"],

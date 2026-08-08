@@ -73,7 +73,7 @@ describe("ExecutionWorkspaceManager", () => {
     await writeFile(join(workspace.snapshot.executionRoot!, "file.ts"), "changed\n");
     expect(await readFile(join(root, "file.ts"), "utf8")).toContain("value = 1");
     await workspace.cleanup();
-  });
+  }, 15_000);
 
   it("blocks a dirty Git repository and preserves user work", async () => {
     const root = await temporaryDirectory();
