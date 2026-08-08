@@ -27,6 +27,8 @@ export * from "./execution/structured-command-runner.js";
 export * from "./execution/task-agent-runtime.js";
 export * from "./execution/task-prompts.js";
 export * from "./execution/task-structured-outputs.js";
+export * from "./execution/task-verifier.js";
+export * from "./execution/task-execution-engine.js";
 export * from "./graph/code-graph.js";
 export * from "./graph/graph-query.js";
 export * from "./providers/fake-provider.js";

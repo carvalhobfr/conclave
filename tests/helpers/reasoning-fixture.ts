@@ -136,6 +136,7 @@ export function reasoningFixtureProvider(): FakeProvider {
 export async function createReasoningFixtureEngine(
   provider = reasoningFixtureProvider(),
   maxAgentCalls = 10,
+  fixtureRoot = reasoningFixturePath,
 ): Promise<ReasoningEngine> {
   const embedding = new LocalHashEmbeddingProvider();
   const indexed = await new RepositoryIndexer({
@@ -143,7 +144,7 @@ export async function createReasoningFixtureEngine(
     parser: new TypeScriptCodeParser(),
     embeddingProvider: embedding,
     indexStore: new InMemoryCodeIndexStore(),
-  }).index(reasoningFixturePath);
+  }).index(fixtureRoot);
   const roles: readonly AgentRole[] = ["investigator", "skeptic", "architect", "verifier", "judge"];
   const limits = { ...DEFAULT_REASONING_LIMITS, maxAgentCalls };
   return new ReasoningEngine({
