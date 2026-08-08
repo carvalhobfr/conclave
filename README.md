@@ -2,240 +2,155 @@
 
 **Ask your code. Let the models argue.**
 
-Conclave is an evidence-driven code intelligence and execution system. It retrieves bounded repository facts, challenges explanations, verifies claims against deterministic code relationships, and only then returns a verdict or isolated patch.
+Conclave is a local-first code intelligence system for evidence-driven reasoning and bounded code changes. It indexes TypeScript and JavaScript repositories, retrieves compact provenance-backed evidence, challenges proposed explanations, verifies claims against deterministic code relationships, and returns either a verdict or an isolated patch.
 
-It supports Ask, Investigate, Task, a deterministic code graph, provenance-backed evidence, Free/API/Local configuration, a loopback web workspace, and a compact read-only MCP server.
+It is designed for developers and coding agents that need more than a broad source dump: every answer is grounded in repository evidence, and every Task capability remains policy-controlled.
 
-## What exists
+## Highlights
 
-- Phase 1 repository, provider, privacy, credential, persistence, and content-safety boundaries.
-- Tolerant structural parsing for TypeScript, TSX, JavaScript, and JSX through the TypeScript compiler API.
-- Functions, classes, methods, React components, hooks, interfaces, type aliases, enums, nested symbols, and variable-assigned functions.
-- Independent file intelligence for source hashes, imports, exports, parser diagnostics, and symbol identities.
-- Persistent incremental indexing with changed/new/deleted-file handling and cached embeddings.
-- Deterministic symbol lookup, path + symbol lookup, exported-symbol discovery, exact text search, and file/range reads.
-- Local BM25 retrieval over code-aware tokens.
-- A local 384-dimensional code-aware feature-hashing embedding implementation with no model download or paid API.
-- Weighted Reciprocal Rank Fusion across lexical, semantic, exact/partial symbol, path, and graph signals.
-- A provenance-backed graph for ownership, exports, resolved imports, containment, inheritance, direct references, and calls.
-- First-class graph queries for nodes, edges, callers/callees, imports/exports, references, containment, related files, bounded subgraphs, and shortest paths.
-- An inspectable graph-first retrieval planner that skips feature-vector retrieval when deterministic evidence is sufficient.
-- Explicit graph/candidate/evidence/source-byte/approximate-token budgets.
-- Deterministic context packing that merges overlapping source while retaining evidence and edge provenance.
-- Stable `Evidence` objects with exact line ranges and excerpts.
-- Structured indexing/retrieval events that exclude source text and queries.
-- Realistic fixture repositories and deterministic Phase 2 plus graph-aware evaluation harnesses.
-- Structured `Claim`, `Challenge`, `RetrievalRequest`, `VerificationResult`, and `Verdict` state.
-- Independent role-to-provider/model assignments for Investigator, Skeptic, Architect, Verifier, and Judge.
-- Strict runtime validation and one bounded repair attempt for model JSON outputs.
-- Deterministic selective routing that avoids Skeptic and Architect calls for simple lookups.
-- Bounded, deduplicated follow-up symbol, text, caller/callee/reference, path, and search retrieval.
-- Deterministic verification that takes precedence over model agreement and preserves uncertainty.
-- Injection-resistant role prompts that frame repository source as untrusted data.
-- Per-role model-call, token, provider usage, latency, retrieval, and final-claim metrics.
-- Explicit `ask`, `investigate`, and `task` intents; Task Mode never treats a normal question as permission to mutate a repository.
-- Independent Planner, Implementer, and Reviewer assignments with strict structured outputs and injection-resistant role prompts.
-- Plan-only by default, explicit edit/check/repository-code/network permissions, clean-worktree enforcement, and temporary detached Git worktrees.
-- Hash-bound replacement patches, protected/ignored/secret path controls, rollback, file/line/byte budgets, and unrelated-change rejection.
-- Structured command capabilities with fixed executable mappings, host allowlists, filtered child environments, timeouts, bounded output, and `shell: false`.
-- Post-change incremental reindexing, deterministic requirement and implementation-claim verification, bounded revisions, and no-progress detection.
-- A React/Vite developer workspace served by a local Node application layer; browser clients receive bounded display DTOs rather than filesystem, provider, or command authority.
-- Explicit Ask, Investigate, and Task composer modes; first-class evidence, rejected/uncertain claims, graph explorer, retrieval inspector, role route, metrics, task plan/progress, and isolated final diff.
-- Deterministic Demo Mode using a bundled fixture and fake provider, explicitly labelled as demo inference rather than live AI.
-- CLI commands for indexing, retrieval inspection, graph queries, evidence-grounded questions, bounded tasks, and evaluation.
+- **Ask** — evidence-backed answers with exact source ranges.
+- **Investigate** — structured Claims, Challenges, Verification, and uncertainty instead of hidden disagreement.
+- **Task** — explicit, plan-first, isolated patches with default-deny edits and checks.
+- **Code graph** — deterministic symbols, imports, calls, references, callers/callees, and bounded paths.
+- **Graph-aware retrieval** — BM25, deterministic feature vectors, fusion, graph expansion, context budgets, and inspectable plans.
+- **Local-first product** — loopback web workspace, CLI, and a compact read-only MCP server.
+- **Provider boundaries** — OpenAI-compatible API and Local endpoints; credentials remain server/process-side.
+- **Deterministic demo** — full Ask, Investigate, rejected hypothesis, revision, diff, and verdict flow without an API key.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Repo[Repository] --> Index[Safe parser and incremental index]
+  Index --> Retrieval[Graph-aware retrieval]
+  Retrieval --> Evidence[Bounded evidence + provenance]
+  Evidence --> Reasoning[Claims, challenges, deterministic verification]
+  Reasoning --> Task[Isolated, policy-controlled Task execution]
+  CLI[CLI] --> Retrieval
+  Web[Loopback web app] --> Reasoning
+  MCP[Read-only MCP] --> Retrieval
+```
+
+Repository source is always treated as untrusted data. Models do not receive filesystem, shell, Git, provider-configuration, or arbitrary patch authority.
 
 ## Quick start
 
 Requires Node.js 20 or newer.
 
 ```bash
+git clone <repository-url>
+cd conclave
 npm install
-npm test
-npm run test:web
-npm run typecheck
-npm run lint
-npm run build
-```
-
-Run the deterministic end-to-end demo without an API key:
-
-```bash
 npm run demo
 ```
 
-Run the local product with the deterministic demo:
+`npm run demo` runs the deterministic end-to-end fixture using fake model responses. It does not need an API key and leaves the bundled demo repository unchanged.
+
+For the full release gate:
+
+```bash
+npm run verify
+```
+
+This runs deterministic tests, web tests, typecheck, lint, builds, retrieval/reasoning/task evaluations, and a dependency audit.
+
+## Use the local web workspace
 
 ```bash
 npm run build
 npm run start:web
-# Open http://127.0.0.1:4317
 ```
 
-For frontend iteration, run `npm run dev:web` alongside `npm run start:web`; Vite proxies `/api` to the local application server. Demo Mode works without provider credentials. To open another folder, configure `CONCLAVE_WEB_ALLOWED_ROOT` and choose a repository beneath that root. The local server listens only on loopback.
+Open `http://127.0.0.1:4317`. The server listens only on loopback. Demo Mode works without credentials; opening another folder requires it to be inside `CONCLAVE_WEB_ALLOWED_ROOT` (or the process working directory by default).
 
-Use Conclave from an MCP-compatible coding agent (read-only):
-
-```bash
-conclave mcp /path/to/repository
-```
-
-The MCP server has no Task, shell, provider-configuration, or arbitrary-path tools. See [Phase 6 release readiness](docs/phase-6-release-readiness.md).
-
-Index and inspect a repository:
+## Use the CLI
 
 ```bash
 npm run dev -- index /path/to/repository
-npm run dev -- search /path/to/repository "where is authentication restored?"
 npm run dev -- retrieve /path/to/repository "Where is bootstrapSession called?"
-npm run dev -- symbol /path/to/repository bootstrapSession
-npm run dev -- text /path/to/repository "AUTH_RESTORE_FAILED"
 npm run dev -- graph /path/to/repository bootstrapSession --operation callers
-npm run dev -- path /path/to/repository LoginButton persistToken --depth 4
-npm run dev -- ask /path/to/repository "Why might authentication disappear after refreshing?" --debug
-npm run dev -- task /path/to/repository "Persist the restored session" --plan-only
-npm run dev -- task /path/to/repository "Persist the restored session" --allow-edits
+npm run dev -- path /path/to/repository AuthProvider getStoredToken --depth 4
+npm run dev -- ask /path/to/repository "Why might authentication disappear after refresh?"
+npm run dev -- task /path/to/repository "Fix the missing session restore" --plan-only
 ```
 
-Search output includes rank, source location, structural symbol, retrieval score, component signals, graph/relationship reasons, and the exact repository excerpt. Retrieval scores are ranking values, not confidence estimates.
+Task execution is never implied by Ask or Investigate. To permit an isolated edit, use explicit Task permissions; repository scripts and network access remain disabled unless separately granted.
 
-The search and graph commands incrementally update the repository index before querying it. Persistent indexes live at `.conclave/code-index-v2.json` inside the indexed repository and are excluded from future scans.
-
-## Evaluation
-
-Run the committed fixture benchmark:
+## Use Conclave through MCP
 
 ```bash
-npm run eval
+npm run dev -- mcp /path/to/repository
 ```
 
-Current three-case results:
+The stdio MCP server is read-only. It exposes compact search, symbol, graph, graph-path, evidence, Ask, and Investigate tools. External clients cannot select another repository root, access environment variables, configure providers, run commands, or enter Task Mode. MCP responses label repository content as untrusted evidence.
 
-| Strategy | File R@1 | File R@3 | File R@5 | Symbol R@1 | Symbol R@3 | Symbol R@5 | MRR |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Lexical | 0.3333 | 0.6667 | 0.8333 | 0.3333 | 0.6667 | 0.6667 | 0.5000 |
-| Semantic | 0.3333 | 0.6667 | 1.0000 | 0.1667 | 0.6667 | 1.0000 | 0.5556 |
-| Hybrid | 0.6667 | 0.8333 | 0.8333 | 0.5000 | 0.8333 | 0.8333 | 0.7778 |
+## Providers and privacy
 
-Hybrid improves early file recall and MRR on this small fixture, but semantic-only File Recall@5 remains higher. The benchmark reports this rather than hiding it.
-
-Run the additive seven-case graph/context benchmark:
-
-```bash
-npm run eval:graph
-```
-
-| Strategy | MRR | Mean evidence | Mean bytes | Mean approx. tokens | Relevant / 1k tokens |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Lexical | 0.7143 | 7.5714 | 1097.0 | 274.7143 | 6.7603 |
-| Feature vector | 0.8095 | 9.4286 | 1512.2857 | 378.4286 | 5.6625 |
-| Hybrid, no graph | 0.8857 | 9.5714 | 1448.0 | 362.4286 | 5.9125 |
-| Graph-aware hybrid | 0.9048 | 6.2857 | 990.7143 | 248.1429 | 8.6356 |
-
-Compared on the same cases, graph-aware hybrid reduces approximate context tokens by 31.5% and packed evidence units by 34.3% while improving MRR by 0.0191. Graph-only is scored separately on three graph-resolvable cases and reaches MRR 1.0 with 118.7 mean approximate tokens. These fixtures are regression tests, not broad production benchmarks.
-
-The fixed Phase 3 benchmark compares the same two cases across single-pass generation, Investigator + Judge, and Conclave. It uses scripted fake providers, so CI measures orchestration rather than model variability.
-
-| Strategy | Answer accuracy | Claim precision | Unsupported rate | Wrong-claim rejection | Mean calls | Mean retrieval rounds | Mean context tokens |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Single model | 0.5000 | 0.7500 | 0.2500 | 0.5000 | 1 | 0 | 986.0 |
-| Investigator + Judge | 0.5000 | 0.7500 | 0.2500 | 0.5000 | 2 | 0 | 1466.5 |
-| Conclave | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 3 | 1 | 2784.0 |
-
-Run it with:
-
-```bash
-npm run eval:reasoning
-```
-
-`eval-reasoning` also supports optional configured-provider experiments. Those runs are intentionally separate from deterministic CI:
-
-```bash
-npm run dev -- eval-reasoning /path/to/repository /path/to/reasoning-cases.json --json
-```
-
-The fixed Phase 4 task benchmark compares a naive single Implementer, Planner + Implementer without independent enforcement, and the complete Conclave task loop. It uses a deliberately bad implementation, a false completion claim, and an unrelated edit.
-
-| Strategy | Reported completion | True task success | Requirement satisfaction | False success | Unrelated edits | Revision success |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Single Implementer | 1.0000 | 0.0000 | 0.5000 | 1.0000 | 0.0000 | 0.0000 |
-| Planner + Implementer | 1.0000 | 0.0000 | 1.0000 | 1.0000 | 1.0000 | 0.0000 |
-| Conclave Task | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
-
-These are deterministic regression fixtures, not a claim of broad real-world task accuracy. Run them with:
-
-```bash
-npm run eval:task
-```
-
-## Execution modes
-
-Free, API, and Local Mode configuration from Phase 1 now drives reasoning inference. Retrieval remains local and performs no LLM call.
+Conclave uses the OpenAI-compatible Chat Completions API where base URL, model, and credentials are sufficient. This supports OpenAI, OpenRouter, OpenCode Zen, Ollama, LM Studio, and compatible services when configured. Native Anthropic and Gemini protocols are not implemented.
 
 ```bash
 npm run dev -- config --json
+npm run dev -- provider-check
 ```
 
-- Free Mode credentials come from the server process.
-- API Mode credentials come from the user process environment.
-- Local Mode permits only loopback model endpoints.
-- No credential is persisted in the code index.
-- `CONCLAVE_REASONING_PRESET` selects `free-like`, `full`, or `local` behavior.
-- `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` override each role independently.
-- Planner, Implementer, and Reviewer have their own `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` overrides.
-- `CONCLAVE_ALLOWED_PACKAGE_SCRIPTS` is the host-controlled comma-separated allowlist used only when privileged repository checks are explicitly enabled.
-- The web UI reads provider configuration from the server process; it does not collect or persist plaintext API keys in browser state.
+- **API Mode** uses process-provided credentials and requires HTTPS.
+- **Local Mode** accepts loopback HTTP(S) endpoints only. Repository retrieval is local; fully local operation also requires local inference and embedding endpoints.
+- **Free Mode** is a server-owned configuration boundary, not a hosted public service in v1.
 
-See `.env.example` for provider-connectivity examples. `provider-check` exercises only the provider adapter and is separate from retrieval.
+The default `conclave-local-hash-v1` embedding is deterministic feature hashing for offline use and CI. Learned OpenAI-compatible embeddings are opt-in and require an explicit model, endpoint, and dimension configuration. Conclave never silently switches embedding strategies.
 
-## Project layout
+See [.env.example](.env.example) for configuration fields. Credentials are not stored in the index or exposed to the browser.
+
+## Safety model
+
+Task Mode preserves this invariant:
 
 ```text
-src/
-  code-intelligence/  structural parser adapters
-  domain/             repository, evidence, index, graph, and provider ports
-  embeddings/         interchangeable embedding implementations
-  evaluation/         retrieval, reasoning, and task benchmark runners
-  execution/          task agents, isolated edits, capability policy, runner, review, and verification
-  graph/              deterministic code relationship extraction
-  indexing/           persistent and incremental index lifecycle
-  retrieval/          tokenizer, BM25, fusion, evidence, and query services
-  reasoning/          agents, routing, follow-up retrieval, verification, and verdicts
-  repositories/       safe local-folder loading
-  security/           path, secret, and untrusted-context boundaries
-  storage/            app-state and credential-source adapters
-  web/                local web API, bounded DTO adapters, and deterministic demo runtime
-web/                  React/Vite product workspace
-demo/                 deterministic local product fixture
-tests/fixtures/        realistic retrieval/evaluation repositories
+model requests a typed capability
+        ↓
+Conclave policy validates permissions, scope, hashes, and budgets
+        ↓
+structured runner executes an approved fixed command, when permitted
 ```
 
-See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), [Phase 4 task execution](docs/phase-4-task-execution.md), [Phase 5 product UI](docs/phase-5-product-ui.md), and [security boundaries](docs/security.md).
+There is no raw model-to-shell path. Patches use exact expected hashes, execute only in an isolated worktree or filtered copy, and are verified after reindexing. The original repository is never modified automatically.
 
-For a release check, run `npm run verify`. It includes deterministic fixtures and dependency audit; configured real providers remain opt-in and are never invoked by CI.
+Read [the security boundaries](docs/security.md) before enabling repository scripts on untrusted code.
 
-## Current limitations
+## Evaluation
 
-- The parser is syntax-aware but does not create a TypeScript `Program`, run type checking, or resolve `tsconfig` path aliases.
-- The default embedding is deterministic feature hashing with a small code-oriented concept map, not a learned neural model. Learned OpenAI-compatible embeddings are opt-in and require an explicit model, endpoint, and dimensions.
-- BM25 and vector search currently scan in-memory index records; there is no ANN index or database-backed inverted index.
-- Graph resolution covers relative imports, explicit exports/bindings, unique same-file identifiers, direct identifier calls, and simple resolvable heritage clauses. It does not attempt language-server-level resolution, dynamic imports, package exports, polymorphism, or arbitrary property dispatch.
-- Missing graph edges mean “not statically resolved,” not proof that no runtime relationship exists.
-- Negative deterministic checks are only as complete as the static index; dynamic dispatch and unresolved imports can require an uncertain verdict.
-- Context tokens use a deterministic bytes/4 estimate, not an exact provider tokenizer.
-- The CLI constructs the configured runtime provider. Heterogeneous role providers require embedding multiple configured adapters in a future host process; unsupported assignments fail cleanly.
-- Structured output uses strict JSON validation, not provider-specific JSON Schema transport.
-- Task patches modify existing regular files through exact replacements. Creating, deleting, renaming, or applying arbitrary unified diffs is not yet supported.
-- Task Mode requires a clean Git worktree; non-Git folders are copied to an isolated temporary directory with ignored and secret paths excluded.
-- Static `node --check` is the only low-privilege command capability. Node tests and allowlisted package scripts execute repository code, so they require explicit checks, repository-script, and network permissions. Portable filesystem and network sandboxing for those child processes is not implemented; use them only for trusted repositories.
-- Task execution returns a patch and verdict but does not merge the detached worktree into the original repository automatically.
-- Root `.gitignore` and `.conclaveignore` files are honored; nested ignore-file composition remains unimplemented.
-- The JSON index is atomic and owner-readable but not encrypted or cross-process locked.
-- Source files classified as likely secrets are excluded completely, but heuristic secret detection can have false positives and false negatives.
-- Local Git working trees can be indexed as folders; remote Git cloning is not implemented.
-- The web server is local-first and loopback-only. Hosted Free Mode, sessions, rate limiting, remote repository imports, and a browser credential-entry flow are intentionally not implemented.
-- Local repository opening is restricted to `CONCLAVE_WEB_ALLOWED_ROOT` (or the server working directory by default); browser file pickers do not bypass this policy.
-- Product history and applying an isolated patch back to the original repository are deferred. The displayed task diff remains inspectable only.
+Committed deterministic fixtures provide regression evidence for retrieval, graph-aware retrieval, reasoning, and Task orchestration:
 
-## Release posture
+```bash
+npm run eval
+npm run eval:graph
+npm run eval:release
+npm run eval:reasoning
+npm run eval:task
+```
 
-Conclave v1 is local-first: retain the default-deny Task boundary and do not expose arbitrary-path hosted Task Mode or one-click repository-script execution.
+The release corpus contains 12 retrieval cases across authentication, storage, lifecycle, subscriptions, graph paths, types, and ambiguous symbols. These are deterministic regression benchmarks, not claims of broad real-world or model accuracy. Full methodology and current limitations are in [Phase 6 release readiness](docs/phase-6-release-readiness.md).
+
+## Limitations
+
+- TypeScript parsing is syntax-aware but does not use a `Program`, type-checker, or `tsconfig` aliases.
+- Graph edges cover deterministic static relationships; dynamic dispatch and framework wiring can remain unresolved.
+- Remote Git import and hosted Free Mode are intentionally not included.
+- Task patches replace existing regular-file content; they do not automatically apply, commit, push, create, rename, or delete source files.
+- Repository scripts are not a portable filesystem/network sandbox and should be used only for trusted repositories.
+- MCP Task Mode is intentionally unavailable in v1.
+
+## Documentation
+
+- [Architecture: repository and provider boundaries](docs/phase-1-architecture.md)
+- [Code intelligence and retrieval](docs/phase-2-code-rag.md)
+- [Graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md)
+- [Reasoning engine](docs/phase-3-reasoning.md)
+- [Task execution](docs/phase-4-task-execution.md)
+- [Web product](docs/phase-5-product-ui.md)
+- [Release readiness and MCP](docs/phase-6-release-readiness.md)
+- [Security boundaries](docs/security.md)
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Conclave is released under the [MIT License](LICENSE).
