@@ -170,6 +170,8 @@ export interface ReasoningTraceEvent {
 
 export interface RoleUsage {
   readonly role: AgentRole;
+  readonly providerIds: readonly string[];
+  readonly modelIds: readonly string[];
   readonly calls: number;
   readonly approximateInputTokens: number;
   readonly approximateOutputTokens: number;

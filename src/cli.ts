@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
+import { loadReasoningConfiguration } from "./config/reasoning-config.js";
 import { LocalHashEmbeddingProvider } from "./embeddings/local-hash-embedding.js";
 import {
   loadEvaluationCases,
@@ -16,6 +17,9 @@ import { createProvider } from "./providers/provider-factory.js";
 import { LocalFolderRepository } from "./repositories/local-folder-repository.js";
 import { CodeRetrievalService } from "./retrieval/code-retrieval-service.js";
 import type { RetrievalStrategy } from "./retrieval/hybrid-retriever.js";
+import { StructuredAgentRuntime } from "./reasoning/agent-runtime.js";
+import { ReasoningEngine } from "./reasoning/reasoning-engine.js";
+import { DEFAULT_REASONING_LIMITS } from "./domain/reasoning.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
 
 const HELP = `Conclave Code Intelligence CLI
@@ -29,6 +33,7 @@ Usage:
   conclave text <path> <exact text> [--json]
   conclave graph <path> <symbol-or-file> [--operation neighbors|callers|callees|imports|exports|references|containing|contained|related] [--depth N] [--limit N] [--json]
   conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
+  conclave ask <path> <question> [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
   conclave config [--json]
@@ -57,6 +62,7 @@ interface ParsedArguments {
   readonly sourceBytes: number;
   readonly tokens: number;
   readonly graphOperation: GraphOperation;
+  readonly debug: boolean;
 }
 
 function parseArguments(args: readonly string[]): ParsedArguments {
@@ -68,10 +74,15 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let sourceBytes = 24_000;
   let tokens = 6_000;
   let graphOperation: GraphOperation = "neighbors";
+  let debug = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
       json = true;
+      continue;
+    }
+    if (argument === "--debug") {
+      debug = true;
       continue;
     }
     if (argument === "--strategy") {
@@ -138,7 +149,7 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       positionals.push(argument);
     }
   }
-  return { positionals, json, strategy, limit, depth, sourceBytes, tokens, graphOperation };
+  return { positionals, json, strategy, limit, depth, sourceBytes, tokens, graphOperation, debug };
 }
 
 function print(value: unknown, json: boolean): void {
@@ -464,6 +475,65 @@ async function evaluateGraphRetrieval(args: readonly string[]): Promise<void> {
   print(report, parsed.json);
 }
 
+async function askRepository(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const question = parsed.positionals.slice(1).join(" ").trim();
+  if (requestedPath === undefined || question === "") {
+    throw new Error("ask requires a repository path and question");
+  }
+  const runtimeConfig = loadRuntimeConfig();
+  const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
+  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const indexed = await updateIndex(requestedPath);
+  const runtime = new StructuredAgentRuntime(
+    new Map([[provider.id, provider]]),
+    reasoningConfig.assignments,
+    DEFAULT_REASONING_LIMITS,
+  );
+  const result = await new ReasoningEngine({
+    retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
+    runtime,
+    preset: reasoningConfig.preset,
+  }).ask(question);
+  if (parsed.json) {
+    print(parsed.debug ? result : { verdict: result.verdict, metrics: result.metrics, terminationReason: result.terminationReason }, true);
+    return;
+  }
+  console.log(result.verdict.answer);
+  console.log("");
+  for (const [label, claims] of [
+    ["Supported claims", result.verdict.claims.supported],
+    ["Rejected claims", result.verdict.claims.rejected],
+    ["Uncertain claims", result.verdict.claims.uncertain],
+  ] as const) {
+    console.log(`${label}:`);
+    for (const claim of claims) console.log(`- ${claim.statement}`);
+  }
+  console.log("Evidence:");
+  for (const evidence of result.verdict.evidence) {
+    console.log(
+      `- ${evidence.path}:${String(evidence.startLine)}-${String(evidence.endLine)}${evidence.symbol === undefined ? "" : ` — ${evidence.symbol}`}`,
+    );
+  }
+  console.log(`Agents executed: ${result.verdict.traceSummary.agentsExecuted.join(", ")}`);
+  for (const skipped of result.verdict.traceSummary.agentsSkipped) {
+    console.log(`Agent skipped: ${skipped.role} — ${skipped.reason}`);
+  }
+  console.log(
+    `Follow-ups: ${String(result.metrics.followUpRequests)}; retrieval rounds: ${String(result.metrics.retrievalRounds)}; model calls: ${String(result.metrics.modelCalls)}`,
+  );
+  console.log(
+    `Approximate model context: ${String(result.metrics.approximateInputTokens)} input / ${String(result.metrics.approximateOutputTokens)} output tokens`,
+  );
+  if (parsed.debug) {
+    console.log("Trace:");
+    for (const event of result.trace) {
+      console.log(`${String(event.sequence)} ${event.type}: ${event.detail}`);
+    }
+  }
+}
+
 function showConfig(args: readonly string[]): void {
   const credentials = new EnvironmentCredentialSource();
   const report = describeRuntimeConfig(loadRuntimeConfig(), credentials);
@@ -522,6 +592,9 @@ async function main(): Promise<void> {
       return;
     case "path":
       await queryPath(args);
+      return;
+    case "ask":
+      await askRepository(args);
       return;
     case "eval":
       await evaluateRetrieval(args);

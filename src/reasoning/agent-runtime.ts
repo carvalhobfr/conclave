@@ -53,6 +53,7 @@ export class StructuredAgentRuntime {
     role: AgentRole,
     userPrompt: string,
     validate: StructuredValidator<T>,
+    callBudget = 1 + this.#limits.structuredOutputRepairAttempts,
   ): Promise<AgentExecution<T>> {
     const assignment = this.#assignments.get(role);
     if (assignment === undefined) {
@@ -67,7 +68,10 @@ export class StructuredAgentRuntime {
     }
     const calls: AgentCallRecord[] = [];
     let repairReason: string | undefined;
-    const attempts = 1 + this.#limits.structuredOutputRepairAttempts;
+    const attempts = Math.min(1 + this.#limits.structuredOutputRepairAttempts, callBudget);
+    if (attempts < 1) {
+      throw new AgentExecutionError(`No model-call budget remains for ${role}`, role);
+    }
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const systemPrompt =
         repairReason === undefined

@@ -39,6 +39,7 @@ export * from "./reasoning/role-prompts.js";
 export * from "./reasoning/retrieval-executor.js";
 export * from "./reasoning/deterministic-verifier.js";
 export * from "./reasoning/reasoning-router.js";
+export * from "./reasoning/reasoning-engine.js";
 export * from "./security/repository-context.js";
 export * from "./storage/environment-credential-source.js";
 export * from "./storage/in-memory-store.js";
