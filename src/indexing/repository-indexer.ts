@@ -14,6 +14,7 @@ import type { EmbeddingProvider, EmbeddingRequest } from "../domain/embedding.js
 import { NullRetrievalEventSink, type RetrievalEventSink } from "../domain/observability.js";
 import type { RepositorySource } from "../domain/repository.js";
 import { createLexicalDocument } from "../retrieval/tokenizer.js";
+import { buildCodeGraph } from "../graph/code-graph.js";
 
 interface MutableIndexStats {
   filesAdded: number;
@@ -263,7 +264,7 @@ export class RepositoryIndexer {
       files,
       units,
       embeddingCache,
-      graphEdges: [],
+      graphEdges: buildCodeGraph(files, units),
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };

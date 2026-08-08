@@ -107,6 +107,11 @@ export class CodeIndexReader {
     return this.#evidence.get(id);
   }
 
+  public readUnit(id: string): Evidence | undefined {
+    const unit = this.#index.units[id];
+    return unit === undefined ? undefined : this.#remember(evidenceFromUnit(this.#index, unit));
+  }
+
   public readFile(path: string, range?: FileRange): Evidence {
     const file = this.#index.files[path];
     if (file === undefined) {

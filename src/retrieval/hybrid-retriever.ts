@@ -12,6 +12,7 @@ import type {
 import { NullRetrievalEventSink, type RetrievalEventSink } from "../domain/observability.js";
 import { evidenceFromUnit } from "./evidence-factory.js";
 import { normalizeIdentifier, tokenizeCode } from "./tokenizer.js";
+import { CodeGraph } from "../graph/code-graph.js";
 
 export type RetrievalStrategy = "lexical" | "semantic" | "hybrid";
 
@@ -21,6 +22,7 @@ export interface FusionWeights {
   readonly exactSymbol: number;
   readonly partialSymbol: number;
   readonly path: number;
+  readonly graph: number;
 }
 
 export interface HybridRetrievalConfig {
@@ -41,6 +43,7 @@ export const DEFAULT_HYBRID_RETRIEVAL_CONFIG: HybridRetrievalConfig = {
     exactSymbol: 8,
     partialSymbol: 1.5,
     path: 1,
+    graph: 0.8,
   },
   bm25: DEFAULT_BM25_CONFIG,
 };
@@ -48,6 +51,9 @@ export const DEFAULT_HYBRID_RETRIEVAL_CONFIG: HybridRetrievalConfig = {
 export interface SearchOptions {
   readonly strategy?: RetrievalStrategy;
   readonly limit?: number;
+  readonly expandGraph?: boolean;
+  readonly graphDepth?: number;
+  readonly graphEvidenceBudget?: number;
 }
 
 interface Candidate {
@@ -59,6 +65,7 @@ interface Candidate {
     exactSymbol?: number;
     partialSymbol?: number;
     path?: number;
+    graph?: number;
   };
   reasons: RetrievalReason[];
 }
@@ -228,7 +235,7 @@ export class HybridRetriever {
           reasons: [],
         };
         candidate.score += weight / (this.#config.reciprocalRankConstant + index + 1);
-        candidate.signals[signal as keyof Candidate["signals"]] = entry.score;
+        candidate.signals[signal] = entry.score;
         candidate.reasons.push({
           strategy: strategyName,
           detail: `${strategyName} rank ${String(index + 1)}`,
@@ -244,6 +251,45 @@ export class HybridRetriever {
       addRanking(symbols.exact, "exactSymbol", this.#config.weights.exactSymbol, "exact-symbol");
       addRanking(symbols.partial, "partialSymbol", this.#config.weights.partialSymbol, "partial-symbol");
       addRanking(pathSignals(units, query), "path", this.#config.weights.path, "path");
+      if (options.expandGraph !== false) {
+        const seedIds = [...candidates.values()]
+          .sort(
+            (left, right) =>
+              right.score - left.score ||
+              left.unit.path.localeCompare(right.unit.path) ||
+              left.unit.startLine - right.unit.startLine,
+          )
+          .slice(0, 1)
+          .map((candidate) => candidate.unit.id);
+        const expanded = new CodeGraph(this.#index).expand(seedIds, {
+          maxDepth: options.graphDepth ?? 2,
+          maxEvidence: options.graphEvidenceBudget ?? 20,
+        });
+        for (const related of expanded) {
+          const candidate = candidates.get(related.unit.id) ?? {
+            unit: related.unit,
+            score: 0,
+            signals: {},
+            reasons: [],
+          };
+          const graphSignal = 1 / related.depth;
+          candidate.score +=
+            (this.#config.weights.graph * graphSignal) /
+            (this.#config.reciprocalRankConstant + related.depth);
+          candidate.signals.graph = Math.max(candidate.signals.graph ?? 0, graphSignal);
+          candidate.reasons.push({
+            strategy: "graph",
+            detail: `${related.edge.relation}: ${related.edge.provenance.reason}`,
+          });
+          candidates.set(related.unit.id, candidate);
+        }
+        this.#events.emit({
+          type: "graph_expansion_completed",
+          occurredAt: new Date().toISOString(),
+          repositoryId: this.#index.repository.id,
+          data: { expanded: expanded.length, depth: options.graphDepth ?? 2 },
+        });
+      }
     }
 
     const results = [...candidates.values()]
