@@ -1,5 +1,6 @@
 import type {
   ChallengeType,
+  ClaimCheck,
   ClaimUncertainty,
   RetrievalRequest,
   VerificationMethod,
@@ -17,6 +18,7 @@ export interface ProposedClaimOutput {
   readonly statement: string;
   readonly evidenceIds: readonly string[];
   readonly uncertainty: ClaimUncertainty;
+  readonly check?: ClaimCheck;
 }
 
 export interface InvestigatorOutput {
@@ -126,6 +128,62 @@ function enumValue<T extends string>(
 }
 
 const REQUEST_KINDS = new Set(["symbol", "references", "callers", "callees", "path", "text", "search"]);
+const EXPECTATIONS = new Set(["present", "absent"] as const);
+
+function expectation(value: unknown): "present" | "absent" {
+  return enumValue(value, EXPECTATIONS, "Claim check expectation");
+}
+
+function parseClaimCheck(value: unknown): ClaimCheck | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || typeof value["kind"] !== "string") {
+    throw new StructuredOutputError("Claim check must be an object");
+  }
+  switch (value["kind"]) {
+    case "symbol-exists":
+      assertKeys(value, ["kind", "symbol", "expectation"], "Symbol check");
+      return {
+        kind: "symbol-exists",
+        symbol: text(value["symbol"], "Check symbol", 300),
+        expectation: expectation(value["expectation"]),
+      };
+    case "references":
+    case "callers":
+    case "callees":
+      assertKeys(value, ["kind", "symbol", "expectation"], "Graph check");
+      return {
+        kind: value["kind"],
+        symbol: text(value["symbol"], "Check symbol", 300),
+        expectation: expectation(value["expectation"]),
+      };
+    case "path": {
+      assertKeys(value, ["kind", "from", "to", "maxDepth", "expectation"], "Path check");
+      const maxDepth = value["maxDepth"];
+      if (
+        maxDepth !== undefined &&
+        (typeof maxDepth !== "number" || !Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 10)
+      ) {
+        throw new StructuredOutputError("Claim path maxDepth must be an integer between 1 and 10");
+      }
+      return {
+        kind: "path",
+        from: text(value["from"], "Check path source", 300),
+        to: text(value["to"], "Check path target", 300),
+        ...(maxDepth === undefined ? {} : { maxDepth }),
+        expectation: expectation(value["expectation"]),
+      };
+    }
+    case "text":
+      assertKeys(value, ["kind", "text", "expectation"], "Text check");
+      return {
+        kind: "text",
+        text: text(value["text"], "Check text", 1_000),
+        expectation: expectation(value["expectation"]),
+      };
+    default:
+      throw new StructuredOutputError("Claim check kind is invalid");
+  }
+}
 
 export function parseRetrievalRequest(value: unknown): RetrievalRequest {
   if (!isRecord(value) || typeof value["kind"] !== "string" || !REQUEST_KINDS.has(value["kind"])) {
@@ -190,13 +248,19 @@ export function parseInvestigatorOutput(
   assertKeys(parsed, ["summary", "claims", "retrievalRequests"], "Investigator output");
   const claims = array(parsed["claims"], "claims", 20).map((value): ProposedClaimOutput => {
     if (!isRecord(value)) throw new StructuredOutputError("Claim must be an object");
-    assertKeys(value, ["statement", "evidenceIds", "uncertainty"], "Claim");
+    assertKeys(value, ["statement", "evidenceIds", "uncertainty", "check"], "Claim");
     const uncertainty = enumValue(value["uncertainty"], UNCERTAINTIES, "Claim uncertainty");
     const evidenceIds = stringIds(value["evidenceIds"], "Claim evidenceIds", allowedEvidenceIds);
     if (evidenceIds.length === 0 && uncertainty !== "hypothesis") {
       throw new StructuredOutputError("A claim without evidence must be marked hypothesis");
     }
-    return { statement: text(value["statement"], "Claim statement"), evidenceIds, uncertainty };
+    const check = parseClaimCheck(value["check"]);
+    return {
+      statement: text(value["statement"], "Claim statement"),
+      evidenceIds,
+      uncertainty,
+      ...(check === undefined ? {} : { check }),
+    };
   });
   if (claims.length === 0) throw new StructuredOutputError("Investigator must return at least one claim");
   return {

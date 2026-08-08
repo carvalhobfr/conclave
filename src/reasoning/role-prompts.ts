@@ -18,7 +18,7 @@ const ROLE_SYSTEM: Readonly<Record<AgentRole, string>> = {
 
 export const ROLE_OUTPUT_SCHEMAS: Readonly<Record<AgentRole, string>> = {
   investigator:
-    '{"summary":"short","claims":[{"statement":"...","evidenceIds":["evidence_id"],"uncertainty":"none|possible|hypothesis"}],"retrievalRequests":[{"kind":"symbol|references|callers|callees|path|text|search",...}]}',
+    '{"summary":"short","claims":[{"statement":"...","evidenceIds":["evidence_id"],"uncertainty":"none|possible|hypothesis","check":{"kind":"symbol-exists|callers|callees|references|path|text","expectation":"present|absent",...}}],"retrievalRequests":[{"kind":"symbol|references|callers|callees|path|text|search",...}]}',
   skeptic:
     '{"challenges":[{"claimId":"claim_id","type":"insufficient-evidence|contradictory-evidence|missing-caller|missing-lifecycle-path|alternative-explanation|ambiguous-symbol|unsupported-causal-inference","explanation":"short","retrievalRequests":[]}]}',
   architect:

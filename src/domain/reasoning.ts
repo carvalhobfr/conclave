@@ -17,6 +17,20 @@ export type ClaimStatus = "proposed" | "challenged" | "supported" | "rejected" |
 
 export type ClaimUncertainty = "none" | "possible" | "hypothesis";
 
+export type ClaimCheck =
+  | { readonly kind: "symbol-exists"; readonly symbol: string; readonly expectation: "present" | "absent" }
+  | { readonly kind: "callers"; readonly symbol: string; readonly expectation: "present" | "absent" }
+  | { readonly kind: "callees"; readonly symbol: string; readonly expectation: "present" | "absent" }
+  | { readonly kind: "references"; readonly symbol: string; readonly expectation: "present" | "absent" }
+  | {
+      readonly kind: "path";
+      readonly from: string;
+      readonly to: string;
+      readonly maxDepth?: number;
+      readonly expectation: "present" | "absent";
+    }
+  | { readonly kind: "text"; readonly text: string; readonly expectation: "present" | "absent" };
+
 export interface Claim {
   readonly id: string;
   readonly statement: string;
@@ -25,6 +39,7 @@ export interface Claim {
   readonly verificationIds: readonly string[];
   readonly status: ClaimStatus;
   readonly uncertainty: ClaimUncertainty;
+  readonly check?: ClaimCheck;
   readonly origin: {
     readonly role: AgentRole;
     readonly iteration: number;

@@ -150,6 +150,10 @@ export class CodeRetrievalService {
     return this.#reader.readEvidence(id);
   }
 
+  public readUnit(id: string): Evidence | undefined {
+    return this.#reader.readUnit(id);
+  }
+
   public readFile(path: string, range?: FileRange): Evidence {
     return this.#reader.readFile(path, range);
   }
