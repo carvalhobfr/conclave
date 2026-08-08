@@ -11,7 +11,7 @@ Repositories are sensitive and their contents are untrusted. Phase 1 establishes
 - External provider endpoints must use HTTPS.
 - The JSON app-state store is not a credential store.
 
-There is no browser bundle in Phase 1. A future web backend must keep provider creation and credential access server-side.
+The loopback web backend keeps provider creation and credential access server-side.
 
 ## Repository paths
 

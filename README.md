@@ -216,7 +216,7 @@ For a release check, run `npm run verify`. It includes deterministic fixtures an
 ## Current limitations
 
 - The parser is syntax-aware but does not create a TypeScript `Program`, run type checking, or resolve `tsconfig` path aliases.
-- The local embedding is deterministic feature hashing with a small code-oriented concept map, not a learned neural model. The abstraction supports adding local or hosted learned embeddings later.
+- The default embedding is deterministic feature hashing with a small code-oriented concept map, not a learned neural model. Learned OpenAI-compatible embeddings are opt-in and require an explicit model, endpoint, and dimensions.
 - BM25 and vector search currently scan in-memory index records; there is no ANN index or database-backed inverted index.
 - Graph resolution covers relative imports, explicit exports/bindings, unique same-file identifiers, direct identifier calls, and simple resolvable heritage clauses. It does not attempt language-server-level resolution, dynamic imports, package exports, polymorphism, or arbitrary property dispatch.
 - Missing graph edges mean “not statically resolved,” not proof that no runtime relationship exists.
@@ -236,6 +236,6 @@ For a release check, run `npm run verify`. It includes deterministic fixtures an
 - Local repository opening is restricted to `CONCLAVE_WEB_ALLOWED_ROOT` (or the server working directory by default); browser file pickers do not bypass this policy.
 - Product history and applying an isolated patch back to the original repository are deferred. The displayed task diff remains inspectable only.
 
-## Recommended next phase
+## Release posture
 
-Proceed with **Phase 6 — Evaluation, MCP and Product Polish** only after retaining the local-first trust boundary and default-deny Task permissions. Do not add hosted arbitrary-path Task Mode or one-click repository-script execution.
+Conclave v1 is local-first: retain the default-deny Task boundary and do not expose arbitrary-path hosted Task Mode or one-click repository-script execution.
