@@ -28,6 +28,7 @@ export const PLAN_ONLY_PERMISSIONS: ExecutionPermissions = {
 export interface TaskExecutionLimits {
   readonly maxImplementationRounds: number;
   readonly maxModelCalls: number;
+  readonly maxOutputTokensPerCall: number;
   readonly maxFilesChanged: number;
   readonly maxTotalChangedLines: number;
   readonly maxChangedLinesPerFile: number;
@@ -42,6 +43,7 @@ export interface TaskExecutionLimits {
 export const DEFAULT_TASK_EXECUTION_LIMITS: TaskExecutionLimits = {
   maxImplementationRounds: 2,
   maxModelCalls: 8,
+  maxOutputTokensPerCall: 2_000,
   maxFilesChanged: 8,
   maxTotalChangedLines: 500,
   maxChangedLinesPerFile: 250,
