@@ -8,6 +8,7 @@ export * from "./domain/evidence.js";
 export * from "./domain/execution-mode.js";
 export * from "./domain/observability.js";
 export * from "./domain/provider.js";
+export * from "./domain/reasoning.js";
 export * from "./domain/retrieval-plan.js";
 export * from "./domain/repository.js";
 export * from "./domain/security.js";
