@@ -81,7 +81,7 @@ function outcomeFor(
 }
 
 function evidenceReference(evidence: Evidence): string {
-  return `${evidence.path}:${String(evidence.startLine)}-${String(evidence.endLine)}`;
+  return `${evidence.path}:${String(evidence.startLine)}-${String(evidence.endLine)}${evidence.symbol === undefined ? "" : ` — ${evidence.symbol}`}`;
 }
 
 function synthesizeAnswer(claims: readonly Claim[], evidence: readonly Evidence[]): string {
@@ -374,6 +374,15 @@ export class ReasoningEngine {
         this.#limits.maxEvidenceUnits,
       );
       graphEdges = [...new Map([...graphEdges, ...retrievalResults.flatMap((result) => result.graphEdges)].map((edge) => [edge.id, edge])).values()];
+      claims = claims.map((claim) => {
+        const followUpEvidenceIds = retrievalRequests
+          .filter((request) => request.claimId === claim.id)
+          .flatMap(
+            (request) =>
+              retrievalResults.find((result) => result.requestId === request.id)?.evidence.map((item) => item.id) ?? [],
+          );
+        return { ...claim, evidenceIds: [...new Set([...claim.evidenceIds, ...followUpEvidenceIds])] };
+      });
     }
 
     const resultByRequestId = new Map(retrievalResults.map((result) => [result.requestId, result]));
@@ -443,7 +452,7 @@ export class ReasoningEngine {
     let judgeStatuses = new Map<string, VerificationOutcome>();
     if (mode !== "single-pass" && claims.length > 0) {
       emit("judge_started", "Started final adjudication", { role: "judge" });
-      const output = await executeAgent("judge", judgePrompt(question, claims, challenges, verifications), (raw) =>
+      const output = await executeAgent("judge", judgePrompt(question, claims, challenges, verifications, evidence), (raw) =>
         parseJudgeOutput(raw, claimIds),
       );
       if (output !== undefined) judgeStatuses = new Map(output.decisions.map((decision) => [decision.claimId, decision.status]));
