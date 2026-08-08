@@ -1,5 +1,6 @@
 export * from "./config/runtime-config.js";
 export * from "./config/reasoning-config.js";
+export * from "./config/task-config.js";
 export * from "./code-intelligence/typescript-parser.js";
 export * from "./domain/code-intelligence.js";
 export * from "./domain/code-index.js";
@@ -14,6 +15,7 @@ export * from "./domain/retrieval-plan.js";
 export * from "./domain/repository.js";
 export * from "./domain/security.js";
 export * from "./domain/storage.js";
+export * from "./domain/task-execution.js";
 export * from "./embeddings/local-hash-embedding.js";
 export * from "./evaluation/retrieval-evaluation.js";
 export * from "./evaluation/reasoning-evaluation.js";
