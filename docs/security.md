@@ -57,6 +57,16 @@ The provider adapter never accepts a repository snapshot directly. A caller must
 
 Local Mode is marked `local-only`, accepts only loopback HTTP(S) provider endpoints, and does not require a credential. Repository content can remain on the machine. Code retrieval uses the local deterministic feature-hash provider and persisted vectors without network access.
 
+## Reasoning
+
+- Repository excerpts are serialized only inside explicit untrusted-data sections; system role instructions and trusted task records are separate messages/sections.
+- Roles return strict JSON. Unknown fields and fabricated claim, evidence, or graph-edge IDs are rejected before domain state changes.
+- Agents can request only typed, bounded operations through `CodeRetrievalService`; they cannot open arbitrary paths, invoke tools, change providers, or expand budgets.
+- Provider/model assignments come from validated host configuration, never repository text or model output.
+- Deterministic verification overrides model agreement, and rejected claims are excluded by deterministic answer synthesis.
+- Execution traces retain concise structured conclusions and usage metadata. They do not store hidden chain-of-thought.
+- Reasoning is capped by model-call, round, repeated-request, evidence, graph, approximate-token, and output-token limits.
+
 ## Residual risks
 
 - Pattern-based secret detection has false positives and false negatives.

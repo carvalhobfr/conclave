@@ -4,7 +4,7 @@ Conclave is an evidence-driven Code RAG application built around a simple produc
 
 > Ask your code. Let the models argue.
 
-The project currently contains **Phase 2.5 — Graph-aware Retrieval and Context Efficiency**. It indexes TypeScript and JavaScript repositories and returns inspectable, provenance-backed repository evidence through deterministic graph-first planning. It intentionally does not generate an answer or run agents yet.
+The project currently contains **Phase 3 — Conclave Reasoning Engine**. It indexes TypeScript and JavaScript repositories, retrieves provenance-backed evidence, proposes explicit claims, selectively challenges them, performs bounded follow-up retrieval, verifies them, and returns an inspectable verdict.
 
 ## What exists
 
@@ -25,7 +25,15 @@ The project currently contains **Phase 2.5 — Graph-aware Retrieval and Context
 - Stable `Evidence` objects with exact line ranges and excerpts.
 - Structured indexing/retrieval events that exclude source text and queries.
 - Realistic fixture repositories and deterministic Phase 2 plus graph-aware evaluation harnesses.
-- CLI commands for indexing, search, planned retrieval, exact text, symbols, graph relations, and paths.
+- Structured `Claim`, `Challenge`, `RetrievalRequest`, `VerificationResult`, and `Verdict` state.
+- Independent role-to-provider/model assignments for Investigator, Skeptic, Architect, Verifier, and Judge.
+- Strict runtime validation and one bounded repair attempt for model JSON outputs.
+- Deterministic selective routing that avoids Skeptic and Architect calls for simple lookups.
+- Bounded, deduplicated follow-up symbol, text, caller/callee/reference, path, and search retrieval.
+- Deterministic verification that takes precedence over model agreement and preserves uncertainty.
+- Injection-resistant role prompts that frame repository source as untrusted data.
+- Per-role model-call, token, provider usage, latency, retrieval, and final-claim metrics.
+- CLI commands for indexing, retrieval inspection, graph queries, evidence-grounded questions, and evaluation.
 
 ## Quick start
 
@@ -49,6 +57,7 @@ npm run dev -- symbol /path/to/repository bootstrapSession
 npm run dev -- text /path/to/repository "AUTH_RESTORE_FAILED"
 npm run dev -- graph /path/to/repository bootstrapSession --operation callers
 npm run dev -- path /path/to/repository LoginButton persistToken --depth 4
+npm run dev -- ask /path/to/repository "Why might authentication disappear after refreshing?" --debug
 ```
 
 Search output includes rank, source location, structural symbol, retrieval score, component signals, graph/relationship reasons, and the exact repository excerpt. Retrieval scores are ranking values, not confidence estimates.
@@ -88,9 +97,29 @@ npm run eval:graph
 
 Compared on the same cases, graph-aware hybrid reduces approximate context tokens by 31.5% and packed evidence units by 34.3% while improving MRR by 0.0191. Graph-only is scored separately on three graph-resolvable cases and reaches MRR 1.0 with 118.7 mean approximate tokens. These fixtures are regression tests, not broad production benchmarks.
 
+The fixed Phase 3 benchmark compares the same two cases across single-pass generation, Investigator + Judge, and Conclave. It uses scripted fake providers, so CI measures orchestration rather than model variability.
+
+| Strategy | Answer accuracy | Claim precision | Unsupported rate | Wrong-claim rejection | Mean calls | Mean retrieval rounds | Mean context tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Single model | 0.5000 | 0.7500 | 0.2500 | 0.5000 | 1 | 0 | 986.0 |
+| Investigator + Judge | 0.5000 | 0.7500 | 0.2500 | 0.5000 | 2 | 0 | 1466.5 |
+| Conclave | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 3 | 1 | 2784.0 |
+
+Run it with:
+
+```bash
+npm run eval:reasoning
+```
+
+`eval-reasoning` also supports optional configured-provider experiments. Those runs are intentionally separate from deterministic CI:
+
+```bash
+npm run dev -- eval-reasoning /path/to/repository /path/to/reasoning-cases.json --json
+```
+
 ## Execution modes
 
-Free, API, and Local Mode configuration remains available from Phase 1 for later inference stages. Phase 2 retrieval itself is local and performs no LLM call.
+Free, API, and Local Mode configuration from Phase 1 now drives reasoning inference. Retrieval remains local and performs no LLM call.
 
 ```bash
 npm run dev -- config --json
@@ -100,6 +129,8 @@ npm run dev -- config --json
 - API Mode credentials come from the user process environment.
 - Local Mode permits only loopback model endpoints.
 - No credential is persisted in the code index.
+- `CONCLAVE_REASONING_PRESET` selects `free-like`, `full`, or `local` behavior.
+- `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` override each role independently.
 
 See `.env.example` for provider-connectivity examples. `provider-check` exercises only the provider adapter and is separate from retrieval.
 
@@ -110,17 +141,18 @@ src/
   code-intelligence/  structural parser adapters
   domain/             repository, evidence, index, graph, and provider ports
   embeddings/         interchangeable embedding implementations
-  evaluation/         retrieval benchmark runner
+  evaluation/         retrieval and reasoning benchmark runners
   graph/              deterministic code relationship extraction
   indexing/           persistent and incremental index lifecycle
   retrieval/          tokenizer, BM25, fusion, evidence, and query services
+  reasoning/          agents, routing, follow-up retrieval, verification, and verdicts
   repositories/       safe local-folder loading
   security/           path, secret, and untrusted-context boundaries
   storage/            app-state and credential-source adapters
 tests/fixtures/        realistic retrieval/evaluation repositories
 ```
 
-See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), and [security boundaries](docs/security.md).
+See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), and [security boundaries](docs/security.md).
 
 ## Current limitations
 
@@ -129,13 +161,16 @@ See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG arch
 - BM25 and vector search currently scan in-memory index records; there is no ANN index or database-backed inverted index.
 - Graph resolution covers relative imports, explicit exports/bindings, unique same-file identifiers, direct identifier calls, and simple resolvable heritage clauses. It does not attempt language-server-level resolution, dynamic imports, package exports, polymorphism, or arbitrary property dispatch.
 - Missing graph edges mean “not statically resolved,” not proof that no runtime relationship exists.
+- Negative deterministic checks are only as complete as the static index; dynamic dispatch and unresolved imports can require an uncertain verdict.
 - Context tokens use a deterministic bytes/4 estimate, not an exact provider tokenizer.
+- The CLI constructs the configured runtime provider. Heterogeneous role providers require embedding multiple configured adapters in a future host process; unsupported assignments fail cleanly.
+- Structured output uses strict JSON validation, not provider-specific JSON Schema transport.
 - Root `.gitignore` and `.conclaveignore` files are honored; nested ignore-file composition remains unimplemented.
 - The JSON index is atomic and owner-readable but not encrypted or cross-process locked.
 - Source files classified as likely secrets are excluded completely, but heuristic secret detection can have false positives and false negatives.
 - Local Git working trees can be indexed as folders; remote Git cloning is not implemented.
-- No Investigator, Skeptic, Architect, Verifier, Judge, Claims, Challenges, Verdict, LLM answer, hosted backend, rate limiter, or web UI exists.
+- No repository edits, patches, shell execution against target repositories, hosted backend, rate limiter, or web UI exists.
 
 ## Recommended next phase
 
-Proceed with **Phase 3 — Conclave Reasoning** against `PlannedRetrieval` and `ContextBundle`: structured Claims and Challenges, Investigator/Skeptic/Architect/Verifier/Judge roles, bounded follow-up retrieval, explicit orchestration state, traces, and verdict synthesis. Agents must cite retained evidence/edge provenance and treat unresolved graph relationships as unknown. Phase 3 should consume this retrieval subsystem rather than implementing another retrieval stack.
+Proceed with **Phase 4 — Task Execution** on top of the structured Verdict. Keep repository mutation, command authorization, patch generation, validation, and rollback boundaries separate from the Phase 3 reasoning engine.
