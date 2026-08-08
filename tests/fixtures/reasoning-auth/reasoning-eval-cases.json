@@ -1,0 +1,16 @@
+[
+  {
+    "id": "simple-bootstrap-callers",
+    "question": "Where is bootstrapSession called?",
+    "expectedSupportedClaims": ["bootstrapSession has at least one caller."],
+    "expectedRejectedClaims": [],
+    "expectedEvidencePaths": ["src/auth/AuthProvider.ts"]
+  },
+  {
+    "id": "auth-refresh-causal",
+    "question": "Why might authentication disappear after refreshing across the auth modules?",
+    "expectedSupportedClaims": ["The persisted token is not restored during bootstrapSession."],
+    "expectedRejectedClaims": ["The token is never persisted."],
+    "expectedEvidencePaths": ["src/auth/AuthProvider.ts"]
+  }
+]

@@ -11,6 +11,10 @@ import {
   runGraphAwareRetrievalEvaluation,
   runRetrievalEvaluation,
 } from "./evaluation/retrieval-evaluation.js";
+import {
+  loadReasoningEvaluationCases,
+  runReasoningEvaluation,
+} from "./evaluation/reasoning-evaluation.js";
 import { FileSystemCodeIndexStore } from "./indexing/file-system-index-store.js";
 import { RepositoryIndexer } from "./indexing/repository-indexer.js";
 import { createProvider } from "./providers/provider-factory.js";
@@ -36,6 +40,7 @@ Usage:
   conclave ask <path> <question> [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
+  conclave eval-reasoning <path> <reasoning-cases.json> [--json]
   conclave config [--json]
   conclave provider-check
   conclave help
@@ -534,6 +539,34 @@ async function askRepository(args: readonly string[]): Promise<void> {
   }
 }
 
+async function evaluateReasoning(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const casesPath = parsed.positionals[1];
+  if (requestedPath === undefined || casesPath === undefined) {
+    throw new Error("eval-reasoning requires a repository path and reasoning-cases JSON path");
+  }
+  const runtimeConfig = loadRuntimeConfig();
+  const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
+  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const indexed = await updateIndex(requestedPath);
+  const retrieval = new CodeRetrievalService(indexed.index, indexed.embeddingProvider);
+  const report = await runReasoningEvaluation(
+    await loadReasoningEvaluationCases(resolve(casesPath)),
+    () =>
+      Promise.resolve(new ReasoningEngine({
+        retrieval,
+        runtime: new StructuredAgentRuntime(
+          new Map([[provider.id, provider]]),
+          reasoningConfig.assignments,
+          DEFAULT_REASONING_LIMITS,
+        ),
+        preset: reasoningConfig.preset,
+      })),
+  );
+  print(report, parsed.json);
+}
+
 function showConfig(args: readonly string[]): void {
   const credentials = new EnvironmentCredentialSource();
   const report = describeRuntimeConfig(loadRuntimeConfig(), credentials);
@@ -601,6 +634,9 @@ async function main(): Promise<void> {
       return;
     case "eval-graph":
       await evaluateGraphRetrieval(args);
+      return;
+    case "eval-reasoning":
+      await evaluateReasoning(args);
       return;
     case "config":
       showConfig(args);
