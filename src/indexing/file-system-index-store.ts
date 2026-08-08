@@ -13,7 +13,7 @@ import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js"
 import { assessRepositoryContent } from "../security/content-safety.js";
 
 export const CODE_INDEX_DIRECTORY = ".conclave";
-export const CODE_INDEX_FILENAME = "code-index-v1.json";
+export const CODE_INDEX_FILENAME = "code-index-v2.json";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -82,7 +82,8 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
       !isSafeRelativePath(unit["path"]) ||
       typeof unit["startLine"] !== "number" ||
       typeof unit["endLine"] !== "number" ||
-      typeof unit["embeddingKey"] !== "string"
+      typeof unit["embeddingKey"] !== "string" ||
+      !Array.isArray(unit["heritage"])
     ) {
       throw new Error("Code index contains an invalid unit path");
     }
@@ -123,6 +124,9 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
       typeof from["id"] !== "string" ||
       typeof to["id"] !== "string" ||
       typeof provenance["path"] !== "string" ||
+      (provenance["kind"] !== "extracted" && provenance["kind"] !== "resolved") ||
+      typeof provenance["resolutionMethod"] !== "string" ||
+      typeof provenance["reason"] !== "string" ||
       !isSafeRelativePath(provenance["path"]) ||
       !(provenance["path"] in files) ||
       (from["kind"] === "file" ? !(from["id"] in files) : !(from["id"] in units)) ||

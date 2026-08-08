@@ -26,7 +26,7 @@ function nodeKey(node: GraphNodeReference): string {
 function edgeId(edge: Omit<GraphEdge, "id">): string {
   return `edge_${createHash("sha256")
     .update(
-      `${nodeKey(edge.from)}\0${nodeKey(edge.to)}\0${edge.relation}\0${edge.provenance.path}\0${String(edge.provenance.line ?? "")}\0${edge.provenance.reason}`,
+      `${nodeKey(edge.from)}\0${nodeKey(edge.to)}\0${edge.relation}\0${edge.provenance.kind}\0${edge.provenance.path}\0${String(edge.provenance.line ?? "")}\0${String(edge.provenance.endLine ?? "")}\0${edge.provenance.resolutionMethod}\0${edge.provenance.reason}`,
     )
     .digest("hex")
     .slice(0, 24)}`;
@@ -118,14 +118,28 @@ export function buildCodeGraph(
       from: symbolNode(unit.id),
       to: fileNode(unit.path),
       relation: "belongs-to-file",
-      provenance: { path: unit.path, line: unit.startLine, reason: "parser symbol ownership" },
+      provenance: {
+        kind: "extracted",
+        path: unit.path,
+        line: unit.startLine,
+        endLine: unit.endLine,
+        resolutionMethod: "parser-symbol-ownership",
+        reason: "symbol declaration is directly located in this file",
+      },
     });
     if (unit.exported) {
       add({
         from: fileNode(unit.path),
         to: symbolNode(unit.id),
         relation: "exports-symbol",
-        provenance: { path: unit.path, line: unit.startLine, reason: "explicit export modifier" },
+        provenance: {
+          kind: "extracted",
+          path: unit.path,
+          line: unit.startLine,
+          endLine: unit.startLine,
+          resolutionMethod: "explicit-export",
+          reason: "declaration has an explicit export",
+        },
       });
     }
     if (unit.parentSymbol !== undefined) {
@@ -135,7 +149,14 @@ export function buildCodeGraph(
           from: symbolNode(parent.id),
           to: symbolNode(unit.id),
           relation: "contains-symbol",
-          provenance: { path: unit.path, line: unit.startLine, reason: "nested parser range" },
+          provenance: {
+            kind: "extracted",
+            path: unit.path,
+            line: unit.startLine,
+            endLine: unit.endLine,
+            resolutionMethod: "nested-source-range",
+            reason: "declaration source range is nested inside its named parent",
+          },
         });
       }
     }
@@ -153,8 +174,11 @@ export function buildCodeGraph(
         to: fileNode(targetPath),
         relation: "imports-file",
         provenance: {
+          kind: "resolved",
           path: file.path,
           line: importReference.line,
+          endLine: importReference.line,
+          resolutionMethod: "relative-import-path",
           reason: `resolved relative import ${importReference.source}`,
         },
       });
@@ -174,8 +198,11 @@ export function buildCodeGraph(
           to: symbolNode(imported.id),
           relation: "imports-symbol",
           provenance: {
+            kind: "resolved",
             path: file.path,
             line: importReference.line,
+            endLine: importReference.line,
+            resolutionMethod: "explicit-import-binding",
             reason: `explicit ${binding.kind} import ${binding.imported}`,
           },
         });
@@ -200,7 +227,13 @@ export function buildCodeGraph(
           to: symbolNode(target.id),
           relation: "references-symbol",
           provenance: {
+            kind: "resolved",
             path: unit.path,
+            line: unit.startLine,
+            endLine: unit.endLine,
+            resolutionMethod: importedTargets.has(reference)
+              ? "imported-identifier"
+              : "unique-same-file-identifier",
             reason: importedTargets.has(reference)
               ? `identifier resolves through import ${reference}`
               : `unique same-file identifier ${reference}`,
@@ -217,11 +250,37 @@ export function buildCodeGraph(
           to: symbolNode(target.id),
           relation: "calls-symbol",
           provenance: {
+            kind: "resolved",
             path: unit.path,
             line: call.line,
+            endLine: call.line,
+            resolutionMethod: importedTargets.has(call.name)
+              ? "imported-identifier"
+              : "unique-same-file-identifier",
             reason: importedTargets.has(call.name)
               ? `direct call resolves through import ${call.name}`
               : `direct call resolves to unique same-file symbol ${call.name}`,
+          },
+        });
+      }
+      for (const heritage of unit.heritage) {
+        const target = importedTargets.get(heritage.name) ?? localByName.get(heritage.name);
+        if (target === undefined || target.id === unit.id) {
+          continue;
+        }
+        add({
+          from: symbolNode(unit.id),
+          to: symbolNode(target.id),
+          relation: heritage.relation === "extends" ? "extends-symbol" : "implements-symbol",
+          provenance: {
+            kind: "resolved",
+            path: unit.path,
+            line: heritage.line,
+            endLine: heritage.line,
+            resolutionMethod: importedTargets.has(heritage.name)
+              ? "imported-identifier"
+              : "unique-same-file-identifier",
+            reason: `${heritage.relation} clause resolves to ${heritage.name}`,
           },
         });
       }

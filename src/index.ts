@@ -13,6 +13,7 @@ export * from "./domain/storage.js";
 export * from "./embeddings/local-hash-embedding.js";
 export * from "./evaluation/retrieval-evaluation.js";
 export * from "./graph/code-graph.js";
+export * from "./graph/graph-query.js";
 export * from "./providers/fake-provider.js";
 export * from "./providers/openai-compatible-provider.js";
 export * from "./providers/provider-factory.js";

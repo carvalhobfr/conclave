@@ -41,6 +41,14 @@ export interface CallReference {
   readonly line: number;
 }
 
+export type HeritageRelation = "extends" | "implements";
+
+export interface HeritageReference {
+  readonly name: string;
+  readonly relation: HeritageRelation;
+  readonly line: number;
+}
+
 export interface ParseDiagnostic {
   readonly message: string;
   readonly line: number;
@@ -62,6 +70,7 @@ export interface StructuralCodeUnit {
   readonly exports: readonly ExportReference[];
   readonly references: readonly string[];
   readonly calls: readonly CallReference[];
+  readonly heritage: readonly HeritageReference[];
   readonly exported: boolean;
   readonly async: boolean;
 }

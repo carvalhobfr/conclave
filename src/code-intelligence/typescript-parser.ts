@@ -8,6 +8,7 @@ import type {
   CodeSymbolKind,
   ExportReference,
   FileIntelligence,
+  HeritageReference,
   ImportBinding,
   ImportReference,
   ParseDiagnostic,
@@ -395,6 +396,29 @@ function referencesAndCalls(
   };
 }
 
+function heritageReferences(sourceFile: ts.SourceFile, node: ts.Node): HeritageReference[] {
+  if (!ts.isClassDeclaration(node) && !ts.isInterfaceDeclaration(node)) {
+    return [];
+  }
+  const references: HeritageReference[] = [];
+  for (const clause of node.heritageClauses ?? []) {
+    const relation: HeritageReference["relation"] =
+      clause.token === ts.SyntaxKind.ImplementsKeyword ? "implements" : "extends";
+    for (const type of clause.types) {
+      if (ts.isIdentifier(type.expression)) {
+        references.push({
+          name: type.expression.text,
+          relation,
+          line: lineOf(sourceFile, type),
+        });
+      }
+    }
+  }
+  return references.sort(
+    (left, right) => left.line - right.line || left.relation.localeCompare(right.relation) || left.name.localeCompare(right.name),
+  );
+}
+
 function parseDiagnostics(sourceFile: ts.SourceFile): ParseDiagnostic[] {
   const diagnostics = (sourceFile as SourceFileWithParseDiagnostics).parseDiagnostics;
   return diagnostics.map((diagnostic) => {
@@ -452,6 +476,7 @@ export class TypeScriptCodeParser implements CodeParser {
           exports,
           references: details.references,
           calls: details.calls,
+          heritage: heritageReferences(sourceFile, descriptor.declaration),
           exported: isExportedNode(node),
           async: isAsyncNode(node) || (ts.isVariableDeclaration(node) && node.initializer !== undefined && isAsyncNode(node.initializer)),
         });

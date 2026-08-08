@@ -2,14 +2,15 @@ import type {
   CallReference,
   CodeSymbolKind,
   ExportReference,
+  HeritageReference,
   ImportReference,
   ParseDiagnostic,
 } from "./code-intelligence.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import type { RepositoryDescriptor, SourceLanguage } from "./repository.js";
 
-export const CODE_INDEX_SCHEMA_VERSION = 1;
-export const CODE_INDEXING_VERSION = 1;
+export const CODE_INDEX_SCHEMA_VERSION = 2;
+export const CODE_INDEXING_VERSION = 2;
 
 export class UnsupportedCodeIndexSchemaError extends Error {
   public constructor() {
@@ -35,6 +36,7 @@ export interface IndexedCodeUnit {
   readonly parentSymbol?: string;
   readonly references: readonly string[];
   readonly calls: readonly CallReference[];
+  readonly heritage: readonly HeritageReference[];
   readonly exported: boolean;
   readonly async: boolean;
   readonly lexical: LexicalDocument;
@@ -69,11 +71,27 @@ export type GraphRelation =
   | "imports-file"
   | "imports-symbol"
   | "references-symbol"
-  | "calls-symbol";
+  | "calls-symbol"
+  | "extends-symbol"
+  | "implements-symbol";
+
+export type RelationProvenance = "extracted" | "resolved";
+
+export type RelationResolutionMethod =
+  | "parser-symbol-ownership"
+  | "explicit-export"
+  | "nested-source-range"
+  | "relative-import-path"
+  | "explicit-import-binding"
+  | "imported-identifier"
+  | "unique-same-file-identifier";
 
 export interface GraphEdgeProvenance {
+  readonly kind: RelationProvenance;
   readonly path: string;
   readonly line?: number;
+  readonly endLine?: number;
+  readonly resolutionMethod: RelationResolutionMethod;
   readonly reason: string;
 }
 

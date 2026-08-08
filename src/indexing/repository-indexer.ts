@@ -64,6 +64,7 @@ function indexedUnit(unit: StructuralCodeUnit, key: string): IndexedCodeUnit {
     ...(unit.parentSymbol === undefined ? {} : { parentSymbol: unit.parentSymbol }),
     references: unit.references,
     calls: unit.calls,
+    heritage: unit.heritage,
     exported: unit.exported,
     async: unit.async,
     lexical: createLexicalDocument(unit.sourceText, unit.symbol, unit.path),

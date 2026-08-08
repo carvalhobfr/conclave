@@ -2,6 +2,7 @@ import type { GraphEdge, RepositoryCodeIndex } from "../domain/code-index.js";
 import type { EmbeddingProvider } from "../domain/embedding.js";
 import type { Evidence, RetrievalResult } from "../domain/evidence.js";
 import { CodeGraph } from "../graph/code-graph.js";
+import { GraphQueryService } from "../graph/graph-query.js";
 import { HybridRetriever, type SearchOptions } from "./hybrid-retriever.js";
 import { CodeIndexReader, type FileRange, type TextSearchOptions } from "./index-reader.js";
 
@@ -16,12 +17,18 @@ export class CodeRetrievalService {
   readonly #reader: CodeIndexReader;
   readonly #retriever: HybridRetriever;
   readonly #graph: CodeGraph;
+  readonly #graphQueries: GraphQueryService;
 
   public constructor(index: RepositoryCodeIndex, embeddingProvider: EmbeddingProvider) {
     this.#index = index;
     this.#reader = new CodeIndexReader(index);
     this.#retriever = new HybridRetriever(index, embeddingProvider);
     this.#graph = new CodeGraph(index);
+    this.#graphQueries = new GraphQueryService(index);
+  }
+
+  public get graph(): GraphQueryService {
+    return this.#graphQueries;
   }
 
   public search(query: string, options?: SearchOptions): Promise<readonly RetrievalResult[]> {

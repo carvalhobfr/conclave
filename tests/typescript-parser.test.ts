@@ -154,6 +154,23 @@ exports.PlayerService = PlayerService;`,
     expect(parsed.diagnostics.length).toBeGreaterThan(0);
   });
 
+  it("extracts simple extends and implements clauses without resolving them", () => {
+    const parsed = parser.parse(
+      sourceFile(
+        "src/controller.ts",
+        "typescript",
+        `interface Reader {}
+class Base {}
+export class Controller extends Base implements Reader {}`,
+      ),
+    );
+
+    expect(parsed.units.find((unit) => unit.symbol === "Controller")?.heritage).toEqual([
+      { name: "Base", relation: "extends", line: 3 },
+      { name: "Reader", relation: "implements", line: 3 },
+    ]);
+  });
+
   it("uses deterministic identities", () => {
     const file = sourceFile("src/a.ts", "typescript", "export const run = () => true;");
     const first = parser.parse(file).units[0];
