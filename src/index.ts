@@ -19,6 +19,7 @@ export * from "./domain/task-execution.js";
 export * from "./embeddings/local-hash-embedding.js";
 export * from "./evaluation/retrieval-evaluation.js";
 export * from "./evaluation/reasoning-evaluation.js";
+export * from "./evaluation/task-evaluation.js";
 export * from "./execution/execution-workspace.js";
 export * from "./execution/repository-editor.js";
 export * from "./execution/capability-policy.js";

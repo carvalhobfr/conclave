@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
 import { loadReasoningConfiguration } from "./config/reasoning-config.js";
+import { loadTaskConfiguration } from "./config/task-config.js";
 import { LocalHashEmbeddingProvider } from "./embeddings/local-hash-embedding.js";
 import {
   loadEvaluationCases,
@@ -24,6 +25,9 @@ import type { RetrievalStrategy } from "./retrieval/hybrid-retriever.js";
 import { StructuredAgentRuntime } from "./reasoning/agent-runtime.js";
 import { ReasoningEngine } from "./reasoning/reasoning-engine.js";
 import { DEFAULT_REASONING_LIMITS } from "./domain/reasoning.js";
+import { DEFAULT_TASK_EXECUTION_LIMITS } from "./domain/task-execution.js";
+import { StructuredTaskAgentRuntime } from "./execution/task-agent-runtime.js";
+import { TaskExecutionEngine } from "./execution/task-execution-engine.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
 
 const HELP = `Conclave Code Intelligence CLI
@@ -38,6 +42,7 @@ Usage:
   conclave graph <path> <symbol-or-file> [--operation neighbors|callers|callees|imports|exports|references|containing|contained|related] [--depth N] [--limit N] [--json]
   conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
   conclave ask <path> <question> [--json] [--debug]
+  conclave task <path> <objective> [--plan-only] [--allow-edits] [--allow-checks] [--allow-repository-scripts] [--allow-network] [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
   conclave eval-reasoning <path> <reasoning-cases.json> [--json]
@@ -68,6 +73,11 @@ interface ParsedArguments {
   readonly tokens: number;
   readonly graphOperation: GraphOperation;
   readonly debug: boolean;
+  readonly planOnly: boolean;
+  readonly allowEdits: boolean;
+  readonly allowChecks: boolean;
+  readonly allowRepositoryScripts: boolean;
+  readonly allowNetwork: boolean;
 }
 
 function parseArguments(args: readonly string[]): ParsedArguments {
@@ -80,6 +90,11 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let tokens = 6_000;
   let graphOperation: GraphOperation = "neighbors";
   let debug = false;
+  let planOnly = false;
+  let allowEdits = false;
+  let allowChecks = false;
+  let allowRepositoryScripts = false;
+  let allowNetwork = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
@@ -88,6 +103,26 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     }
     if (argument === "--debug") {
       debug = true;
+      continue;
+    }
+    if (argument === "--plan-only") {
+      planOnly = true;
+      continue;
+    }
+    if (argument === "--allow-edits") {
+      allowEdits = true;
+      continue;
+    }
+    if (argument === "--allow-checks") {
+      allowChecks = true;
+      continue;
+    }
+    if (argument === "--allow-repository-scripts") {
+      allowRepositoryScripts = true;
+      continue;
+    }
+    if (argument === "--allow-network") {
+      allowNetwork = true;
       continue;
     }
     if (argument === "--strategy") {
@@ -154,7 +189,22 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       positionals.push(argument);
     }
   }
-  return { positionals, json, strategy, limit, depth, sourceBytes, tokens, graphOperation, debug };
+  return {
+    positionals,
+    json,
+    strategy,
+    limit,
+    depth,
+    sourceBytes,
+    tokens,
+    graphOperation,
+    debug,
+    planOnly,
+    allowEdits,
+    allowChecks,
+    allowRepositoryScripts,
+    allowNetwork,
+  };
 }
 
 function print(value: unknown, json: boolean): void {
@@ -567,6 +617,98 @@ async function evaluateReasoning(args: readonly string[]): Promise<void> {
   print(report, parsed.json);
 }
 
+async function executeTask(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  const objective = parsed.positionals.slice(1).join(" ").trim();
+  if (requestedPath === undefined || objective === "") {
+    throw new Error("task requires a repository path and explicit objective");
+  }
+  if (parsed.allowRepositoryScripts && !parsed.allowChecks) {
+    throw new Error("--allow-repository-scripts requires --allow-checks");
+  }
+  if (parsed.allowNetwork && !parsed.allowRepositoryScripts) {
+    throw new Error("--allow-network requires --allow-repository-scripts");
+  }
+  const runtimeConfig = loadRuntimeConfig();
+  const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
+  const taskConfig = loadTaskConfiguration(runtimeConfig);
+  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const indexed = await updateIndex(requestedPath);
+  const providers = new Map([[provider.id, provider]]);
+  const reasoning = new ReasoningEngine({
+    retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
+    runtime: new StructuredAgentRuntime(
+      providers,
+      reasoningConfig.assignments,
+      DEFAULT_REASONING_LIMITS,
+    ),
+    preset: reasoningConfig.preset,
+  });
+  const result = await new TaskExecutionEngine({
+    investigator: reasoning,
+    taskRuntime: new StructuredTaskAgentRuntime(
+      providers,
+      taskConfig.assignments,
+      DEFAULT_TASK_EXECUTION_LIMITS,
+    ),
+    permissions: {
+      allowFileEdits: parsed.allowEdits && !parsed.planOnly,
+      allowCommands: parsed.allowChecks && !parsed.planOnly,
+      allowRepositoryScripts: parsed.allowRepositoryScripts && !parsed.planOnly,
+      allowNetwork: parsed.allowNetwork && !parsed.planOnly,
+    },
+    limits: DEFAULT_TASK_EXECUTION_LIMITS,
+    allowedPackageScripts: taskConfig.allowedPackageScripts,
+  }).execute({
+    intent: "task",
+    repositoryRoot: requestedPath,
+    objective,
+    planOnly: parsed.planOnly,
+  });
+  if (parsed.json) {
+    print(
+      parsed.debug
+        ? result
+        : {
+            task: result.task,
+            diagnosisClaims: result.diagnosisClaims,
+            patchRecords: result.patchRecords,
+            review: result.review,
+            verdict: result.verdict,
+            metrics: result.metrics,
+          },
+      true,
+    );
+    return;
+  }
+  console.log(`Task verdict: ${result.verdict.status}`);
+  console.log(result.verdict.summary);
+  console.log(`Plan: ${result.task.plan.summary}`);
+  for (const requirement of result.verdict.requirements) {
+    console.log(`Requirement ${requirement.outcome}: ${requirement.requirementId} — ${requirement.explanation}`);
+  }
+  for (const file of result.verdict.changedFiles) {
+    console.log(
+      `Changed: ${file.path} (+${String(file.additions)}/-${String(file.deletions)})${file.expectedByPlan ? "" : " [unexpected]"}`,
+    );
+  }
+  for (const record of result.patchRecords) console.log(record.unifiedDiff);
+  for (const check of result.verdict.checks) {
+    console.log(`Check ${check.status}: ${check.requestId} (${check.command.kind})`);
+  }
+  for (const finding of result.review.findings) {
+    console.log(`Review ${finding.severity}: ${finding.statement}`);
+  }
+  console.log(
+    `Usage: investigation ${String(result.metrics.investigation.modelCalls)} calls; task ${String(result.metrics.taskModelCalls)} calls; ${String(result.metrics.commandCount)} commands; ${String(result.metrics.approximateInputTokens)} approximate task input tokens`,
+  );
+  if (parsed.debug) {
+    console.log("Trace:");
+    for (const event of result.trace) console.log(`${String(event.sequence)} ${event.type}: ${event.detail}`);
+  }
+}
+
 function showConfig(args: readonly string[]): void {
   const credentials = new EnvironmentCredentialSource();
   const report = describeRuntimeConfig(loadRuntimeConfig(), credentials);
@@ -628,6 +770,9 @@ async function main(): Promise<void> {
       return;
     case "ask":
       await askRepository(args);
+      return;
+    case "task":
+      await executeTask(args);
       return;
     case "eval":
       await evaluateRetrieval(args);

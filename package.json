@@ -16,6 +16,7 @@
     "eval": "npm run dev -- eval tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json --json",
     "eval:graph": "npm run dev -- eval-graph tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json tests/fixtures/code-rag/graph-eval-cases.json --json",
     "eval:reasoning": "vitest run tests/reasoning-evaluation.test.ts --maxWorkers=1",
+    "eval:task": "vitest run tests/task-evaluation.test.ts --maxWorkers=1",
     "lint": "eslint .",
     "start": "node dist/cli.js",
     "test": "vitest run",
