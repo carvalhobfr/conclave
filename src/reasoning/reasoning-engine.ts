@@ -224,7 +224,9 @@ export class ReasoningEngine {
     emit("agent_selected", "Investigator is required for evidence decomposition", {
       role: "investigator",
     });
-    const initialEvidenceIds = new Set(evidence.map((item) => item.id));
+    const initialEvidenceIds = new Set(
+      initialContext.evidence.flatMap((item) => item.sourceEvidenceIds),
+    );
     const investigator = await executeAgent(
       "investigator",
       investigatorPrompt(question, initialContext),
@@ -248,10 +250,28 @@ export class ReasoningEngine {
       });
     }
 
-    const selections = routeReasoningAgents(this.#preset, question, initialContext, claims).map((selection) =>
-      mode === "conclave" || selection.role === "investigator" || selection.role === "judge"
-        ? selection
-        : { ...selection, selected: false, reason: `${mode} baseline excludes ${selection.role}` },
+    const selections = routeReasoningAgents(this.#preset, question, initialContext, claims).map(
+      (selection) => {
+        const baselineSelected =
+          selection.role === "investigator" ||
+          (mode === "investigator-judge" && selection.role === "judge");
+        const selected =
+          claims.length > 0 || selection.role === "investigator"
+            ? mode === "conclave"
+              ? selection.selected
+              : baselineSelected
+            : false;
+        return selected
+          ? selection
+          : {
+              ...selection,
+              selected: false,
+              reason:
+                claims.length === 0 && selection.role !== "investigator"
+                  ? "no valid investigator claims are available"
+                  : `${mode} baseline excludes ${selection.role}`,
+            };
+      },
     );
     for (const selection of selections.filter((item) => item.role !== "investigator")) {
       emit(selection.selected ? "agent_selected" : "agent_skipped", selection.reason, {

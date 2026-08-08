@@ -101,6 +101,21 @@ describe("bounded reasoning retrieval", () => {
     );
   });
 
+  it("preserves uncertainty when a graph symbol is ambiguous", async () => {
+    const service = await reasoningFixture();
+    const result = await new FollowUpRetrievalExecutor(service, 10, 3).execute(
+      request("request_ambiguous", { kind: "callers", symbol: "restoreState" }),
+    );
+    const verification = new DeterministicClaimVerifier().verifyCheck(
+      claim({ kind: "callers", symbol: "restoreState", expectation: "absent" }),
+      result,
+      1,
+    );
+
+    expect(result.deterministicOperations).toContain("ambiguous-symbol");
+    expect(verification?.outcome).toBe("uncertain");
+  });
+
   it("routes simple lookup and cross-module causal questions selectively", async () => {
     const service = await reasoningFixture();
     const simpleRetrieval = await service.retrieve("Where is bootstrapSession called?");

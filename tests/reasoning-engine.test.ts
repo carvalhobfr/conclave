@@ -33,6 +33,17 @@ describe("ReasoningEngine", () => {
     expect(result.state.selections.find((selection) => selection.role === "architect")?.selected).toBe(false);
   });
 
+  it("reports only the Investigator as selected in the single-pass baseline", async () => {
+    const result = await (
+      await createReasoningFixtureEngine()
+    ).ask("Where is bootstrapSession called?", "single-pass");
+
+    expect(
+      result.state.selections.filter((selection) => selection.selected).map((selection) => selection.role),
+    ).toEqual(["investigator"]);
+    expect(result.verdict.traceSummary.agentsExecuted).toEqual(["investigator"]);
+  });
+
   it("terminates gracefully when the model-call budget is exhausted", async () => {
     const result = await (
       await createReasoningFixtureEngine(reasoningFixtureProvider(), 1)

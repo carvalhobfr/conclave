@@ -66,16 +66,18 @@ export class FollowUpRetrievalExecutor {
           deterministicOperations.push("ambiguous-symbol");
           break;
         }
-        if (resolution.status === "resolved") {
-          const limits = { maxDepth: 1, maxNodes: this.#maxEvidence };
-          const relations =
-            request.kind === "references"
-              ? this.#service.graph.references(resolution.node.reference, limits)
-              : request.kind === "callers"
-                ? this.#service.graph.callers(resolution.node.reference, limits)
-                : this.#service.graph.callees(resolution.node.reference, limits);
-          this.#appendRelations(relations, evidence, graphEdges);
+        if (resolution.status === "not-found") {
+          deterministicOperations.push("unresolved-symbol");
+          break;
         }
+        const limits = { maxDepth: 1, maxNodes: this.#maxEvidence };
+        const relations =
+          request.kind === "references"
+            ? this.#service.graph.references(resolution.node.reference, limits)
+            : request.kind === "callers"
+              ? this.#service.graph.callers(resolution.node.reference, limits)
+              : this.#service.graph.callees(resolution.node.reference, limits);
+        this.#appendRelations(relations, evidence, graphEdges);
         break;
       }
       case "path": {
@@ -91,8 +93,12 @@ export class FollowUpRetrievalExecutor {
             const item = this.#evidenceForNode(node.reference);
             if (item !== undefined) evidence.push(item);
           }
+        } else if (path.status === "no-path") {
+          deterministicOperations.push("graph-no-path");
         } else if (path.status === "ambiguous") {
           deterministicOperations.push("ambiguous-symbol");
+        } else {
+          deterministicOperations.push("unresolved-symbol");
         }
         break;
       }

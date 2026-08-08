@@ -63,6 +63,22 @@ export class DeterministicClaimVerifier {
   ): VerificationResult | undefined {
     const check = claim.check;
     if (check === undefined) return undefined;
+    const unresolved = result.deterministicOperations.find(
+      (operation) => operation === "ambiguous-symbol" || operation === "unresolved-symbol",
+    );
+    if (unresolved !== undefined) {
+      return {
+        id: verificationId(claim.id, iteration, `check:${check.kind}:${unresolved}`),
+        claimId: claim.id,
+        outcome: "uncertain",
+        method: methodFor(check),
+        explanation: `${check.kind} could not be verified because deterministic resolution was ${unresolved}`,
+        evidenceIds: result.evidence.map((evidence) => evidence.id),
+        graphEdgeIds: result.graphEdges.map((edge) => edge.id),
+        deterministic: true,
+        iteration,
+      };
+    }
     const found = hasResult(result);
     const expectedPresent = check.expectation === "present";
     const supported = found === expectedPresent;
