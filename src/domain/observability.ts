@@ -8,6 +8,8 @@ export type RetrievalEventType =
   | "semantic_search_completed"
   | "hybrid_search_completed"
   | "graph_expansion_completed"
+  | "retrieval_plan_completed"
+  | "context_packed"
   | "evidence_selected";
 
 export interface RetrievalEvent {

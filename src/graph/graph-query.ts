@@ -218,7 +218,7 @@ export class GraphQueryService {
   ): readonly GraphRelationResult[] {
     return this.#relations(
       node,
-      "outgoing",
+      node.kind === "file" ? "outgoing" : "incoming",
       new Set<GraphRelation>(["imports-file", "imports-symbol"]),
       limits,
     );
@@ -228,7 +228,12 @@ export class GraphQueryService {
     node: GraphNodeReference,
     limits: Partial<GraphQueryLimits> = {},
   ): readonly GraphRelationResult[] {
-    return this.#relations(node, "outgoing", new Set<GraphRelation>(["exports-symbol"]), limits);
+    return this.#relations(
+      node,
+      node.kind === "file" ? "outgoing" : "incoming",
+      new Set<GraphRelation>(["exports-symbol"]),
+      limits,
+    );
   }
 
   public references(
@@ -364,6 +369,8 @@ export class GraphQueryService {
     }
     const fromKey = nodeKey(from);
     const toKey = nodeKey(to);
+    const allowedRelations =
+      relations ?? (from.kind === "symbol" && to.kind === "symbol" ? SYMBOL_PATH_RELATIONS : undefined);
     if (fromKey === toKey) {
       return { status: "found", nodes: [fromNode], edges: [], limits: normalized };
     }
@@ -382,7 +389,7 @@ export class GraphQueryService {
       if (current.depth >= normalized.maxDepth) {
         continue;
       }
-      for (const adjacent of this.#adjacent(current.reference, direction, relations)) {
+      for (const adjacent of this.#adjacent(current.reference, direction, allowedRelations)) {
         const key = nodeKey(adjacent.next);
         if (visited.has(key)) {
           continue;

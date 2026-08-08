@@ -5,6 +5,10 @@ import { CodeGraph } from "../graph/code-graph.js";
 import { GraphQueryService } from "../graph/graph-query.js";
 import { HybridRetriever, type SearchOptions } from "./hybrid-retriever.js";
 import { CodeIndexReader, type FileRange, type TextSearchOptions } from "./index-reader.js";
+import { RetrievalPlanner, type RetrievalPlannerOptions } from "./retrieval-planner.js";
+import type { PlannedRetrieval } from "../domain/retrieval-plan.js";
+import type { ContextBundle } from "../domain/context-bundle.js";
+import { ContextPacker } from "./context-packer.js";
 
 export interface RelatedEvidence {
   readonly evidence: Evidence;
@@ -18,6 +22,8 @@ export class CodeRetrievalService {
   readonly #retriever: HybridRetriever;
   readonly #graph: CodeGraph;
   readonly #graphQueries: GraphQueryService;
+  readonly #planner: RetrievalPlanner;
+  readonly #contextPacker: ContextPacker;
 
   public constructor(index: RepositoryCodeIndex, embeddingProvider: EmbeddingProvider) {
     this.#index = index;
@@ -25,6 +31,8 @@ export class CodeRetrievalService {
     this.#retriever = new HybridRetriever(index, embeddingProvider);
     this.#graph = new CodeGraph(index);
     this.#graphQueries = new GraphQueryService(index);
+    this.#planner = new RetrievalPlanner(index, embeddingProvider);
+    this.#contextPacker = new ContextPacker(index);
   }
 
   public get graph(): GraphQueryService {
@@ -33,6 +41,14 @@ export class CodeRetrievalService {
 
   public search(query: string, options?: SearchOptions): Promise<readonly RetrievalResult[]> {
     return this.#retriever.search(query, options);
+  }
+
+  public retrieve(query: string, options?: RetrievalPlannerOptions): Promise<PlannedRetrieval> {
+    return this.#planner.retrieve(query, options);
+  }
+
+  public packContext(retrieval: PlannedRetrieval): ContextBundle {
+    return this.#contextPacker.pack(retrieval.results, retrieval.graphEdges, retrieval.budget);
   }
 
   public searchText(text: string, options?: TextSearchOptions): readonly Evidence[] {
