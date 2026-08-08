@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Bm25Config } from "./bm25.js";
 import { DEFAULT_BM25_CONFIG, searchBm25, type ScoredUnit } from "./bm25.js";
 import type { IndexedCodeUnit, RepositoryCodeIndex } from "../domain/code-index.js";
+import type { CodeSymbolKind } from "../domain/code-intelligence.js";
 import type { EmbeddingProvider } from "../domain/embedding.js";
 import type {
   RetrievalReason,
@@ -30,6 +31,7 @@ export interface HybridRetrievalConfig {
   readonly candidateLimit: number;
   readonly defaultLimit: number;
   readonly weights: FusionWeights;
+  readonly symbolKindWeights: Readonly<Record<CodeSymbolKind, number>>;
   readonly bm25: Bm25Config;
 }
 
@@ -38,12 +40,23 @@ export const DEFAULT_HYBRID_RETRIEVAL_CONFIG: HybridRetrievalConfig = {
   candidateLimit: 100,
   defaultLimit: 10,
   weights: {
-    lexical: 1.2,
-    semantic: 1,
+    lexical: 0.8,
+    semantic: 1.2,
     exactSymbol: 8,
-    partialSymbol: 1.5,
-    path: 1,
-    graph: 0.8,
+    partialSymbol: 0.25,
+    path: 1.2,
+    graph: 1,
+  },
+  symbolKindWeights: {
+    function: 1,
+    class: 0.9,
+    method: 1,
+    "react-component": 1,
+    hook: 1,
+    interface: 0.55,
+    "type-alias": 0.55,
+    enum: 0.7,
+    "variable-function": 1,
   },
   bm25: DEFAULT_BM25_CONFIG,
 };
@@ -104,6 +117,7 @@ function symbolSignals(
   const identifiers = rawQueryIdentifiers(query);
   const normalizedIdentifiers = new Set(identifiers.map(normalizeIdentifier));
   const queryTokens = new Set(tokenizeCode(query));
+  const lowInformationTokens = new Set(["data", "get", "main", "run", "set", "state", "use", "value"]);
   const exact: ScoredUnit[] = [];
   const partial: ScoredUnit[] = [];
   for (const unit of units) {
@@ -114,7 +128,7 @@ function symbolSignals(
     }
     const symbolTokens = tokenizeCode(unit.symbol);
     const matchingTokens = symbolTokens.filter(
-      (token) => token.length >= 3 && queryTokens.has(token),
+      (token) => token.length >= 3 && !lowInformationTokens.has(token) && queryTokens.has(token),
     );
     if (matchingTokens.length > 0) {
       partial.push({ unit, score: matchingTokens.length / Math.max(symbolTokens.length, 1) });
@@ -132,7 +146,13 @@ function pathSignals(units: readonly IndexedCodeUnit[], query: string): readonly
   return units
     .flatMap((unit) => {
       const pathTokens = new Set(tokenizeCode(unit.path));
-      const matches = [...queryTokens].filter((token) => pathTokens.has(token)).length;
+      const matches = [...queryTokens].filter((token) =>
+        [...pathTokens].some(
+          (pathToken) =>
+            pathToken === token ||
+            (pathToken.length >= 3 && token.length >= 3 && token.startsWith(pathToken)),
+        ),
+      ).length;
       return matches === 0
         ? []
         : [{ unit, score: matches / Math.max(pathTokens.size, queryTokens.size, 1) }];
@@ -221,6 +241,8 @@ export class HybridRetriever {
     }
 
     const candidates = new Map<string, Candidate>();
+    const weightedScore = (candidate: Candidate): number =>
+      candidate.score * this.#config.symbolKindWeights[candidate.unit.symbolKind];
     const addRanking = (
       ranking: readonly ScoredUnit[],
       signal: keyof RetrievalSignals,
@@ -255,16 +277,26 @@ export class HybridRetriever {
         const seedIds = [...candidates.values()]
           .sort(
             (left, right) =>
-              right.score - left.score ||
+              weightedScore(right) - weightedScore(left) ||
               left.unit.path.localeCompare(right.unit.path) ||
               left.unit.startLine - right.unit.startLine,
           )
-          .slice(0, 1)
+          .slice(0, Math.min(limit, 5))
           .map((candidate) => candidate.unit.id);
-        const expanded = new CodeGraph(this.#index).expand(seedIds, {
-          maxDepth: options.graphDepth ?? 2,
-          maxEvidence: options.graphEvidenceBudget ?? 20,
-        });
+        const graph = new CodeGraph(this.#index);
+        const graphBudget = options.graphEvidenceBudget ?? 20;
+        const expanded = seedIds
+          .flatMap((seedId) =>
+            graph.expand([seedId], {
+              maxDepth: options.graphDepth ?? 2,
+              maxEvidence: graphBudget,
+            }),
+          )
+          .filter(
+            (item, index, values) =>
+              values.findIndex((candidate) => candidate.unit.id === item.unit.id) === index,
+          )
+          .slice(0, graphBudget);
         for (const related of expanded) {
           const candidate = candidates.get(related.unit.id) ?? {
             unit: related.unit,
@@ -295,7 +327,7 @@ export class HybridRetriever {
     const results = [...candidates.values()]
       .sort(
         (left, right) =>
-          right.score - left.score ||
+          weightedScore(right) - weightedScore(left) ||
           left.unit.path.localeCompare(right.unit.path) ||
           left.unit.startLine - right.unit.startLine ||
           left.unit.id.localeCompare(right.unit.id),
@@ -304,7 +336,7 @@ export class HybridRetriever {
       .map<RetrievalResult>((candidate, index) => ({
         evidence: evidenceFromUnit(this.#index, candidate.unit),
         rank: index + 1,
-        score: candidate.score,
+        score: weightedScore(candidate),
         signals: candidate.signals,
         reasons: candidate.reasons,
       }));

@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "npm run build --silent && node dist/cli.js",
+    "eval": "npm run dev -- eval tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json --json",
     "lint": "eslint .",
     "start": "node dist/cli.js",
     "test": "vitest run",

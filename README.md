@@ -4,21 +4,25 @@ Conclave is an evidence-driven Code RAG application built around a simple produc
 
 > Ask your code. Let the models argue.
 
-This repository currently contains **Phase 1 — Foundation**. It establishes safe repository access, execution-mode and provider boundaries, persistence ports, and a developer CLI. It intentionally does not claim to perform Code RAG or multi-agent analysis yet.
+The project currently contains **Phase 2 — Code Intelligence and RAG**. It indexes TypeScript and JavaScript repositories and returns inspectable, provenance-backed repository evidence. It intentionally does not generate an answer or run agents yet.
 
 ## What exists
 
-- Strict TypeScript domain types for repositories, evidence references, providers, privacy boundaries, and persistence.
-- A `RepositorySource` port and a working local-folder adapter.
-- Root `.gitignore`, `.conclaveignore`, built-in generated-output, cache, binary, and obvious-secret exclusions.
-- File size/count limits, binary detection, extension-based language detection, symlink exclusion, and optional allowed-root enforcement.
-- A content safety assessment for likely credentials, private keys, and prompt-injection-shaped text.
-- A bounded repository-context builder that labels source as untrusted and prevents secret-bearing files from entering external model context.
-- Free, API, and Local Mode configuration with explicit privacy boundaries.
-- A provider-neutral `LlmProvider` interface, deterministic `FakeProvider`, and working OpenAI-compatible Chat Completions HTTP adapter.
-- Environment-only credential access; runtime configuration contains credential references, not credential values.
-- In-memory and owner-readable JSON-file persistence adapters.
-- A small CLI for repository scans, safe configuration inspection, and provider connectivity checks.
+- Phase 1 repository, provider, privacy, credential, persistence, and content-safety boundaries.
+- Tolerant structural parsing for TypeScript, TSX, JavaScript, and JSX through the TypeScript compiler API.
+- Functions, classes, methods, React components, hooks, interfaces, type aliases, enums, nested symbols, and variable-assigned functions.
+- Independent file intelligence for source hashes, imports, exports, parser diagnostics, and symbol identities.
+- Persistent incremental indexing with changed/new/deleted-file handling and cached embeddings.
+- Deterministic symbol lookup, path + symbol lookup, exported-symbol discovery, exact text search, and file/range reads.
+- Local BM25 retrieval over code-aware tokens.
+- A local 384-dimensional code-aware feature-hashing embedding implementation with no model download or paid API.
+- Weighted Reciprocal Rank Fusion across lexical, semantic, exact/partial symbol, path, and graph signals.
+- A provenance-backed graph for resolved imports, explicit symbol bindings, containment, and direct local/imported references and calls.
+- Bounded graph expansion with depth, evidence-budget, and duplicate limits.
+- Stable `Evidence` objects with exact line ranges and excerpts.
+- Structured indexing/retrieval events that exclude source text and queries.
+- Realistic fixture repositories and a deterministic lexical/semantic/hybrid evaluation harness.
+- CLI commands for indexing, retrieval, exact text, and symbols.
 
 ## Quick start
 
@@ -29,106 +33,86 @@ npm install
 npm test
 npm run typecheck
 npm run lint
-npm run dev -- scan .
+npm run build
 ```
 
-The scan command reports aggregate metadata only; it does not print repository source.
+Index and inspect a repository:
 
 ```bash
-npm run dev -- scan /path/to/repository --json
-npm run dev -- config --json
+npm run dev -- index /path/to/repository
+npm run dev -- search /path/to/repository "where is authentication restored?"
+npm run dev -- symbol /path/to/repository bootstrapSession
+npm run dev -- text /path/to/repository "AUTH_RESTORE_FAILED"
 ```
+
+Search output includes rank, source location, structural symbol, retrieval score, component signals, graph/relationship reasons, and the exact repository excerpt. Retrieval scores are ranking values, not confidence estimates.
+
+The search command incrementally updates the repository index before querying it. Persistent indexes live at `.conclave/code-index-v1.json` inside the indexed repository and are excluded from future scans.
+
+## Evaluation
+
+Run the committed fixture benchmark:
+
+```bash
+npm run eval
+```
+
+Current three-case results:
+
+| Strategy | File R@1 | File R@3 | File R@5 | Symbol R@1 | Symbol R@3 | Symbol R@5 | MRR |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Lexical | 0.3333 | 0.6667 | 0.8333 | 0.3333 | 0.6667 | 0.6667 | 0.5000 |
+| Semantic | 0.3333 | 0.6667 | 1.0000 | 0.1667 | 0.6667 | 1.0000 | 0.5556 |
+| Hybrid | 0.6667 | 0.8333 | 0.8333 | 0.5000 | 0.8333 | 0.8333 | 0.7778 |
+
+Hybrid improves early file recall and MRR on this small fixture, but semantic-only File Recall@5 remains higher. The benchmark reports this rather than hiding it.
 
 ## Execution modes
 
-Copy `.env.example` into your process/environment manager as a reference. The CLI does not load `.env` files itself, which avoids adding a second credential persistence path.
-
-### Free Mode
-
-Free Mode is the default. Credentials belong to the Conclave server process:
+Free, API, and Local Mode configuration remains available from Phase 1 for later inference stages. Phase 2 retrieval itself is local and performs no LLM call.
 
 ```bash
-CONCLAVE_MODE=free \
-CONCLAVE_FREE_PROVIDER=openai \
-CONCLAVE_FREE_MODEL=your-server-model \
-CONCLAVE_FREE_API_KEY=your-server-key \
-npm run dev -- provider-check
+npm run dev -- config --json
 ```
 
-The Phase 1 CLI exercises this boundary, but there is no hosted service or rate limiter yet.
+- Free Mode credentials come from the server process.
+- API Mode credentials come from the user process environment.
+- Local Mode permits only loopback model endpoints.
+- No credential is persisted in the code index.
 
-### API Mode
-
-API Mode reads a user-provided key from the current process only:
-
-```bash
-CONCLAVE_MODE=api \
-CONCLAVE_PROVIDER=openai \
-CONCLAVE_MODEL=your-model \
-CONCLAVE_API_KEY=your-key \
-npm run dev -- provider-check
-```
-
-`openai`, `openrouter`, `opencode-zen`, and `openai-compatible` can use the OpenAI-compatible adapter when a compatible HTTPS base URL is available. OpenAI and OpenRouter have built-in base URLs; custom providers require `CONCLAVE_BASE_URL`.
-
-Anthropic and Gemini are recognized provider identities but deliberately fail with a clear unsupported-adapter error. Their native protocol adapters are not implemented in this phase.
-
-### Local Mode
-
-Local Mode allows only loopback HTTP(S) endpoints and does not require an API key:
-
-```bash
-CONCLAVE_MODE=local \
-CONCLAVE_PROVIDER=ollama \
-CONCLAVE_MODEL=your-installed-model \
-npm run dev -- provider-check
-```
-
-Defaults:
-
-- Ollama: `http://127.0.0.1:11434/v1`
-- LM Studio: `http://127.0.0.1:1234/v1`
+See `.env.example` for provider-connectivity examples. `provider-check` exercises only the provider adapter and is separate from retrieval.
 
 ## Project layout
 
 ```text
 src/
-  config/        validated Free/API/Local runtime configuration
-  domain/        provider-independent types and ports
-  providers/     LLM adapter implementations and routing
-  repositories/  local-folder loading, ignore rules, file classification
-  security/      path, secret, and untrusted-context boundaries
-  storage/       app-state and credential-source adapters
-  cli.ts         Phase 1 developer interface
-tests/           isolated unit and fixture-style integration tests
-docs/            architecture and security notes
+  code-intelligence/  structural parser adapters
+  domain/             repository, evidence, index, graph, and provider ports
+  embeddings/         interchangeable embedding implementations
+  evaluation/         retrieval benchmark runner
+  graph/              deterministic code relationship extraction
+  indexing/           persistent and incremental index lifecycle
+  retrieval/          tokenizer, BM25, fusion, evidence, and query services
+  repositories/       safe local-folder loading
+  security/           path, secret, and untrusted-context boundaries
+  storage/            app-state and credential-source adapters
+tests/fixtures/        realistic retrieval/evaluation repositories
 ```
 
-See [Phase 1 architecture](docs/phase-1-architecture.md) and [security boundaries](docs/security.md) for the design rationale.
-
-## Verification
-
-```bash
-npm test
-npm run typecheck
-npm run lint
-npm run build
-```
-
-Tests use temporary fixture repositories and fake HTTP/model providers. No real model call is required.
+See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), and [security boundaries](docs/security.md).
 
 ## Current limitations
 
-- No structural parser, symbols, chunks, embeddings, lexical index, vector index, graph, or retrieval API exists yet.
-- No Investigator, Skeptic, Architect, Verifier, Judge, Claim state machine, trace, or verdict exists yet.
-- Local Git working trees can be scanned as folders; cloning remote Git URLs is not implemented.
-- Only root `.gitignore` and `.conclaveignore` files are evaluated. Nested ignore files are not yet composed.
-- Secret and prompt-injection detection is heuristic and intentionally conservative, not a substitute for a dedicated secret-scanning service.
-- The JSON persistence adapter is single-process and has no cross-process locking or database indexing.
-- Provider streaming, tool calls, structured JSON schemas, embeddings, cost tracking, and provider-specific Anthropic/Gemini adapters are not implemented.
-- Free Mode has no hosted backend, authentication, or rate limiting in this phase.
-- There is no browser or web UI.
+- The parser is syntax-aware but does not create a TypeScript `Program`, run type checking, or resolve `tsconfig` path aliases.
+- The local embedding is deterministic feature hashing with a small code-oriented concept map, not a learned neural model. The abstraction supports adding local or hosted learned embeddings later.
+- BM25 and vector search currently scan in-memory index records; there is no ANN index or database-backed inverted index.
+- Graph resolution covers relative imports, explicit exports/bindings, unique same-file identifiers, and direct identifier calls. It does not attempt language-server-level resolution, dynamic imports, package exports, polymorphism, or arbitrary property dispatch.
+- Root `.gitignore` and `.conclaveignore` files are honored; nested ignore-file composition remains unimplemented.
+- The JSON index is atomic and owner-readable but not encrypted or cross-process locked.
+- Source files classified as likely secrets are excluded completely, but heuristic secret detection can have false positives and false negatives.
+- Local Git working trees can be indexed as folders; remote Git cloning is not implemented.
+- No Investigator, Skeptic, Architect, Verifier, Judge, Claims, Challenges, Verdict, LLM answer, hosted backend, rate limiter, or web UI exists.
 
 ## Recommended next phase
 
-Proceed with **Phase 2 — Code Intelligence and RAG**: TypeScript/JavaScript structural parsing, symbol-aware chunks, lexical/symbol/semantic retrieval, hybrid reranking, import/reference relationships, indexing lifecycle, and measurable retrieval fixtures. Do not begin the multi-agent engine until retrieval quality is testable.
+Proceed with **Phase 3 — Conclave Engine**: structured Claims and Challenges, Investigator/Skeptic/Architect/Verifier/Judge roles, deterministic verification tools, iterative retrieval requests, explicit orchestration state, execution traces, and verdict synthesis. Phase 3 should consume the evidence and retrieval primitives delivered here rather than implementing another retrieval stack.

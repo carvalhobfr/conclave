@@ -16,7 +16,8 @@ function stem(token: string): string {
     return `${token.slice(0, -3)}y`;
   }
   if (token.length > 4 && token.endsWith("ed")) {
-    return token.slice(0, -2);
+    const base = token.slice(0, -2);
+    return token.endsWith("red") ? `${base}e` : base;
   }
   if (token.length > 4 && token.endsWith("es")) {
     return token.slice(0, -2);

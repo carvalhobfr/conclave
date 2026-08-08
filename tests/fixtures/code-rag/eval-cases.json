@@ -1,0 +1,36 @@
+[
+  {
+    "id": "authentication-restoration",
+    "question": "Where is authentication state restored?",
+    "expectedFiles": [
+      "src/auth/AuthProvider.tsx",
+      "src/auth/storage.ts"
+    ],
+    "expectedSymbols": [
+      "bootstrapSession",
+      "getStoredToken"
+    ]
+  },
+  {
+    "id": "player-listener-cleanup",
+    "question": "Where is the player event listener cleaned up?",
+    "expectedFiles": [
+      "src/player/usePlayerEvents.ts",
+      "src/player/events.ts"
+    ],
+    "expectedSymbols": [
+      "usePlayerEvents",
+      "subscribeToPlayerEvents"
+    ]
+  },
+  {
+    "id": "ambiguous-restore-state",
+    "question": "Which restoreState handles cached authentication sessions?",
+    "expectedFiles": [
+      "src/auth/sessionRestore.ts"
+    ],
+    "expectedSymbols": [
+      "restoreState"
+    ]
+  }
+]

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -129,6 +130,40 @@ describe("RepositoryIndexer", () => {
     expect((await stat(indexPath)).mode & 0o777).toBe(0o600);
     await expect(store.load(root)).resolves.toEqual(result.index);
     expect(await readFile(indexPath, "utf8")).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+
+    const indexedFile = result.index.files["src/session.ts"]!;
+    const unsafeSource = `${indexedFile.sourceText}\nconst apiKey = "sk-zyxwvutsrqponmlkjihgfedcba654321";`;
+    const unsafeIndex = {
+      ...result.index,
+      files: {
+        ...result.index.files,
+        "src/session.ts": {
+          ...indexedFile,
+          sourceText: unsafeSource,
+          contentHash: createHash("sha256").update(unsafeSource).digest("hex"),
+        },
+      },
+    };
+    await expect(store.save(root, unsafeIndex)).rejects.toThrow("secret-classified source");
+  });
+
+  it("forces a full rebuild when the indexing pipeline version changes", async () => {
+    const root = await repositoryFixture();
+    const store = new InMemoryCodeIndexStore();
+    const embeddingProvider = new CountingEmbeddingProvider();
+    const indexer = new RepositoryIndexer({
+      repositorySource: new LocalFolderRepository(),
+      parser: new TypeScriptCodeParser(),
+      embeddingProvider,
+      indexStore: store,
+    });
+    const first = await indexer.index(root);
+    await store.save(first.index.repository.rootPath, { ...first.index, indexingVersion: 0 });
+
+    const rebuilt = await indexer.index(root);
+    expect(rebuilt.stats.filesAdded).toBe(2);
+    expect(rebuilt.stats.filesUnchanged).toBe(0);
+    expect(rebuilt.stats.embeddingsCreated).toBe(2);
   });
 });
 

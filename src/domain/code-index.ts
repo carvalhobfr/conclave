@@ -9,6 +9,7 @@ import type { EmbeddingProvider } from "./embedding.js";
 import type { RepositoryDescriptor, SourceLanguage } from "./repository.js";
 
 export const CODE_INDEX_SCHEMA_VERSION = 1;
+export const CODE_INDEXING_VERSION = 1;
 
 export class UnsupportedCodeIndexSchemaError extends Error {
   public constructor() {
@@ -85,7 +86,8 @@ export interface GraphEdge {
 }
 
 export interface RepositoryCodeIndex {
-  readonly schemaVersion: typeof CODE_INDEX_SCHEMA_VERSION;
+  readonly schemaVersion: number;
+  readonly indexingVersion: number;
   readonly repository: RepositoryDescriptor;
   readonly parserId: string;
   readonly embedding: Pick<EmbeddingProvider, "id" | "dimensions">;

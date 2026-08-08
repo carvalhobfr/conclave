@@ -1,14 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
   CODE_INDEX_SCHEMA_VERSION,
+  CODE_INDEXING_VERSION,
   UnsupportedCodeIndexSchemaError,
   type RepositoryCodeIndex,
   type CodeIndexStore,
 } from "../domain/code-index.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
+import { assessRepositoryContent } from "../security/content-safety.js";
 
 export const CODE_INDEX_DIRECTORY = ".conclave";
 export const CODE_INDEX_FILENAME = "code-index-v1.json";
@@ -29,6 +31,9 @@ function isSafeRelativePath(path: string): boolean {
 
 function validatePersistedIndex(value: unknown, canonicalRoot: string): RepositoryCodeIndex {
   if (!isRecord(value) || value["schemaVersion"] !== CODE_INDEX_SCHEMA_VERSION) {
+    throw new UnsupportedCodeIndexSchemaError();
+  }
+  if (value["indexingVersion"] !== CODE_INDEXING_VERSION) {
     throw new UnsupportedCodeIndexSchemaError();
   }
   const repository = value["repository"];
@@ -55,16 +60,45 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
     throw new Error("Code index embedding metadata is invalid");
   }
   for (const [path, file] of Object.entries(files)) {
-    if (!isSafeRelativePath(path) || !isRecord(file) || file["path"] !== path) {
+    if (
+      !isSafeRelativePath(path) ||
+      !isRecord(file) ||
+      file["path"] !== path ||
+      typeof file["sourceText"] !== "string" ||
+      typeof file["contentHash"] !== "string" ||
+      createHash("sha256").update(file["sourceText"]).digest("hex") !== file["contentHash"]
+    ) {
       throw new Error("Code index contains an invalid file path");
     }
+    if (!assessRepositoryContent(file["sourceText"]).externalTransmissionAllowed) {
+      throw new Error("Code index contains secret-classified source");
+    }
   }
-  for (const unit of Object.values(units)) {
-    if (!isRecord(unit) || typeof unit["path"] !== "string" || !isSafeRelativePath(unit["path"])) {
+  for (const [unitId, unit] of Object.entries(units)) {
+    if (
+      !isRecord(unit) ||
+      unit["id"] !== unitId ||
+      typeof unit["path"] !== "string" ||
+      !isSafeRelativePath(unit["path"]) ||
+      typeof unit["startLine"] !== "number" ||
+      typeof unit["endLine"] !== "number" ||
+      typeof unit["embeddingKey"] !== "string"
+    ) {
       throw new Error("Code index contains an invalid unit path");
     }
-    if (!(unit["path"] in files)) {
+    const owner = files[unit["path"]];
+    if (!isRecord(owner) || typeof owner["sourceText"] !== "string") {
       throw new Error("Code index unit references a missing file");
+    }
+    const lineCount = owner["sourceText"].split("\n").length;
+    if (
+      !Number.isInteger(unit["startLine"]) ||
+      !Number.isInteger(unit["endLine"]) ||
+      unit["startLine"] < 1 ||
+      unit["endLine"] < unit["startLine"] ||
+      unit["endLine"] > lineCount
+    ) {
+      throw new Error("Code index unit contains an invalid source range");
     }
   }
   for (const vector of Object.values(embeddingCache)) {
@@ -74,6 +108,27 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
       !vector.every((component) => typeof component === "number" && Number.isFinite(component))
     ) {
       throw new Error("Code index contains an invalid embedding vector");
+    }
+  }
+  for (const edge of value["graphEdges"]) {
+    if (!isRecord(edge) || !isRecord(edge["from"]) || !isRecord(edge["to"]) || !isRecord(edge["provenance"])) {
+      throw new Error("Code index contains an invalid graph edge");
+    }
+    const from = edge["from"];
+    const to = edge["to"];
+    const provenance = edge["provenance"];
+    if (
+      (from["kind"] !== "file" && from["kind"] !== "symbol") ||
+      (to["kind"] !== "file" && to["kind"] !== "symbol") ||
+      typeof from["id"] !== "string" ||
+      typeof to["id"] !== "string" ||
+      typeof provenance["path"] !== "string" ||
+      !isSafeRelativePath(provenance["path"]) ||
+      !(provenance["path"] in files) ||
+      (from["kind"] === "file" ? !(from["id"] in files) : !(from["id"] in units)) ||
+      (to["kind"] === "file" ? !(to["id"] in files) : !(to["id"] in units))
+    ) {
+      throw new Error("Code index graph edge references an invalid node or path");
     }
   }
   return value as unknown as RepositoryCodeIndex;

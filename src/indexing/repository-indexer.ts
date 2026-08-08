@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   CODE_INDEX_SCHEMA_VERSION,
+  CODE_INDEXING_VERSION,
   UnsupportedCodeIndexSchemaError,
   type CodeIndexStore,
   type IndexedCodeUnit,
@@ -77,6 +78,8 @@ function compatibleIndex(
 ): index is RepositoryCodeIndex {
   return (
     index !== undefined &&
+    index.schemaVersion === CODE_INDEX_SCHEMA_VERSION &&
+    index.indexingVersion === CODE_INDEXING_VERSION &&
     index.parserId === parser.id &&
     index.embedding.id === embedder.id &&
     index.embedding.dimensions === embedder.dimensions
@@ -214,7 +217,7 @@ export class RepositoryIndexer {
         symbolIds,
         diagnostics: parsed.diagnostics,
         parserId: parsed.parserId,
-        indexingVersion: CODE_INDEX_SCHEMA_VERSION,
+        indexingVersion: CODE_INDEXING_VERSION,
       };
       stats.unitsIndexed += symbolIds.length;
       if (previousFile === undefined) {
@@ -258,6 +261,7 @@ export class RepositoryIndexer {
     const now = new Date().toISOString();
     const index: RepositoryCodeIndex = {
       schemaVersion: CODE_INDEX_SCHEMA_VERSION,
+      indexingVersion: CODE_INDEXING_VERSION,
       repository: snapshot.repository,
       parserId: this.#parser.id,
       embedding: { id: this.#embeddingProvider.id, dimensions: this.#embeddingProvider.dimensions },
