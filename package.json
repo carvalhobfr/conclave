@@ -20,14 +20,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "ignore": "7.0.6"
+    "ignore": "7.0.6",
+    "typescript": "6.0.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "24.10.13",
     "eslint": "10.8.1",
     "globals": "17.9.0",
-    "typescript": "6.0.3",
     "typescript-eslint": "8.66.0",
     "vitest": "4.1.10"
   }
