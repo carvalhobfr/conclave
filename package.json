@@ -11,8 +11,12 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build:core": "tsc -p tsconfig.build.json",
+    "build:web": "vite build",
+    "build": "npm run build:core && npm run build:web",
     "dev": "npm run build --silent && node dist/cli.js",
+    "dev:web": "vite --host 127.0.0.1",
+    "start:web": "npm run build:core --silent && node dist/web/server.js",
     "eval": "npm run dev -- eval tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json --json",
     "eval:graph": "npm run dev -- eval-graph tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json tests/fixtures/code-rag/graph-eval-cases.json --json",
     "eval:reasoning": "vitest run tests/reasoning-evaluation.test.ts --maxWorkers=1",
@@ -20,19 +24,29 @@
     "lint": "eslint .",
     "start": "node dist/cli.js",
     "test": "vitest run",
+    "test:web": "vitest run --config vitest.web.config.ts --maxWorkers=1",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit"
   },
   "dependencies": {
     "ignore": "7.0.6",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "6.0.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
     "@types/node": "24.10.13",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "eslint": "10.8.1",
     "globals": "17.9.0",
+    "jsdom": "^30.0.1",
     "typescript-eslint": "8.66.0",
+    "vite": "^8.2.1",
     "vitest": "4.1.10"
   }
 }

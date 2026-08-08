@@ -90,12 +90,23 @@ model requests a typed capability
 - The same in-memory index is incrementally refreshed after edits. Deterministic requirement and claim checks override model assertions; unrelated edits, failed checks, and unsupported required claims create blocking findings even if the Reviewer approves.
 - Revisions are bounded and stop on repeated no-progress signatures. Completion is never inferred only from an Implementer or Reviewer statement.
 
+## Local web application
+
+- The Phase 5 product server binds to `127.0.0.1`; it is not a hosted API surface and does not implement Free Mode hosting.
+- Browser requests are display/application requests only. The browser never receives provider credentials, raw repository index state, arbitrary filesystem authority, direct command execution, or direct patch authority.
+- Local folder opening is canonicalized and restricted to `CONCLAVE_WEB_ALLOWED_ROOT` (or the server working directory by default). Browser-provided paths outside that boundary are rejected.
+- API JSON bodies are capped at 64 KB and API errors are converted to concise product-safe messages rather than provider headers, credentials, or stack traces.
+- Provider configuration continues to be read by the local server process from existing environment-backed configuration. Phase 5 adds no plaintext browser credential store.
+- Demo Mode uses a bundled repository fixture and FakeProvider responses labelled as deterministic demo inference. It does not represent a configured remote provider or hosted Free service.
+- Task permission controls request the existing Task Mode flags only. The core policy remains the authority for every patch and command capability; the UI cannot construct an approved command or apply a patch to the original repository.
+
 ## Residual risks
 
 - Pattern-based secret detection has false positives and false negatives.
 - Prompt injection cannot be eliminated solely through delimiters and instructions; later structured outputs and evidence validation remain necessary.
 - Node tests and package scripts execute repository code. Because portable child-process filesystem and network isolation is unavailable, they require explicit repository-script and network grants and should be enabled only for trusted repositories. Isolation protects the original Git worktree from ordinary edits but is not a host sandbox against absolute-path access or child processes.
 - The child environment excludes credentials known to Conclave, but a hostile repository process may still discover host information through operating-system interfaces. Default-deny repository-code execution remains the safe mode.
+- The local web server has no authentication, multi-user session boundary, rate limiting, hosted request controls, or remote-path defense because it is loopback-only. Do not expose it through a reverse proxy or public network without a dedicated hosted security design.
 - Root ignore-file support does not yet reproduce nested Git ignore semantics.
 - Files can change during a scan. Symlink and canonical-path checks narrow traversal risk but do not provide an immutable filesystem snapshot.
 - JSON storage is owner-readable and atomic but not encrypted, multi-process safe, or suitable for credentials.

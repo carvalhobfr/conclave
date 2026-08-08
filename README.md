@@ -4,7 +4,7 @@ Conclave is an evidence-driven Code RAG application built around a simple produc
 
 > Ask your code. Let the models argue.
 
-The project currently contains **Phase 4 — Task Execution**. It turns a provenance-backed diagnosis into a bounded implementation plan, applies hash-bound patches in an isolated workspace, gates every capability through host policy, reindexes the changed snapshot, and independently verifies the result before reporting completion.
+The project currently contains **Phase 5 — Product and Web UI**. The local-first web application presents evidence, claims, disagreement, graph relations, retrieval efficiency, structured task progress, isolated diffs, and safety boundaries without giving the browser authority over the core.
 
 ## What exists
 
@@ -39,6 +39,9 @@ The project currently contains **Phase 4 — Task Execution**. It turns a proven
 - Hash-bound replacement patches, protected/ignored/secret path controls, rollback, file/line/byte budgets, and unrelated-change rejection.
 - Structured command capabilities with fixed executable mappings, host allowlists, filtered child environments, timeouts, bounded output, and `shell: false`.
 - Post-change incremental reindexing, deterministic requirement and implementation-claim verification, bounded revisions, and no-progress detection.
+- A React/Vite developer workspace served by a local Node application layer; browser clients receive bounded display DTOs rather than filesystem, provider, or command authority.
+- Explicit Ask, Investigate, and Task composer modes; first-class evidence, rejected/uncertain claims, graph explorer, retrieval inspector, role route, metrics, task plan/progress, and isolated final diff.
+- Deterministic Demo Mode using a bundled fixture and fake provider, explicitly labelled as demo inference rather than live AI.
 - CLI commands for indexing, retrieval inspection, graph queries, evidence-grounded questions, bounded tasks, and evaluation.
 
 ## Quick start
@@ -48,10 +51,21 @@ Requires Node.js 20 or newer.
 ```bash
 npm install
 npm test
+npm run test:web
 npm run typecheck
 npm run lint
 npm run build
 ```
+
+Run the local product with the deterministic demo:
+
+```bash
+npm run build
+npm run start:web
+# Open http://127.0.0.1:4317
+```
+
+For frontend iteration, run `npm run dev:web` alongside `npm run start:web`; Vite proxies `/api` to the local application server. Demo Mode works without provider credentials. To open another folder, configure `CONCLAVE_WEB_ALLOWED_ROOT` and choose a repository beneath that root. The local server listens only on loopback.
 
 Index and inspect a repository:
 
@@ -155,6 +169,7 @@ npm run dev -- config --json
 - `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` override each role independently.
 - Planner, Implementer, and Reviewer have their own `CONCLAVE_<ROLE>_PROVIDER` and `CONCLAVE_<ROLE>_MODEL` overrides.
 - `CONCLAVE_ALLOWED_PACKAGE_SCRIPTS` is the host-controlled comma-separated allowlist used only when privileged repository checks are explicitly enabled.
+- The web UI reads provider configuration from the server process; it does not collect or persist plaintext API keys in browser state.
 
 See `.env.example` for provider-connectivity examples. `provider-check` exercises only the provider adapter and is separate from retrieval.
 
@@ -174,10 +189,13 @@ src/
   repositories/       safe local-folder loading
   security/           path, secret, and untrusted-context boundaries
   storage/            app-state and credential-source adapters
+  web/                local web API, bounded DTO adapters, and deterministic demo runtime
+web/                  React/Vite product workspace
+demo/                 deterministic local product fixture
 tests/fixtures/        realistic retrieval/evaluation repositories
 ```
 
-See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), [Phase 4 task execution](docs/phase-4-task-execution.md), and [security boundaries](docs/security.md).
+See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG architecture](docs/phase-2-code-rag.md), [Phase 2.5 graph-aware retrieval](docs/phase-2.5-graph-aware-retrieval.md), [Phase 3 reasoning](docs/phase-3-reasoning.md), [Phase 4 task execution](docs/phase-4-task-execution.md), [Phase 5 product UI](docs/phase-5-product-ui.md), and [security boundaries](docs/security.md).
 
 ## Current limitations
 
@@ -198,8 +216,10 @@ See [Phase 1 architecture](docs/phase-1-architecture.md), [Phase 2 Code RAG arch
 - The JSON index is atomic and owner-readable but not encrypted or cross-process locked.
 - Source files classified as likely secrets are excluded completely, but heuristic secret detection can have false positives and false negatives.
 - Local Git working trees can be indexed as folders; remote Git cloning is not implemented.
-- No arbitrary shell command capability, hosted backend, rate limiter, or web UI exists.
+- The web server is local-first and loopback-only. Hosted Free Mode, sessions, rate limiting, remote repository imports, and a browser credential-entry flow are intentionally not implemented.
+- Local repository opening is restricted to `CONCLAVE_WEB_ALLOWED_ROOT` (or the server working directory by default); browser file pickers do not bypass this policy.
+- Product history and applying an isolated patch back to the original repository are deferred. The displayed task diff remains inspectable only.
 
 ## Recommended next phase
 
-Proceed with **Phase 5 — Product/UI** while preserving default-deny execution permissions and making plan, capability decisions, diff, checks, review findings, uncertainty, and final verdict visible. Do not expose privileged repository-code execution as a one-click default until stronger process sandboxing exists.
+Proceed with **Phase 6 — Evaluation, MCP and Product Polish** only after retaining the local-first trust boundary and default-deny Task permissions. Do not add hosted arbitrary-path Task Mode or one-click repository-script execution.

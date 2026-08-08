@@ -4,12 +4,12 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["coverage/", "dist/", "node_modules/", "eslint.config.js", "tests/fixtures/"],
+    ignores: ["coverage/", "demo/", "dist/", "node_modules/", "eslint.config.js", "tests/fixtures/"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
-    files: ["**/*.ts"],
+    files: ["**/*.{ts,tsx}"],
     languageOptions: {
       globals: globals.node,
       parserOptions: {
@@ -26,6 +26,12 @@ export default tseslint.config(
     files: ["tests/**/*.ts"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+  {
+    files: ["web/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: globals.browser,
     },
   },
 );
