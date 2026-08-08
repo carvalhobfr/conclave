@@ -17,6 +17,7 @@ import {
   runReasoningEvaluation,
 } from "./evaluation/reasoning-evaluation.js";
 import { FileSystemCodeIndexStore } from "./indexing/file-system-index-store.js";
+import { InMemoryCodeIndexStore } from "./indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "./indexing/repository-indexer.js";
 import { createProvider } from "./providers/provider-factory.js";
 import { LocalFolderRepository } from "./repositories/local-folder-repository.js";
@@ -269,6 +270,18 @@ async function updateIndex(requestedPath: string) {
   const rootPath = resolve(requestedPath);
   const { indexer, embeddingProvider } = createIndexer();
   const result = await indexer.index(rootPath);
+  return { ...result, embeddingProvider };
+}
+
+async function createEphemeralIndex(requestedPath: string) {
+  const rootPath = resolve(requestedPath);
+  const embeddingProvider = new LocalHashEmbeddingProvider();
+  const result = await new RepositoryIndexer({
+    repositorySource: new LocalFolderRepository(),
+    parser: new TypeScriptCodeParser(),
+    embeddingProvider,
+    indexStore: new InMemoryCodeIndexStore(),
+  }).index(rootPath);
   return { ...result, embeddingProvider };
 }
 
@@ -634,7 +647,7 @@ async function executeTask(args: readonly string[]): Promise<void> {
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
   const taskConfig = loadTaskConfiguration(runtimeConfig);
   const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
-  const indexed = await updateIndex(requestedPath);
+  const indexed = await createEphemeralIndex(requestedPath);
   const providers = new Map([[provider.id, provider]]);
   const reasoning = new ReasoningEngine({
     retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),

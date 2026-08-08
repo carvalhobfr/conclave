@@ -322,7 +322,15 @@ export class TaskExecutionEngine {
         const files = await Promise.all([...visiblePaths].map((path) => editor.read(path)));
         const implementer = await this.#executeRole(
           "implementer",
-          implementerPrompt(task, files, round, revision, state.patchRecords, state.checks),
+          implementerPrompt(
+            task,
+            files,
+            round,
+            revision,
+            state.patchRecords,
+            state.checks,
+            state.postEvidence,
+          ),
           (raw) =>
             parseImplementerResult(
               raw,

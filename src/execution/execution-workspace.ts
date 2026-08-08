@@ -1,9 +1,10 @@
 import { cp, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 
 import type { RepositoryExecutionSnapshot } from "../domain/task-execution.js";
+import { createRepositoryIgnore } from "../repositories/ignore-rules.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
 
 interface ProcessResult {
@@ -115,10 +116,17 @@ export class ExecutionWorkspaceManager {
 
     const temporaryRoot = await mkdtemp(join(tmpdir(), "conclave-task-"));
     const executionRoot = join(temporaryRoot, "repository");
+    const ignore = await createRepositoryIgnore(originalRoot);
     await cp(originalRoot, executionRoot, {
       recursive: true,
       dereference: false,
-      filter: async (source) => !(await lstat(source)).isSymbolicLink(),
+      filter: async (source) => {
+        const stats = await lstat(source);
+        if (stats.isSymbolicLink()) return false;
+        const repositoryPath = relative(originalRoot, source).split(sep).join("/");
+        if (repositoryPath === "") return true;
+        return !ignore.ignores(`${repositoryPath}${stats.isDirectory() ? "/" : ""}`);
+      },
     });
     return {
       status: "ready",

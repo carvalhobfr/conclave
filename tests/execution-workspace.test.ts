@@ -34,6 +34,9 @@ describe("ExecutionWorkspaceManager", () => {
   it("copies a non-Git repository and never mutates the original", async () => {
     const root = await temporaryDirectory();
     await writeFile(join(root, "file.ts"), "export const value = 1;\n");
+    await writeFile(join(root, ".env"), "TOKEN=do-not-copy\n");
+    await mkdir(join(root, "node_modules"));
+    await writeFile(join(root, "node_modules", "dependency.js"), "untrusted dependency\n");
 
     const workspace = await new ExecutionWorkspaceManager().prepare(root);
     expect(workspace.status).toBe("ready");
@@ -43,6 +46,8 @@ describe("ExecutionWorkspaceManager", () => {
     await writeFile(join(executionRoot!, "file.ts"), "export const value = 2;\n");
 
     expect(await readFile(join(root, "file.ts"), "utf8")).toContain("value = 1");
+    await expect(access(join(executionRoot!, ".env"))).rejects.toThrow();
+    await expect(access(join(executionRoot!, "node_modules"))).rejects.toThrow();
     await workspace.cleanup();
     await expect(access(executionRoot!)).rejects.toThrow();
   });

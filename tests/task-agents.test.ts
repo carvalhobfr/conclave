@@ -122,6 +122,7 @@ describe("structured task agents", () => {
       undefined,
       [],
       [],
+      [],
     );
 
     expect(prompt).toContain("BEGIN UNTRUSTED REPOSITORY FILES");

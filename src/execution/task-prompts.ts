@@ -72,13 +72,20 @@ export function implementerPrompt(
   revision: RevisionRequest | undefined,
   priorPatches: readonly PatchRecord[],
   checks: readonly CheckResult[],
+  additionalEvidence: readonly Evidence[],
 ): string {
   return [
     "BEGIN TRUSTED IMPLEMENTATION TASK",
-    JSON.stringify({ task, round, revision, priorPatchSummaries: priorPatches, checks }),
+    JSON.stringify({
+      task,
+      round,
+      revision,
+      priorPatchIds: priorPatches.map((patch) => patch.id),
+      checks: checks.map((check) => ({ requestId: check.requestId, command: check.command, status: check.status })),
+    }),
     "END TRUSTED IMPLEMENTATION TASK",
     "BEGIN UNTRUSTED REPOSITORY FILES",
-    JSON.stringify({ files }),
+    JSON.stringify({ files, priorPatches, additionalEvidence: evidenceRecords(additionalEvidence) }),
     "END UNTRUSTED REPOSITORY FILES",
   ].join("\n");
 }
@@ -93,10 +100,16 @@ export function reviewerPrompt(
 ): string {
   return [
     "BEGIN TRUSTED REVIEW RECORD",
-    JSON.stringify({ task, diagnosis, patches, checks, implementationClaims }),
+    JSON.stringify({
+      task,
+      diagnosis,
+      patchIds: patches.map((patch) => patch.id),
+      changedFiles: patches.flatMap((patch) => patch.changedFiles),
+      checks: checks.map((check) => ({ requestId: check.requestId, command: check.command, status: check.status })),
+    }),
     "END TRUSTED REVIEW RECORD",
-    "BEGIN UNTRUSTED POST-CHANGE EVIDENCE",
-    JSON.stringify({ evidence: evidenceRecords(postChangeEvidence) }),
-    "END UNTRUSTED POST-CHANGE EVIDENCE",
+    "BEGIN UNTRUSTED CHANGE AND REPOSITORY EVIDENCE",
+    JSON.stringify({ patches, implementationClaims, evidence: evidenceRecords(postChangeEvidence) }),
+    "END UNTRUSTED CHANGE AND REPOSITORY EVIDENCE",
   ].join("\n");
 }
