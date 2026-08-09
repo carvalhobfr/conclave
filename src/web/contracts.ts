@@ -76,6 +76,76 @@ export interface TaskView {
   readonly checks: readonly { readonly id: string; readonly status: string; readonly kind: string; readonly reason: string }[];
 }
 
+export type ProductChangeSetSource =
+  | { readonly kind: "working-tree" }
+  | { readonly kind: "staged" }
+  | { readonly kind: "branch"; readonly base: string; readonly head?: string }
+  | { readonly kind: "commit"; readonly base: string; readonly target: string }
+  | { readonly kind: "explicit"; readonly label?: string };
+
+export interface ProductReviewView {
+  readonly status: "approved" | "changes-requested" | "uncertain" | "nothing-to-review" | "invalid";
+  readonly summary: string;
+  readonly source: ProductChangeSetSource;
+  readonly objective?: string;
+  readonly findings: readonly {
+    readonly id: string;
+    readonly category: string;
+    readonly severity: "blocking" | "warning" | "suggestion";
+    readonly statement: string;
+    readonly consequence: string;
+    readonly path?: string;
+    readonly line?: number;
+    readonly deterministic: boolean;
+    readonly secretType?: string;
+  }[];
+  readonly confirmedProperties: readonly { readonly statement: string; readonly method: string }[];
+  readonly uncertainty: readonly { readonly statement: string; readonly reason: string; readonly paths: readonly string[] }[];
+  readonly changedFiles: readonly { readonly path: string; readonly changeType: string; readonly additions: number; readonly deletions: number; readonly indexed: boolean }[];
+  readonly changedSymbols: readonly { readonly path: string; readonly symbol: string; readonly symbolKind: string; readonly changeType: string }[];
+  readonly impactedSymbols: readonly { readonly path: string; readonly symbol: string; readonly relation: string; readonly direction: string }[];
+  readonly impactTruncated: boolean;
+  readonly evidence: readonly EvidenceView[];
+  readonly limitations: readonly string[];
+  readonly excludedSensitivePaths: readonly string[];
+  readonly revisionHandoff?: string;
+  readonly metrics: readonly { readonly label: string; readonly value: string }[];
+  readonly analysis: {
+    readonly route: "project-knowledge" | "adaptive-orchestration";
+    readonly requestedDepth: ProductAnalysisDepth;
+    readonly selectedDepth: Exclude<ProductAnalysisDepth, "auto">;
+    readonly deterministic: boolean;
+    readonly reasonCodes: readonly string[];
+  };
+}
+
+export interface ProductDecisionView {
+  readonly status: "proceed" | "revise" | "uncertain" | "invalid";
+  readonly summary: string;
+  readonly objective?: string;
+  readonly claims: readonly {
+    readonly id: string;
+    readonly statement: string;
+    readonly kind: "goal" | "assumption" | "constraint" | "consequence";
+    readonly status: "supported" | "rejected" | "uncertain";
+    readonly explanation: string;
+    readonly deterministic: boolean;
+  }[];
+  readonly confirmedProperties: readonly string[];
+  readonly challengedAssumptions: readonly string[];
+  readonly uncertainty: readonly string[];
+  readonly evidence: readonly EvidenceView[];
+  readonly implementationHandoff?: string;
+  readonly revisionHandoff?: string;
+  readonly metrics: readonly { readonly label: string; readonly value: string }[];
+  readonly analysis: {
+    readonly requestedDepth: ProductAnalysisDepth;
+    readonly selectedDepth: Exclude<ProductAnalysisDepth, "auto">;
+    readonly deterministic: boolean;
+    readonly reasonCodes: readonly string[];
+  };
+}
+
 export interface ProductRunView {
   readonly intent: ProductIntent;
   readonly status: ProductRunStatus;

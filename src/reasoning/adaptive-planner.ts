@@ -46,6 +46,8 @@ export function selectAnalysisDepth(
   if (requested !== "auto") return requested;
   if (assessment.deterministicCoverage === "strong" && !assessment.requiresModelReasoning) return "fast";
   if (assessment.queryKind === "exact-lookup" || assessment.queryKind === "relationship") return "fast";
+  if (assessment.queryKind === "review") return assessment.ambiguity === "high" ? "deep" : "balanced";
+  if (assessment.queryKind === "decision") return assessment.ambiguity === "high" ? "deep" : "balanced";
   if (
     assessment.queryKind === "task" ||
     (assessment.queryKind === "causal" && assessment.ambiguity === "high" && assessment.crossModule) ||
@@ -81,14 +83,16 @@ export function deterministicReasoningPlan(
   depth: SelectedAnalysisDepth,
 ): ReasoningPlan {
   const causal = assessment.queryKind === "causal";
+  const reviewing = assessment.queryKind === "review";
+  const deciding = assessment.queryKind === "decision";
   const deep = depth === "deep";
-  const architect = assessment.crossModule || causal || deep;
-  const skeptic = causal || assessment.ambiguity !== "low" || deep;
+  const architect = assessment.crossModule || causal || deciding || deep;
+  const skeptic = reviewing || deciding || causal || assessment.ambiguity !== "low" || deep;
   return {
     depth,
     strategy: assessment.deterministicCoverage === "strong"
       ? "deterministic"
-      : causal ? "causal-investigation" : assessment.resolvedEntities.length > 0 ? "graph-first" : "retrieval-first",
+      : reviewing ? "diff-review" : deciding ? "decision-validation" : causal ? "causal-investigation" : assessment.resolvedEntities.length > 0 ? "graph-first" : "retrieval-first",
     roles: [
       { role: "investigator", requirement: "required" },
       ...(skeptic ? [{ role: "skeptic" as const, requirement: deep ? "required" as const : "conditional" as const }] : []),

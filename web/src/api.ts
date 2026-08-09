@@ -1,4 +1,4 @@
-import type { GraphView, ImportedRepositoryFile, ProductAnalysisDepth, ProductRunJobView, ProductRunView, ProjectView, ProviderModelsInput, ProviderModelsView, ProviderSettingsView, RuntimeModeView, SaveProviderSettingsInput } from "../../src/web/contracts.js";
+import type { GraphView, ImportedRepositoryFile, ProductAnalysisDepth, ProductChangeSetSource, ProductDecisionView, ProductReviewView, ProductRunJobView, ProductRunView, ProjectView, ProviderModelsInput, ProviderModelsView, ProviderSettingsView, RuntimeModeView, SaveProviderSettingsInput } from "../../src/web/contracts.js";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -35,5 +35,7 @@ export const api = {
   cancelRun: (id: string): Promise<ProductRunJobView> => request(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   task: (projectId: string, objective: string, planOnly: boolean, permissions: object, depth: ProductAnalysisDepth = "auto"): Promise<ProductRunView> => request("/api/task", json({ projectId, objective, planOnly, permissions, depth })),
   startTask: (projectId: string, objective: string, planOnly: boolean, permissions: object, depth: ProductAnalysisDepth = "auto"): Promise<ProductRunJobView> => request("/api/task/runs", json({ projectId, objective, planOnly, permissions, depth })),
+  review: (projectId: string, source: ProductChangeSetSource, diff: string, objective: string, depth: ProductAnalysisDepth = "auto"): Promise<ProductReviewView> => request("/api/review", json({ projectId, source, diff, objective, depth })),
+  decide: (projectId: string, proposal: string, objective: string, depth: ProductAnalysisDepth = "auto"): Promise<ProductDecisionView> => request("/api/decide", json({ projectId, proposal, objective, depth })),
   graph: (projectId: string, symbol: string): Promise<GraphView> => request(`/api/graph?projectId=${encodeURIComponent(projectId)}&symbol=${encodeURIComponent(symbol)}`),
 };

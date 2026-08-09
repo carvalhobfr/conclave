@@ -95,13 +95,24 @@ model requests a typed capability
 - The same in-memory index is incrementally refreshed after edits. Deterministic requirement and claim checks override model assertions; unrelated edits, failed checks, and unsupported required claims create blocking findings even if the Reviewer approves.
 - Revisions are bounded and stop on repeated no-progress signatures. Completion is never inferred only from an Implementer or Reviewer statement.
 
+## Review and Decision Validation
+
+- Review consumes a typed `ChangeSet`; it does not grant model filesystem, Git, command, patch, or Task authority. Git is invoked by the host with `spawn`, shell disabled, fixed arguments, validated refs, a 20-second timeout, and a 2 MB output bound.
+- Working-tree, staged, branch, and commit comparison discover changed paths first. Sensitive repository paths are excluded before diff content is read. Their paths and the resulting uncertainty are reported, but their contents never enter evidence, prompts, traces, UI, or handoffs.
+- Explicit diff input is bounded to 2 MB. Diff paths are normalized and traversal-shaped paths are rejected by deterministic parsing.
+- Concrete secret detection stops adaptive Review before model reasoning. Findings contain only secret type, path/range, and redacted evidence. Complete detected credentials are not retained in Review evidence or revision handoffs.
+- Deterministic Review status preserves semantics: no diff is not approval; malformed input is invalid; exclusions and unresolved runtime behavior preserve uncertainty; blockers request changes.
+- Changed-symbol and graph-impact traversal is bounded. A truncated traversal is exposed as uncertainty rather than silently treated as complete coverage.
+- Decision Validation decomposes proposal text into typed Claims. Deterministic symbol and graph checks override model conclusions; unsupported or contradicted assumptions cannot be upgraded by agreement between roles.
+- Review and Decision reuse the Phase 8 reasoning roles and provider boundary. Neither workflow introduces a model with direct Git or implementation authority.
+
 ## Local web application
 
 - The product server binds to `127.0.0.1`; it is not a public hosted API surface.
 - Browser requests are display/application requests only. The browser never receives provider credentials, raw repository index state, arbitrary filesystem authority, direct command execution, or direct patch authority.
 - Local folder opening is canonicalized and restricted to `CONCLAVE_WEB_ALLOWED_ROOT` (or the server working directory by default). Browser-provided paths outside that boundary are rejected.
 - Browser folder import removes environment files, private keys, and common credential files before reading file contents. The server repeats the same case-insensitive path check before writing an imported file, and local ingestion repeats it before filesystem reads. `.env.example` is allowed as documentation but still passes through content-level secret detection.
-- API JSON bodies are capped at 64 KB and API errors are converted to concise product-safe messages rather than provider headers, credentials, or stack traces.
+- API JSON bodies are capped at 64 KB, except bounded repository import (20 MB) and explicit Review diff (2.5 MB envelope / 2 MB diff) endpoints. API errors are converted to concise product-safe messages rather than provider headers, credentials, or stack traces.
 - The server-owned Free credential is read only by the local server process and is never sent to the browser, diagnostics, logs, role assignments, or the settings file.
 - Personal provider sets deliberately store a user's own key in the owner-only local settings file (`0600`). The API never returns the key, and an active personal set overrides `.env` without gaining access to the server-owned Free credential. The file is not encrypted and should be protected like any local credential file.
 - Demo Mode uses a bundled repository fixture and FakeProvider responses labelled as deterministic demo inference. It does not represent a configured remote provider or hosted Free service.

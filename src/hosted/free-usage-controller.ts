@@ -1,6 +1,6 @@
 export interface UsageRequest {
   readonly clientId: string;
-  readonly operation: "ask" | "investigate" | "task";
+  readonly operation: "ask" | "investigate" | "task" | "review" | "decide";
   readonly units: number;
 }
 

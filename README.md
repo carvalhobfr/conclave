@@ -1,8 +1,8 @@
 # Conclave
 
-**Ask your code. Let the models argue.**
+**Validate changes and decisions against your codebase before trusting them.**
 
-Conclave builds a structural model of your codebase first. It uses deterministic graph and retrieval tools to answer what it can, then selectively invokes specialized models only when reasoning is actually needed. Evidence-backed Task changes remain bounded and isolated.
+Conclave builds a structural model of your codebase first. It uses deterministic graph and retrieval tools to validate what it can, then selectively invokes specialized models only when reasoning is actually needed. Evidence-backed Review, Decision, and Task workflows keep conclusions inspectable and bounded.
 
 It is designed for developers and coding agents that need more than a broad source dump: every answer is grounded in repository evidence, and every Task capability remains policy-controlled.
 
@@ -11,6 +11,8 @@ It is designed for developers and coding agents that need more than a broad sour
 - **Ask** — evidence-backed answers with exact source ranges.
 - **Investigate** — structured Claims, Challenges, Verification, and uncertainty instead of hidden disagreement.
 - **Task** — explicit, plan-first, isolated patches with default-deny edits and checks.
+- **Review** — working-tree, staged, branch, commit, or explicit-diff validation with changed-symbol impact, concrete findings, confirmed properties, and uncertainty.
+- **Decide** — decompose proposals into falsifiable Claims, challenge assumptions, verify repository facts, and generate implementation or revision handoffs.
 - **Code graph** — deterministic symbols, imports, calls, references, callers/callees, and bounded paths.
 - **Project Knowledge** — index once, query many times, and reuse unchanged structural state.
 - **Adaptive analysis** — Auto, Fast, Balanced, and Deep routes with conditional roles and early exit.
@@ -29,6 +31,8 @@ flowchart LR
   Evidence --> Router{Deterministic answer sufficient?}
   Router -->|Yes| Answer[Direct cited answer]
   Router -->|No| Reasoning[Adaptive claims, challenges, verification]
+  Reasoning --> Review[ChangeSet ReviewVerdict]
+  Reasoning --> Decide[Proposal DecisionVerdict]
   Reasoning --> Task[Isolated, policy-controlled Task execution]
   CLI[CLI] --> Retrieval
   Web[Loopback web app] --> Reasoning
@@ -67,7 +71,7 @@ npm run start:web
 
 Open `http://127.0.0.1:4317`. The server listens only on loopback. Demo Mode works without credentials; opening another folder requires it to be inside `CONCLAVE_WEB_ALLOWED_ROOT` (or the process working directory by default).
 
-Analysis depth defaults to Auto. Fast prioritizes deterministic evidence and minimal calls; Balanced permits additional conditional reasoning; Deep trades latency and context for more adversarial review. Active runs show evidence-backed progress and can be cancelled without applying Task work to the original repository.
+Analysis depth defaults to Auto. Fast prioritizes deterministic evidence and minimal calls; Balanced permits additional conditional reasoning; Deep trades latency and context for more adversarial validation. The Review workspace accepts Git ChangeSets or an explicit unified diff. Decide validates proposal claims before implementation. Active Ask, Investigate, and Task runs show evidence-backed progress and can be cancelled without applying Task work to the original repository.
 
 ## Use the CLI
 
@@ -139,10 +143,12 @@ npm run eval:graph
 npm run eval:release
 npm run eval:reasoning
 npm run eval:adaptive
+npm run eval:review
+npm run eval:decision
 npm run eval:task
 ```
 
-The release corpus contains 12 retrieval cases across authentication, storage, lifecycle, subscriptions, graph paths, types, and ambiguous symbols. These are deterministic regression benchmarks, not claims of broad real-world or model accuracy. Full methodology and current limitations are in [Phase 6 release readiness](docs/phase-6-release-readiness.md).
+The Review benchmark explicitly measures false positives on known-good changes, missed blockers on known regressions, deterministic approvals, adaptive cases, and generic-slogan findings. Decision evaluation checks verdicts, claim resolution, adaptive routing, and both handoff directions. These fixtures are regression benchmarks, not claims of broad real-world or model accuracy. Full validation semantics are in [Phase 9 validation](docs/phase-9-validation.md).
 
 ## Limitations
 
@@ -165,6 +171,7 @@ The release corpus contains 12 retrieval cases across authentication, storage, l
 - [Release readiness and MCP](docs/phase-6-release-readiness.md)
 - [OpenCode Zen Free Mode and hosted foundation](docs/phase-7-zen-free.md)
 - [Knowledge-first adaptive orchestration](docs/phase-8-adaptive-orchestration.md)
+- [Validation-first Review and Decision](docs/phase-9-validation.md)
 - [Security boundaries](docs/security.md)
 
 ## Contributing and license

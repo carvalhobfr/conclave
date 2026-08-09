@@ -9,6 +9,8 @@ import { loadRuntimeConfig } from "../config/runtime-config.js";
 import { loadTaskConfiguration } from "../config/task-config.js";
 import type { RuntimeConfig } from "../domain/execution-mode.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { DecisionVerdict } from "../domain/decision.js";
+import type { ChangeSet, ReviewVerdict } from "../domain/review.js";
 import type { AnalysisSnapshot } from "../domain/adaptive-reasoning.js";
 import type { LlmProvider } from "../domain/provider.js";
 import { DEFAULT_REASONING_LIMITS, type ReasoningResult, type ReasoningTraceEvent } from "../domain/reasoning.js";
@@ -28,6 +30,7 @@ import { LocalFolderRepository } from "../repositories/local-folder-repository.j
 import { StructuredAgentRuntime } from "../reasoning/agent-runtime.js";
 import { ReasoningEngine, type ReasoningMode } from "../reasoning/reasoning-engine.js";
 import { AdaptiveMetricsAccumulator, type AdaptiveMetricsSummary } from "../reasoning/adaptive-metrics.js";
+import { ChangeSetError, GitChangeSetService } from "../review/change-set-service.js";
 import { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
 import { isSensitiveRepositoryPath } from "../security/sensitive-repository-path.js";
@@ -51,6 +54,9 @@ import type {
   TraceView,
   ImportedRepositoryFile,
   ProductAnalysisDepth,
+  ProductChangeSetSource,
+  ProductDecisionView,
+  ProductReviewView,
 } from "./contracts.js";
 import { ProviderModelCatalog, ProviderModelCatalogError } from "./provider-model-catalog.js";
 import { ProviderSettingsError, ProviderSettingsStore, type StoredProviderConnection, type StoredProviderSet } from "./provider-settings.js";
@@ -60,7 +66,7 @@ interface ProjectSession {
   readonly root: string;
   readonly source: "demo" | "local";
   readonly project: ProjectView;
-  readonly retrieval: CodeRetrievalService;
+  retrieval: CodeRetrievalService;
   readonly reasoning?: ReasoningEngine;
 }
 
@@ -449,6 +455,100 @@ function taskRun(result: TaskExecutionResult, permissions: ExecutionPermissions,
   };
 }
 
+function reviewView(verdict: ReviewVerdict, source: ProductChangeSetSource): ProductReviewView {
+  return {
+    status: verdict.status,
+    summary: verdict.summary,
+    source,
+    ...(verdict.objective === undefined ? {} : { objective: verdict.objective }),
+    findings: verdict.findings.map((finding) => ({
+      id: finding.id,
+      category: finding.category,
+      severity: finding.severity,
+      statement: finding.statement,
+      consequence: finding.consequence,
+      ...(finding.path === undefined ? {} : { path: finding.path }),
+      ...(finding.line === undefined ? {} : { line: finding.line }),
+      deterministic: finding.deterministic,
+      ...(finding.secretType === undefined ? {} : { secretType: finding.secretType }),
+    })),
+    confirmedProperties: verdict.confirmedProperties.map((property) => ({ statement: property.statement, method: property.method })),
+    uncertainty: verdict.uncertainty.map((item) => ({ statement: item.statement, reason: item.reason, paths: item.paths })),
+    changedFiles: verdict.changedFiles.map((file) => ({
+      path: file.path,
+      changeType: file.changeType,
+      additions: file.additions,
+      deletions: file.deletions,
+      indexed: file.indexed,
+    })),
+    changedSymbols: verdict.impact.changedSymbols.map((symbol) => ({
+      path: symbol.path,
+      symbol: symbol.symbol,
+      symbolKind: symbol.symbolKind,
+      changeType: symbol.changeType,
+    })),
+    impactedSymbols: verdict.impact.impactedSymbols.map((symbol) => ({
+      path: symbol.path,
+      symbol: symbol.symbol,
+      relation: symbol.relation,
+      direction: symbol.direction,
+    })),
+    impactTruncated: verdict.impact.truncated,
+    evidence: verdict.evidence.map(viewEvidence),
+    limitations: verdict.limitations,
+    excludedSensitivePaths: verdict.changeSet?.excludedSensitivePaths ?? [],
+    ...(verdict.revisionHandoff === undefined ? {} : { revisionHandoff: verdict.revisionHandoff }),
+    metrics: [
+      { label: "Model calls", value: String(verdict.metrics.modelCalls) },
+      { label: "Deterministic operations", value: String(verdict.metrics.deterministicOperations) },
+      { label: "Changed symbols", value: String(verdict.impact.changedSymbols.length) },
+      { label: "Impacted symbols", value: String(verdict.impact.impactedSymbols.length) },
+      { label: "Latency", value: `${String(Math.round(verdict.metrics.latencyMs))} ms` },
+    ],
+    analysis: {
+      route: verdict.analysis.route,
+      requestedDepth: verdict.analysis.requestedDepth,
+      selectedDepth: verdict.analysis.selectedDepth,
+      deterministic: verdict.analysis.deterministic,
+      reasonCodes: verdict.analysis.reasonCodes,
+    },
+  };
+}
+
+function decisionView(verdict: DecisionVerdict, objective?: string): ProductDecisionView {
+  return {
+    status: verdict.status,
+    summary: verdict.summary,
+    ...(objective === undefined ? {} : { objective }),
+    claims: verdict.claims.map((claim) => ({
+      id: claim.id,
+      statement: claim.statement,
+      kind: claim.kind,
+      status: claim.status,
+      explanation: claim.explanation,
+      deterministic: claim.deterministic,
+    })),
+    confirmedProperties: verdict.confirmedProperties,
+    challengedAssumptions: verdict.challengedAssumptions,
+    uncertainty: verdict.uncertainty,
+    evidence: verdict.evidence.map(viewEvidence),
+    ...(verdict.implementationHandoff === undefined ? {} : { implementationHandoff: verdict.implementationHandoff }),
+    ...(verdict.revisionHandoff === undefined ? {} : { revisionHandoff: verdict.revisionHandoff }),
+    metrics: [
+      { label: "Model calls", value: String(verdict.metrics.modelCalls) },
+      { label: "Deterministic operations", value: String(verdict.metrics.deterministicOperations) },
+      { label: "Validated claims", value: String(verdict.claims.length) },
+      { label: "Latency", value: `${String(Math.round(verdict.metrics.latencyMs))} ms` },
+    ],
+    analysis: {
+      requestedDepth: verdict.analysis.requestedDepth,
+      selectedDepth: verdict.analysis.selectedDepth,
+      deterministic: verdict.analysis.deterministic,
+      reasonCodes: verdict.analysis.plan.reasonCodes,
+    },
+  };
+}
+
 export class ConclaveProductService {
   readonly #sessions = new Map<string, ProjectSession>();
   readonly #jobs = new Map<string, RunJob>();
@@ -460,6 +560,7 @@ export class ConclaveProductService {
   readonly #providerModelCatalog: ProviderModelCatalog;
   readonly #freeUsage: FreeUsageController;
   readonly #adaptiveMetrics = new AdaptiveMetricsAccumulator();
+  readonly #changeSets = new GitChangeSetService();
 
   public constructor(options: { readonly demoRoot?: string; readonly allowedRoot?: string; readonly settingsFile?: string; readonly environment?: NodeJS.ProcessEnv; readonly freeUsageController?: FreeUsageController; readonly providerModelCatalog?: ProviderModelCatalog } = {}) {
     this.#environment = options.environment ?? process.env;
@@ -570,6 +671,76 @@ export class ConclaveProductService {
 
   public async run(id: string, intent: Exclude<ProductIntent, "task">, question: string, depth: ProductAnalysisDepth = "auto"): Promise<ProductRunView> {
     return this.#executeRun(id, intent, question, depth);
+  }
+
+  public async review(
+    id: string,
+    source: ProductChangeSetSource,
+    explicitDiff?: string,
+    objective?: string,
+    depth: ProductAnalysisDepth = "auto",
+  ): Promise<ProductReviewView> {
+    const session = this.#session(id);
+    let changeSet: ChangeSet;
+    try {
+      changeSet = await this.#changeSets.load(session.root, source, {
+        ...(explicitDiff === undefined ? {} : { explicitDiff }),
+      });
+    } catch (error) {
+      if (error instanceof ChangeSetError) {
+        throw new ProductServiceError(error.code, error.message, "Choose a valid Git comparison or paste an explicit unified diff.");
+      }
+      throw error;
+    }
+    if (source.kind !== "explicit") await this.#refreshKnowledge(session);
+    const normalizedObjective = objective?.trim() || undefined;
+    const inspection = session.retrieval.knowledge.inspectDiff(changeSet.unifiedDiff, normalizedObjective);
+    const mandatoryStop = inspection.deterministicStatus === "nothing-to-review"
+      || inspection.deterministicStatus === "invalid"
+      || inspection.findings.some((finding) => finding.category === "secret-exposure" || finding.category === "merge-conflict");
+    const direct = inspection.deterministicStatus !== undefined && (mandatoryStop || depth === "auto" || depth === "fast");
+    const execute = async (): Promise<ProductReviewView> => {
+      const engine = direct
+        ? new ReasoningEngine({ retrieval: session.retrieval, runtime: new StructuredAgentRuntime(new Map(), [], DEFAULT_REASONING_LIMITS), preset: "full" })
+        : session.source === "demo"
+          ? await createDemoReasoningEngine(session.root, undefined, session.retrieval)
+          : await this.#liveReasoning(session.retrieval);
+      const verdict = await engine.review({
+        unifiedDiff: changeSet.unifiedDiff,
+        changeSet,
+        ...(normalizedObjective === undefined ? {} : { objective: normalizedObjective }),
+      }, { depth });
+      return reviewView(verdict, source);
+    };
+    return session.source === "demo" || direct ? execute() : this.#withFreeUsage("review", execute);
+  }
+
+  public async decide(
+    id: string,
+    proposal: string,
+    objective?: string,
+    depth: ProductAnalysisDepth = "auto",
+  ): Promise<ProductDecisionView> {
+    const session = this.#session(id);
+    const normalizedProposal = proposal.trim();
+    const normalizedObjective = objective?.trim() || undefined;
+    const inspection = session.retrieval.knowledge.inspectProposal(normalizedProposal);
+    const direct = normalizedProposal === ""
+      || inspection.claims.length === 0
+      || (inspection.deterministicComplete && (depth === "auto" || depth === "fast"));
+    const execute = async (): Promise<ProductDecisionView> => {
+      const engine = direct
+        ? new ReasoningEngine({ retrieval: session.retrieval, runtime: new StructuredAgentRuntime(new Map(), [], DEFAULT_REASONING_LIMITS), preset: "full" })
+        : session.source === "demo"
+          ? await createDemoReasoningEngine(session.root, undefined, session.retrieval)
+          : await this.#liveReasoning(session.retrieval);
+      const verdict = await engine.decide({
+        proposal: normalizedProposal,
+        ...(normalizedObjective === undefined ? {} : { objective: normalizedObjective }),
+      }, { depth });
+      return decisionView(verdict, normalizedObjective);
+    };
+    return session.source === "demo" || direct ? execute() : this.#withFreeUsage("decide", execute);
   }
 
   public startRun(id: string, intent: Exclude<ProductIntent, "task">, question: string, depth: ProductAnalysisDepth = "auto"): ProductRunJobView {
@@ -871,13 +1042,26 @@ export class ConclaveProductService {
     return project;
   }
 
+  async #refreshKnowledge(session: ProjectSession): Promise<void> {
+    const embedding = session.source === "demo"
+      ? new LocalHashEmbeddingProvider()
+      : createEmbeddingProvider(this.#environment, new EnvironmentCredentialSource(this.#environment));
+    const indexed = await new RepositoryIndexer({
+      repositorySource: new LocalFolderRepository(),
+      parser: new TypeScriptCodeParser(),
+      embeddingProvider: embedding,
+      indexStore: this.#indexStore,
+    }).index(session.root);
+    session.retrieval = new CodeRetrievalService(indexed.index, embedding);
+  }
+
   #session(id: string): ProjectSession {
     const session = this.#sessions.get(id);
     if (session === undefined) throw new ProductServiceError("project_missing", "This project session is no longer available.", "Open the repository again.");
     return session;
   }
 
-  async #withFreeUsage<T>(operation: "ask" | "investigate" | "task", execute: () => Promise<T>): Promise<T> {
+  async #withFreeUsage<T>(operation: "ask" | "investigate" | "task" | "review" | "decide", execute: () => Promise<T>): Promise<T> {
     if (await this.#providerSettings.activeSet() !== undefined) return execute();
     const runtime = loadRuntimeConfig(this.#environment);
     if (runtime.mode !== "free") return execute();

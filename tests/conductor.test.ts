@@ -19,6 +19,7 @@ const valid = {
 describe("Conductor policy boundary", () => {
   it("accepts a compact structured plan", () => {
     expect(parseConductorOutput(JSON.stringify(valid), "balanced", DEFAULT_REASONING_LIMITS)).toEqual(valid);
+    expect(parseConductorOutput(JSON.stringify({ ...valid, strategy: "diff-review" }), "balanced", DEFAULT_REASONING_LIMITS).strategy).toBe("diff-review");
   });
 
   it.each([
@@ -43,6 +44,7 @@ describe("Conductor policy boundary", () => {
       requiresModelReasoning: true, signals: ["causal-language"],
     };
     expect(shouldInvokeConductor(base, "balanced")).toBe(true);
+    expect(shouldInvokeConductor({ ...base, queryKind: "review" }, "balanced")).toBe(true);
     expect(shouldInvokeConductor({ ...base, deterministicCoverage: "strong", requiresModelReasoning: false }, "fast")).toBe(false);
   });
 });

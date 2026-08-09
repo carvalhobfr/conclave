@@ -25,6 +25,18 @@ import type {
   VerificationResult,
   Verdict,
 } from "../domain/reasoning.js";
+import type {
+  ReviewRequest,
+  ReviewRunOptions,
+  ReviewVerdict,
+  ReviewVerdictFinding,
+} from "../domain/review.js";
+import type {
+  DecisionClaim,
+  DecisionRequest,
+  DecisionRunOptions,
+  DecisionVerdict,
+} from "../domain/decision.js";
 import { DEFAULT_REASONING_LIMITS } from "../domain/reasoning.js";
 import type { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { approximateTokenCount } from "../retrieval/context-packer.js";
@@ -112,6 +124,124 @@ function evidenceReference(evidence: Evidence): string {
   return `${evidence.path}:${String(evidence.startLine)}-${String(evidence.endLine)}${evidence.symbol === undefined ? "" : ` — ${evidence.symbol}`}`;
 }
 
+function adaptiveReviewQuestion(
+  request: ReviewRequest,
+  changedFiles: ReviewVerdict["changedFiles"],
+  reasonCodes: readonly string[],
+): string {
+  const objective = request.objective?.trim();
+  return [
+    "Review the indexed post-change implementation for concrete defects introduced by the supplied diff metadata.",
+    "Treat claims as potential findings: report only actionable correctness, security, or regression problems, and preserve uncertainty when repository evidence is insufficient.",
+    ...(objective === undefined || objective === "" ? [] : [`Requested change: ${objective.slice(0, 1_000)}`]),
+    "Changed files:",
+    ...changedFiles.map((file) => `- ${file.path} (${file.changeType}; +${String(file.additions)} -${String(file.deletions)}; ${String(file.hunks)} hunks)`),
+    `Project Knowledge signals: ${reasonCodes.join(", ")}`,
+    "Use the indexed source and graph as evidence. The host, not a model, parsed the diff and controls review scope.",
+  ].join("\n");
+}
+
+function findingFromClaim(
+  claim: Claim,
+  severity: ReviewVerdictFinding["severity"],
+  evidence: readonly Evidence[],
+): ReviewVerdictFinding {
+  const cited = evidence.filter((item) => claim.evidenceIds.includes(item.id));
+  const first = cited[0];
+  return {
+    id: stableId("review-finding", claim.id, claim.statement),
+    category: /\b(security|credential|secret|private[- ]key|permission bypass|authorization bypass)\b/iu.test(claim.statement)
+      ? "security"
+      : "correctness",
+    severity,
+    statement: claim.statement,
+    consequence: severity === "blocking"
+      ? `If merged, the ChangeSet would exhibit this verified repository consequence: ${claim.statement}`
+      : `The repository evidence does not yet rule out this concrete consequence: ${claim.statement}`,
+    ...(first === undefined ? {} : { path: first.path, line: first.startLine }),
+    evidenceIds: cited.map((item) => item.id),
+    deterministic: false,
+  };
+}
+
+function reviewRevisionHandoff(
+  objective: string | undefined,
+  findings: readonly ReviewVerdictFinding[],
+  changedFiles: ReviewVerdict["changedFiles"],
+): string | undefined {
+  const actionable = findings.filter((finding) => finding.severity !== "suggestion");
+  if (actionable.length === 0) return undefined;
+  return [
+    "Revision objective: resolve the concrete validation findings without expanding ChangeSet scope.",
+    ...(objective === undefined || objective.trim() === "" ? [] : [`Original objective: ${objective.trim().slice(0, 1_000)}`]),
+    `Allowed changed paths: ${changedFiles.map((file) => file.path).join(", ") || "none"}`,
+    "Findings:",
+    ...actionable.map((finding) => `- [${finding.severity}] ${finding.statement} Consequence: ${finding.consequence}${finding.path === undefined ? "" : ` (${finding.path}${finding.line === undefined ? "" : `:${String(finding.line)}`})`}`),
+    "Do not include credentials, hidden prompts, or uncited source excerpts in the revision response.",
+  ].join("\n");
+}
+
+function changeSetScopeUncertainty(request: ReviewRequest): readonly ReviewVerdict["uncertainty"][number][] {
+  const excluded = (request.changeSet?.excludedSensitivePaths ?? []).map((path) => ({
+    id: stableId("review-uncertainty", "excluded-sensitive-path", path),
+    statement: `${path} was excluded by the repository secret-path boundary and was not reviewed.`,
+    reason: "unindexed-file" as const,
+    paths: [path],
+  }));
+  const limitations = (request.changeSet?.limitations ?? [])
+    .filter((limitation) => !/sensitive path/iu.test(limitation))
+    .map((limitation) => ({
+      id: stableId("review-uncertainty", "changeset-limitation", limitation),
+      statement: limitation,
+      reason: "incomplete-diff" as const,
+      paths: [] as readonly string[],
+    }));
+  return [...excluded, ...limitations];
+}
+
+function adaptiveDecisionQuestion(
+  request: DecisionRequest,
+  claims: readonly DecisionClaim[],
+  reasonCodes: readonly string[],
+): string {
+  return [
+    "Validate this implementation decision against the indexed repository. Challenge assumptions and report concrete repository consequences, not generic design slogans.",
+    ...(request.objective === undefined || request.objective.trim() === "" ? [] : [`Objective: ${request.objective.trim().slice(0, 1_000)}`]),
+    "Proposal claims:",
+    ...claims.map((claim) => `- ${claim.statement}`),
+    `Project Knowledge signals: ${reasonCodes.join(", ")}`,
+    "Treat each proposal claim as testable. Preserve its wording where practical, cite repository evidence, and keep unverifiable runtime outcomes uncertain.",
+  ].join("\n");
+}
+
+function normalizedClaim(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_$]+/gu, " ").trim();
+}
+
+function decisionImplementationHandoff(request: DecisionRequest, claims: readonly DecisionClaim[], evidence: readonly Evidence[]): string {
+  return [
+    "Implementation objective:",
+    request.objective?.trim() || request.proposal.trim(),
+    "Validated proposal:",
+    request.proposal.trim(),
+    "Confirmed claims and constraints:",
+    ...claims.filter((claim) => claim.status === "supported").map((claim) => `- ${claim.statement}`),
+    "Repository evidence:",
+    ...evidence.map((item) => `- ${item.id}: ${item.path}:${String(item.startLine)}-${String(item.endLine)}`),
+    "Implement only the validated scope. Re-run first-class Review on the resulting ChangeSet before merge.",
+  ].join("\n");
+}
+
+function decisionRevisionHandoff(request: DecisionRequest, claims: readonly DecisionClaim[]): string {
+  return [
+    "Proposal revision objective: address rejected assumptions and make uncertain consequences testable.",
+    `Original proposal: ${request.proposal.trim()}`,
+    "Rejected or uncertain claims:",
+    ...claims.filter((claim) => claim.status !== "supported").map((claim) => `- [${claim.status}] ${claim.statement} — ${claim.explanation}`),
+    "Return a revised proposal with explicit assumptions, constraints, affected symbols, and a verification plan.",
+  ].join("\n");
+}
+
 function synthesizeAnswer(claims: readonly Claim[], evidence: readonly Evidence[]): string {
   const evidenceById = new Map(evidence.map((item) => [item.id, item]));
   const lines: string[] = [];
@@ -173,6 +303,283 @@ export class ReasoningEngine {
     this.#preset = options.preset;
     this.#limits = options.limits ?? DEFAULT_REASONING_LIMITS;
     this.#onTrace = options.onTrace;
+  }
+
+  public async review(
+    request: ReviewRequest,
+    options: ReviewRunOptions = {},
+  ): Promise<ReviewVerdict> {
+    const started = performance.now();
+    if (options.signal?.aborted === true) throw options.signal.reason;
+    const knowledgeReview = this.#retrieval.knowledge.inspectDiff(request.unifiedDiff, request.objective);
+    const requestedDepth = options.depth ?? "auto";
+    const selectedDepth = selectAnalysisDepth(requestedDepth, knowledgeReview.assessment);
+    const plan = deterministicReasoningPlan(knowledgeReview.assessment, selectedDepth);
+    const mandatoryDeterministicStop = knowledgeReview.deterministicStatus === "nothing-to-review"
+      || knowledgeReview.deterministicStatus === "invalid"
+      || knowledgeReview.findings.some((finding) => finding.category === "secret-exposure" || finding.category === "merge-conflict");
+    const direct = knowledgeReview.deterministicStatus !== undefined
+      && (mandatoryDeterministicStop || requestedDepth === "auto" || requestedDepth === "fast");
+    if (direct) {
+      const scopeUncertainty = changeSetScopeUncertainty(request);
+      const status: ReviewVerdict["status"] = scopeUncertainty.length > 0
+        && knowledgeReview.deterministicStatus !== "changes-requested"
+        && knowledgeReview.deterministicStatus !== "invalid"
+          ? "uncertain"
+          : knowledgeReview.deterministicStatus;
+      const changed = knowledgeReview.changedFiles.length;
+      const summary = status === "approved"
+        ? `Deterministic Project Knowledge checks support approval of ${String(changed)} changed file${changed === 1 ? "" : "s"}.`
+        : status === "nothing-to-review"
+          ? "There is no substantive diff to review; no implementation approval was issued."
+          : status === "invalid"
+            ? "The supplied diff is incomplete or invalid, so no implementation verdict was issued."
+            : status === "uncertain"
+              ? "A ChangeSet scope or Project Knowledge limitation prevents a complete implementation verdict."
+            : `Deterministic Project Knowledge review found ${String(knowledgeReview.findings.filter((finding) => finding.severity === "blocking").length)} blocking issue${knowledgeReview.findings.filter((finding) => finding.severity === "blocking").length === 1 ? "" : "s"}.`;
+      const occurredAt = new Date().toISOString();
+      const trace: ReasoningTraceEvent[] = [
+        { sequence: 1, type: "reasoning_started", occurredAt, iteration: 0, detail: "Started knowledge-first adaptive review" },
+        { sequence: 2, type: "query_assessed", occurredAt, iteration: 0, detail: "Project Knowledge assessed the supplied diff", data: { changedFiles: changed, findings: knowledgeReview.findings.length } },
+        { sequence: 3, type: "conductor_skipped", occurredAt, iteration: 0, role: "conductor", detail: "Deterministic diff assessment made orchestration unnecessary" },
+        { sequence: 4, type: "deterministic_answer_completed", occurredAt, iteration: 0, detail: "Completed deterministic diff review", data: { findings: knowledgeReview.findings.length } },
+        { sequence: 5, type: "reasoning_early_exit", occurredAt, iteration: 0, detail: "Project Knowledge was sufficient for a ReviewVerdict" },
+        { sequence: 6, type: "verdict_completed", occurredAt, iteration: 0, detail: summary },
+      ];
+      for (const event of trace) this.#onTrace?.(event);
+      options.onSnapshot?.({
+        status: "complete",
+        provisionalConclusion: summary,
+        supportedClaims: [],
+        rejectedClaims: [],
+        uncertainClaims: [],
+        evidence: knowledgeReview.evidence,
+        remainingChecks: [],
+      });
+      const revisionHandoff = reviewRevisionHandoff(request.objective, knowledgeReview.findings, knowledgeReview.changedFiles);
+      return {
+        status,
+        summary,
+        ...(request.objective === undefined ? {} : { objective: request.objective }),
+        ...(request.changeSet === undefined ? {} : { changeSet: {
+          id: request.changeSet.id,
+          source: request.changeSet.source,
+          excludedSensitivePaths: request.changeSet.excludedSensitivePaths,
+          limitations: request.changeSet.limitations,
+        } }),
+        findings: knowledgeReview.findings,
+        confirmedProperties: knowledgeReview.confirmedProperties,
+        uncertainty: [...knowledgeReview.uncertainty, ...scopeUncertainty],
+        changedFiles: knowledgeReview.changedFiles,
+        impact: knowledgeReview.impact,
+        evidence: knowledgeReview.evidence,
+        limitations: [...knowledgeReview.limitations, ...(request.changeSet?.limitations ?? [])],
+        ...(revisionHandoff === undefined ? {} : { revisionHandoff }),
+        trace,
+        metrics: {
+          modelCalls: 0,
+          deterministicOperations: 1 + knowledgeReview.findings.length,
+          approximateInputTokens: 0,
+          approximateOutputTokens: 0,
+          latencyMs: Math.max(0, performance.now() - started),
+        },
+        analysis: {
+          route: "project-knowledge",
+          requestedDepth,
+          selectedDepth,
+          assessment: knowledgeReview.assessment,
+          plan,
+          deterministic: true,
+          reasonCodes: knowledgeReview.reasonCodes,
+        },
+      };
+    }
+
+    const question = adaptiveReviewQuestion(request, knowledgeReview.changedFiles, knowledgeReview.reasonCodes);
+    const reasoning = await this.ask(question, "conclave", {
+      depth: requestedDepth,
+      intent: "review",
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.onSnapshot === undefined ? {} : { onSnapshot: options.onSnapshot }),
+    });
+    const evidence = dedupeEvidence([...knowledgeReview.evidence, ...reasoning.state.evidence]);
+    const supported = reasoning.verdict.claims.supported.map((claim) => findingFromClaim(claim, "blocking", evidence));
+    const uncertain = reasoning.verdict.claims.uncertain.map((claim) => findingFromClaim(claim, "warning", evidence));
+    const findings = [...knowledgeReview.findings, ...supported, ...uncertain];
+    const scopeUncertainty = changeSetScopeUncertainty(request);
+    const status: ReviewVerdict["status"] = findings.some((finding) => finding.severity === "blocking")
+      ? "changes-requested"
+      : reasoning.terminationReason !== "completed" || uncertain.length > 0 || knowledgeReview.uncertainty.length > 0 || scopeUncertainty.length > 0
+        ? "uncertain"
+        : "approved";
+    const revisionHandoff = reviewRevisionHandoff(request.objective, findings, knowledgeReview.changedFiles);
+    return {
+      status,
+      summary: status === "approved"
+        ? "Adaptive review found no evidence-grounded defect in the changed implementation."
+        : status === "changes-requested"
+          ? `Adaptive review found ${String(findings.filter((finding) => finding.severity === "blocking").length)} evidence-grounded blocking issue${findings.filter((finding) => finding.severity === "blocking").length === 1 ? "" : "s"}.`
+          : "Adaptive review could not resolve every material risk from available repository evidence.",
+      findings,
+      ...(request.objective === undefined ? {} : { objective: request.objective }),
+      ...(request.changeSet === undefined ? {} : { changeSet: {
+        id: request.changeSet.id,
+        source: request.changeSet.source,
+        excludedSensitivePaths: request.changeSet.excludedSensitivePaths,
+        limitations: request.changeSet.limitations,
+      } }),
+      confirmedProperties: knowledgeReview.confirmedProperties,
+      uncertainty: [
+        ...knowledgeReview.uncertainty,
+        ...scopeUncertainty,
+        ...reasoning.verdict.claims.uncertain.map((claim) => ({
+          id: stableId("review-uncertainty", claim.id), statement: claim.statement, reason: "model" as const,
+          paths: evidence.filter((item) => claim.evidenceIds.includes(item.id)).map((item) => item.path),
+        })),
+      ],
+      changedFiles: knowledgeReview.changedFiles,
+      impact: knowledgeReview.impact,
+      evidence,
+      limitations: [...knowledgeReview.limitations, ...(request.changeSet?.limitations ?? [])],
+      ...(revisionHandoff === undefined ? {} : { revisionHandoff }),
+      trace: reasoning.trace,
+      metrics: {
+        modelCalls: reasoning.metrics.modelCalls,
+        deterministicOperations: reasoning.metrics.deterministicOperations + 1,
+        approximateInputTokens: reasoning.metrics.approximateInputTokens,
+        approximateOutputTokens: reasoning.metrics.approximateOutputTokens,
+        latencyMs: Math.max(0, performance.now() - started),
+      },
+      analysis: {
+        route: "adaptive-orchestration",
+        requestedDepth: reasoning.analysis.requestedDepth,
+        selectedDepth: reasoning.analysis.selectedDepth,
+        assessment: reasoning.analysis.assessment,
+        plan: reasoning.analysis.plan,
+        deterministic: false,
+        reasonCodes: [...knowledgeReview.reasonCodes, ...reasoning.analysis.plan.reasonCodes],
+      },
+    };
+  }
+
+  public async decide(
+    request: DecisionRequest,
+    options: DecisionRunOptions = {},
+  ): Promise<DecisionVerdict> {
+    const started = performance.now();
+    if (options.signal?.aborted === true) throw options.signal.reason;
+    const requestedDepth = options.depth ?? "auto";
+    const proposal = request.proposal.trim();
+    const knowledge = this.#retrieval.knowledge.inspectProposal(proposal);
+    const selectedDepth = selectAnalysisDepth(requestedDepth, knowledge.assessment);
+    const plan = deterministicReasoningPlan(knowledge.assessment, selectedDepth);
+    const invalid = proposal === "" || knowledge.claims.length === 0;
+    const direct = invalid || (knowledge.deterministicComplete && (requestedDepth === "auto" || requestedDepth === "fast"));
+    if (direct) {
+      const status: DecisionVerdict["status"] = invalid
+        ? "invalid"
+        : knowledge.claims.some((claim) => claim.status === "rejected") ? "revise" : "proceed";
+      const summary = status === "invalid"
+        ? "The proposal contains no explicit claim that can be validated."
+        : status === "revise"
+          ? "Deterministic Project Knowledge contradicts at least one proposal assumption."
+          : "Deterministic Project Knowledge supports every explicit factual proposal claim.";
+      const occurredAt = new Date().toISOString();
+      const trace: ReasoningTraceEvent[] = [
+        { sequence: 1, type: "reasoning_started", occurredAt, iteration: 0, detail: "Started validation-first decision analysis" },
+        { sequence: 2, type: "query_assessed", occurredAt, iteration: 0, detail: `Decomposed ${String(knowledge.claims.length)} explicit proposal claims` },
+        { sequence: 3, type: "conductor_skipped", occurredAt, iteration: 0, role: "conductor", detail: "Deterministic claim validation made model planning unnecessary" },
+        { sequence: 4, type: "deterministic_answer_completed", occurredAt, iteration: 0, detail: summary },
+        { sequence: 5, type: "verdict_completed", occurredAt, iteration: 0, detail: "DecisionVerdict completed" },
+      ];
+      for (const event of trace) this.#onTrace?.(event);
+      return {
+        status, summary, claims: knowledge.claims,
+        confirmedProperties: knowledge.claims.filter((claim) => claim.status === "supported").map((claim) => claim.statement),
+        challengedAssumptions: knowledge.claims.filter((claim) => claim.status === "rejected").map((claim) => claim.statement),
+        uncertainty: knowledge.claims.filter((claim) => claim.status === "uncertain").map((claim) => claim.statement),
+        evidence: knowledge.evidence,
+        ...(status === "proceed" ? { implementationHandoff: decisionImplementationHandoff(request, knowledge.claims, knowledge.evidence) } : {}),
+        ...(status === "revise" ? { revisionHandoff: decisionRevisionHandoff(request, knowledge.claims) } : {}),
+        trace,
+        metrics: {
+          modelCalls: 0, deterministicOperations: Math.max(1, knowledge.claims.length),
+          approximateInputTokens: 0, approximateOutputTokens: 0, latencyMs: Math.max(0, performance.now() - started),
+        },
+        analysis: { requestedDepth, selectedDepth, assessment: knowledge.assessment, plan, deterministic: true },
+      };
+    }
+
+    const reasoning = await this.ask(adaptiveDecisionQuestion(request, knowledge.claims, knowledge.reasonCodes), "conclave", {
+      depth: requestedDepth, intent: "decide", ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const reasoningClaims = [
+      ...reasoning.verdict.claims.supported.map((claim) => ({ claim, status: "supported" as const })),
+      ...reasoning.verdict.claims.rejected.map((claim) => ({ claim, status: "rejected" as const })),
+      ...reasoning.verdict.claims.uncertain.map((claim) => ({ claim, status: "uncertain" as const })),
+    ];
+    const matchedReasoning = new Set<string>();
+    const claims: DecisionClaim[] = knowledge.claims.map((claim) => {
+      if (claim.deterministic) return claim;
+      const normalized = normalizedClaim(claim.statement);
+      const match = reasoningClaims.find((candidate) => {
+        const other = normalizedClaim(candidate.claim.statement);
+        return other === normalized || (normalized.length >= 12 && (other.includes(normalized) || normalized.includes(other)));
+      });
+      if (match === undefined) return claim;
+      matchedReasoning.add(match.claim.id);
+      return {
+        ...claim,
+        status: match.status,
+        evidenceIds: match.claim.evidenceIds,
+        explanation: match.status === "supported"
+          ? "Adaptive reasoning and deterministic verification support this proposal claim."
+          : match.status === "rejected"
+            ? "Adaptive challenge and repository verification contradict this proposal claim."
+            : "Repository evidence does not resolve this proposal claim.",
+        deterministic: false,
+      };
+    });
+    for (const candidate of reasoningClaims.filter((item) => !matchedReasoning.has(item.claim.id) && item.status !== "rejected")) {
+      claims.push({
+        id: stableId("decision-claim", candidate.claim.id), statement: candidate.claim.statement, kind: "assumption",
+        status: candidate.status, evidenceIds: candidate.claim.evidenceIds,
+        explanation: candidate.status === "supported" ? "Evidence-grounded validation supports this derived claim."
+          : candidate.status === "rejected" ? "Repository verification rejects this derived assumption."
+            : "This derived consequence remains uncertain.",
+        deterministic: candidate.claim.verificationIds.some((id) => reasoning.state.verifications.find((verification) => verification.id === id)?.deterministic === true),
+      });
+    }
+    const status: DecisionVerdict["status"] = claims.some((claim) => claim.status === "rejected")
+      ? "revise"
+      : reasoning.terminationReason !== "completed" || claims.some((claim) => claim.status === "uncertain")
+        ? "uncertain" : "proceed";
+    const evidence = dedupeEvidence([...knowledge.evidence, ...reasoning.verdict.evidence]);
+    return {
+      status,
+      summary: status === "proceed" ? "The proposal is consistent with verified repository evidence and can proceed to bounded implementation."
+        : status === "revise" ? "The proposal relies on a contradicted repository assumption and should be revised before implementation."
+          : "Material proposal consequences remain uncertain and need a sharper claim or runtime validation plan.",
+      claims,
+      confirmedProperties: claims.filter((claim) => claim.status === "supported").map((claim) => claim.statement),
+      challengedAssumptions: claims.filter((claim) => claim.status === "rejected").map((claim) => claim.statement),
+      uncertainty: claims.filter((claim) => claim.status === "uncertain").map((claim) => claim.statement),
+      evidence,
+      ...(status === "proceed" ? { implementationHandoff: decisionImplementationHandoff(request, claims, evidence) } : {}),
+      ...(status !== "proceed" ? { revisionHandoff: decisionRevisionHandoff(request, claims) } : {}),
+      trace: reasoning.trace,
+      metrics: {
+        modelCalls: reasoning.metrics.modelCalls,
+        deterministicOperations: reasoning.metrics.deterministicOperations + knowledge.claims.filter((claim) => claim.deterministic).length,
+        approximateInputTokens: reasoning.metrics.approximateInputTokens,
+        approximateOutputTokens: reasoning.metrics.approximateOutputTokens,
+        latencyMs: Math.max(0, performance.now() - started),
+      },
+      analysis: {
+        requestedDepth: reasoning.analysis.requestedDepth, selectedDepth: reasoning.analysis.selectedDepth,
+        assessment: reasoning.analysis.assessment, plan: reasoning.analysis.plan, deterministic: false,
+      },
+    };
   }
 
   public async ask(

@@ -21,7 +21,7 @@ const ROLE_SYSTEM: Readonly<Record<AgentRole, string>> = {
 
 export const ROLE_OUTPUT_SCHEMAS: Readonly<Record<AgentRole, string>> = {
   conductor:
-    '{"depth":"fast|balanced|deep","strategy":"deterministic|graph-first|retrieval-first|causal-investigation|task-investigation","roles":[{"role":"investigator|skeptic|architect|verifier|judge","requirement":"required|conditional"}],"modelRequirements":{"investigator":{"reasoning":"low|medium|high","coding":"low|medium|high","speed":"interactive|normal|slow-ok","context":"small|medium|large"}},"finalReview":"none|conditional|recommended","reasonCodes":["short-code"]}',
+    '{"depth":"fast|balanced|deep","strategy":"deterministic|graph-first|retrieval-first|causal-investigation|task-investigation|diff-review|decision-validation","roles":[{"role":"investigator|skeptic|architect|verifier|judge","requirement":"required|conditional"}],"modelRequirements":{"investigator":{"reasoning":"low|medium|high","coding":"low|medium|high","speed":"interactive|normal|slow-ok","context":"small|medium|large"}},"finalReview":"none|conditional|recommended","reasonCodes":["short-code"]}',
   investigator:
     '{"summary":"short","claims":[{"statement":"...","evidenceIds":["evidence_id"],"uncertainty":"none|possible|hypothesis","check":{"kind":"symbol-exists|callers|callees|references|path|text","expectation":"present|absent",...}}],"retrievalRequests":[{"kind":"symbol|references|callers|callees|path|text|search",...}]}',
   skeptic:

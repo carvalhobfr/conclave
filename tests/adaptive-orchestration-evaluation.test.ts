@@ -38,4 +38,24 @@ describe("adaptive orchestration evaluation", () => {
     expect(auto.metrics.modelCalls).toBeLessThanOrEqual(full.metrics.modelCalls);
     expect(auto.metrics.deterministicOperations).toBeGreaterThan(0);
   });
+
+  it("keeps deterministic Review on the zero-model adaptive route", async () => {
+    const provider = reasoningFixtureProvider();
+    const engine = await createReasoningFixtureEngine(provider);
+    const verdict = await engine.review({
+      unifiedDiff: [
+        "diff --git a/docs/adaptive-review.md b/docs/adaptive-review.md",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/docs/adaptive-review.md",
+        "@@ -0,0 +1,1 @@",
+        "+Review uses Project Knowledge before model orchestration.",
+      ].join("\n"),
+    });
+
+    expect(verdict.status).toBe("approved");
+    expect(verdict.analysis.route).toBe("project-knowledge");
+    expect(verdict.metrics.modelCalls).toBe(0);
+    expect(provider.requests).toHaveLength(0);
+  });
 });

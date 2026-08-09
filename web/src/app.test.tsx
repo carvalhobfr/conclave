@@ -95,6 +95,22 @@ describe("Conclave product UI", () => {
     expect(screen.getByText(/Repository scripts execute repository code and are not fully sandboxed/i)).toBeTruthy();
   });
 
+  it("provides first-class Review and Decide workspaces", async () => {
+    mockFetch();
+    render(<App />);
+    await screen.findByText("auth-repository");
+    const navigation = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+
+    fireEvent.click(navigation.getByRole("button", { name: "Review" }));
+    expect(screen.getByRole("region", { name: "Review workspace" })).toBeTruthy();
+    expect(screen.getByText("Review a real ChangeSet")).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Working tree" })).toBeTruthy();
+
+    fireEvent.click(navigation.getByRole("button", { name: "Decide" }));
+    expect(screen.getByRole("region", { name: "Decide workspace" })).toBeTruthy();
+    expect(screen.getByText("Challenge a proposal before implementation")).toBeTruthy();
+  });
+
   it("shows supported, rejected, and uncertain claims without hiding disagreement", async () => {
     mockFetch();
     render(<App />);

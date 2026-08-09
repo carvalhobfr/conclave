@@ -133,6 +133,36 @@ describe("ConclaveProductService", () => {
     expect(run.status).toBe("completed-with-uncertainty");
   });
 
+  it("exposes deterministic Review semantics without a parallel reviewer pipeline", async () => {
+    const product = service();
+    const project = await product.openDemo();
+    const empty = await product.review(project.id, { kind: "explicit", label: "empty" }, "", "Review implementation");
+    const documentation = await product.review(project.id, { kind: "explicit", label: "docs" }, [
+      "diff --git a/docs/usage.md b/docs/usage.md",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/docs/usage.md",
+      "@@ -0,0 +1,1 @@",
+      "+# Usage",
+    ].join("\n"), "Document usage");
+
+    expect(empty.status).toBe("nothing-to-review");
+    expect(empty.metrics).toContainEqual({ label: "Model calls", value: "0" });
+    expect(documentation.status).toBe("approved");
+    expect(documentation.analysis.route).toBe("project-knowledge");
+  });
+
+  it("exposes claim-based Decision Validation with implementation handoff", async () => {
+    const product = service();
+    const project = await product.openDemo();
+    const verdict = await product.decide(project.id, "- bootstrapSession exists", "Reuse the existing bootstrap flow");
+
+    expect(verdict.status).toBe("proceed");
+    expect(verdict.claims).toContainEqual(expect.objectContaining({ statement: "bootstrapSession exists", status: "supported", deterministic: true }));
+    expect(verdict.metrics).toContainEqual({ label: "Model calls", value: "0" });
+    expect(verdict.implementationHandoff).toContain("Reuse the existing bootstrap flow");
+  });
+
   it("refuses local paths outside the server configured root", async () => {
     await expect(service().openLocal(resolve("."))).rejects.toMatchObject({ code: "repository_denied" });
   });

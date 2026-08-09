@@ -11,6 +11,8 @@ export type QueryKind =
   | "causal"
   | "comparison"
   | "task"
+  | "review"
+  | "decision"
   | "ambiguous";
 
 export interface QueryAssessment {
@@ -58,7 +60,9 @@ export interface ReasoningPlan {
     | "graph-first"
     | "retrieval-first"
     | "causal-investigation"
-    | "task-investigation";
+    | "task-investigation"
+    | "diff-review"
+    | "decision-validation";
   readonly roles: readonly PlannedRole[];
   readonly modelRequirements: Partial<Readonly<Record<AgentRole, ModelRequirement>>>;
   readonly finalReview: "none" | "conditional" | "recommended";
@@ -91,7 +95,7 @@ export interface DepthBudget {
 export interface AnalysisRunOptions {
   readonly depth?: AnalysisDepth;
   readonly signal?: AbortSignal;
-  readonly intent?: "ask" | "investigate" | "task";
+  readonly intent?: "ask" | "investigate" | "task" | "review" | "decide";
   readonly onSnapshot?: (snapshot: AnalysisSnapshot) => void;
 }
 

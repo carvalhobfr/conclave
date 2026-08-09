@@ -72,6 +72,12 @@ The service keeps process-local aggregate metrics for mean/median model calls an
 
 `npm run eval:adaptive` compares Auto with the preserved full-style route on unchanged fixtures using deterministic delayed providers. It checks correctness, rejected-claim behavior, roles, total calls, cumulative context, and wall-clock latency. It is a regression benchmark, not a provider response-time promise.
 
+## Review is an adaptive consumer
+
+`ReasoningEngine.review(...)` consumes the same `ProjectKnowledge` facade and adaptive planner as Ask and Investigate. Review does not add a fixed Reviewer role or a second model pipeline. The host parses unified-diff metadata and performs bounded deterministic checks first. Auto and Fast can return a semantically complete `ReviewVerdict` with zero model calls when that evidence is sufficient. A supported documentation-only or structurally isolated type-only code change can be `approved`; an empty diff is `nothing-to-review`; malformed input is `invalid`; and merge-conflict markers or concrete private-key/provider-token formats are `changes-requested`. Zero calls are an optimization, never a substitute for the correct status.
+
+When source behavior cannot be resolved mechanically, Review calls the existing adaptive reasoning path with `intent: "review"`. The normal depth budget, Conductor policy, capability-based model selection, conditional Investigator/Skeptic/Architect/Verifier/Judge route, cancellation, deterministic verification, early exit, and trace remain authoritative. The diff supplies host-parsed paths, change counts, and risk signals; repository source still enters model prompts only through bounded untrusted evidence.
+
 ## Boundaries and limitations
 
 - Static graph results do not prove dynamic dispatch, reflection, framework wiring, runtime configuration, or unresolved alias behavior.

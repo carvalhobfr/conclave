@@ -9,7 +9,7 @@ import type { AgentRole, ReasoningLimits } from "../domain/reasoning.js";
 
 const PLANNABLE_ROLES = new Set<AgentRole>(["investigator", "skeptic", "architect", "verifier", "judge"]);
 const DEPTHS = new Set<SelectedAnalysisDepth>(["fast", "balanced", "deep"]);
-const STRATEGIES = new Set<ReasoningPlan["strategy"]>(["deterministic", "graph-first", "retrieval-first", "causal-investigation", "task-investigation"]);
+const STRATEGIES = new Set<ReasoningPlan["strategy"]>(["deterministic", "graph-first", "retrieval-first", "causal-investigation", "task-investigation", "diff-review", "decision-validation"]);
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -120,5 +120,5 @@ export function parseConductorOutput(
 
 export function shouldInvokeConductor(assessment: QueryAssessment, depth: SelectedAnalysisDepth): boolean {
   if (!assessment.requiresModelReasoning || assessment.deterministicCoverage === "strong") return false;
-  return assessment.ambiguity === "high" && (assessment.queryKind === "ambiguous" || assessment.queryKind === "causal" || depth === "deep");
+  return assessment.ambiguity === "high" && (assessment.queryKind === "ambiguous" || assessment.queryKind === "causal" || assessment.queryKind === "review" || assessment.queryKind === "decision" || depth === "deep");
 }

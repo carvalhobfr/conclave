@@ -5,11 +5,12 @@ import { fileURLToPath } from "node:url";
 
 import { loadLocalEnvironment } from "../config/load-environment.js";
 import type { ExecutionPermissions } from "../domain/task-execution.js";
-import type { ConfigurableProviderId, ImportedRepositoryFile, ProductAnalysisDepth, ProviderModelsInput, SaveProviderSettingsInput } from "./contracts.js";
+import type { ConfigurableProviderId, ImportedRepositoryFile, ProductAnalysisDepth, ProductChangeSetSource, ProviderModelsInput, SaveProviderSettingsInput } from "./contracts.js";
 import { ConclaveProductService, ProductServiceError } from "./product-service.js";
 
 const BODY_LIMIT_BYTES = 64_000;
 const IMPORT_BODY_LIMIT_BYTES = 20_000_000;
+const REVIEW_BODY_LIMIT_BYTES = 2_500_000;
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -58,6 +59,35 @@ function analysisDepth(value: unknown): ProductAnalysisDepth {
     throw new ProductServiceError("invalid_depth", "Analysis depth must be Auto, Fast, Balanced, or Deep.", "Choose a supported analysis depth.");
   }
   return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function changeSetSource(value: unknown): ProductChangeSetSource {
+  if (!isRecord(value) || typeof value["kind"] !== "string") {
+    throw new ProductServiceError("invalid_change_source", "Choose a Review ChangeSet source.", "Select working tree, staged, branch, commit, or explicit diff.");
+  }
+  switch (value["kind"]) {
+    case "working-tree": return { kind: "working-tree" };
+    case "staged": return { kind: "staged" };
+    case "branch": {
+      const head = optionalString(value["head"]);
+      return { kind: "branch", base: string(value["base"], "Base branch"), ...(head === undefined ? {} : { head }) };
+    }
+    case "commit": return {
+      kind: "commit",
+      base: string(value["base"], "Base commit"),
+      target: string(value["target"], "Target commit"),
+    };
+    case "explicit": {
+      const label = optionalString(value["label"]);
+      return { kind: "explicit", ...(label === undefined ? {} : { label }) };
+    }
+    default:
+      throw new ProductServiceError("invalid_change_source", "The Review ChangeSet source is not supported.", "Choose working tree, staged, branch, commit, or explicit diff.");
+  }
 }
 
 function send(response: ServerResponse, status: number, value: unknown): void {
@@ -147,6 +177,30 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
       if (url.pathname === "/api/projects/import" && request.method === "POST") {
         const payload = await body(request, IMPORT_BODY_LIMIT_BYTES);
         send(response, 200, await product.importLocal(string(payload["name"], "Repository name"), importedFiles(payload["files"])));
+        return;
+      }
+      if (url.pathname === "/api/review" && request.method === "POST") {
+        const payload = await body(request, REVIEW_BODY_LIMIT_BYTES);
+        const source = changeSetSource(payload["source"]);
+        const explicitDiff = source.kind === "explicit" && typeof payload["diff"] === "string" ? payload["diff"] : undefined;
+        send(response, 200, await product.review(
+          string(payload["projectId"], "Project"),
+          source,
+          explicitDiff,
+          optionalString(payload["objective"]),
+          analysisDepth(payload["depth"]),
+        ));
+        return;
+      }
+      if (url.pathname === "/api/decide" && request.method === "POST") {
+        const payload = await body(request);
+        if (typeof payload["proposal"] !== "string") throw new ProductServiceError("invalid_request", "Proposal is required.", "Describe the proposal to validate.");
+        send(response, 200, await product.decide(
+          string(payload["projectId"], "Project"),
+          payload["proposal"],
+          optionalString(payload["objective"]),
+          analysisDepth(payload["depth"]),
+        ));
         return;
       }
       if (url.pathname === "/api/run" && request.method === "POST") {
