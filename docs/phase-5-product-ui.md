@@ -34,6 +34,8 @@ No remote Git import is presented as available.
 
 - **Ask** queries Project Knowledge first and can return a cited static answer with zero model calls. Model roles run only when semantic interpretation remains necessary.
 - **Investigate** runs an adaptive bounded route and preserves supported, rejected, and uncertain hypotheses alongside evidence and verification counts.
+- **Review** validates working-tree, staged, branch, commit, or explicit-diff ChangeSets through Project Knowledge and the adaptive reasoning path. Structurally proven results can use zero model calls.
+- **Decide** decomposes a proposal into claims, challenges assumptions against repository evidence, and generates an implementation or revision handoff.
 - **Task** is explicit. It starts in plan-only mode and displays the objective, verified plan, expected files, permissions, engine events, review/revision progress, checks, verdict, and final isolated diff.
 - **Analysis depth** keeps intent separate from Auto, Fast, Balanced, and Deep reasoning budgets. Auto is the default.
 - **Progress and cancellation** expose semantic engine events and evidence-backed snapshots. Cancellation aborts pending provider/command work instead of merely hiding a spinner.
@@ -43,9 +45,11 @@ No remote Git import is presented as available.
 
 ## Provider modes and roles
 
-The UI renders the server’s existing Free/API/Local conceptual mode. Configuration remains environment-driven and server-side; the browser never stores plaintext provider credentials. If no supported provider is configured, live runs return a clear configuration error and Demo Mode remains available.
+The UI presents four honest configuration strategies: local Ollama/LM Studio, the host's Free configuration, BYOK OpenAI/OpenRouter, and a custom OpenAI-compatible endpoint. OpenRouter requires the user's own key even for currently free models, and provider availability, quotas, and data handling remain provider-controlled. Local inference keeps repository reasoning on the machine only when embeddings are local too.
 
-Existing reasoning presets and role assignments remain authoritative. The UI shows actual per-run role routing and uses configured assignments for live runs. Phase 5 intentionally does not add a browser-side credential form, unsupported provider cards, or persisted advanced role overrides.
+Environment configuration remains read-only in the browser. Personal provider sets are persisted by the local server in an owner-only settings file; plaintext credentials are never returned in settings responses. If no supported provider is configured, live runs return a clear configuration error and Demo Mode remains available.
+
+Ready-made profiles are the normal path. Advanced routing optionally assigns a provider and model independently to each role, grouped as reasoning roles (Investigator, Skeptic, Architect, Verifier, Judge) and Task roles (Planner, Implementer, Reviewer). First-class Review consumes the reasoning roles through the Phase 8 adaptive path; it does not create a second fixed Reviewer pipeline.
 
 ## Task safety UX
 
@@ -65,7 +69,7 @@ File edits, static checks, repository scripts, and network are default-deny. Rep
 
 ## Demo Mode
 
-The bundled `demo/auth-repository` is a deterministic auth-lifecycle fixture. Demo Mode uses explicit fake-provider responses while running the real indexing, retrieval, reasoning, Task planning, isolated worktree, patch, revision, and verification code. The interface states that this is demo inference, not live AI.
+The bundled `demo/auth-repository` is a deterministic auth-lifecycle fixture. Demo Mode uses explicit fake-provider responses while running the real indexing, retrieval, reasoning, Task planning, isolated worktree, patch, revision, and verification code. Direct Ask and Review examples also demonstrate that Project Knowledge can produce a valid result with zero model calls. The interface distinguishes these deterministic paths from fake provider-assisted demo paths.
 
 It demonstrates:
 
@@ -76,6 +80,6 @@ It demonstrates:
 
 ## Validation
 
-`npm run test:web` runs DOM-level intent, permissions, warning, claim-status, and evidence-navigation checks. `tests/web-product-service.test.ts` covers the actual deterministic API service for Ask, Investigate, Task plan-only, isolated task execution, final diff, uncertainty, graph evidence, and local-folder denial.
+`npm run test:web` runs DOM-level intent, validation workspaces, model strategies, role grouping, permissions, warnings, claim status, and evidence-navigation checks. `tests/web-product-service.test.ts` covers the deterministic API service for Ask, Investigate, Review, Decide, Task plan-only, isolated task execution, final diff, uncertainty, graph evidence, and local-folder denial.
 
 Phase 5 does not add hosted execution, persistence/history, patch application, MCP, autonomous sessions, or remote cloning. Those remain deliberate boundaries for later phases.

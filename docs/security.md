@@ -130,6 +130,6 @@ model requests a typed capability
 - The local web server still has no authentication or multi-user session boundary. Its usage and concurrency state is process-local and keyed to the loopback client boundary, so it must not be exposed through a reverse proxy or public network without durable identity, distributed quotas, abuse controls, and a dedicated hosted security design.
 - Root ignore-file support does not yet reproduce nested Git ignore semantics.
 - Files can change during a scan. Symlink and canonical-path checks narrow traversal risk but do not provide an immutable filesystem snapshot.
-- JSON storage is owner-readable and atomic but not encrypted, multi-process safe, or suitable for credentials.
+- The personal-settings JSON deliberately stores user-supplied provider keys with owner-only permissions, but it is not encrypted or multi-process safe. It is suitable only for this single-user local product boundary and must be protected like any local credential file.
 - The code index contains non-secret repository source in plaintext with owner-only permissions; repository filesystem access still grants index access.
 - No public hosted HTTP surface exists yet. Authentication, durable/distributed quotas, billing, CSRF/CORS policy for public origins, and remote-repository defenses remain outside this phase.

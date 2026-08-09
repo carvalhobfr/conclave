@@ -1,25 +1,54 @@
 # Conclave
 
-**Validate changes and decisions against your codebase before trusting them.**
+**AI writes. Conclave verifies.**
 
-Conclave builds a structural model of your codebase first. It uses deterministic graph and retrieval tools to validate what it can, then selectively invokes specialized models only when reasoning is actually needed. Evidence-backed Review, Decision, and Task workflows keep conclusions inspectable and bounded.
+Conclave builds structural knowledge of your codebase and validates AI plans and code changes against repository evidence before you trust them. It invokes models only when reasoning is necessary.
 
-It is designed for developers and coding agents that need more than a broad source dump: every answer is grounded in repository evidence, and every Task capability remains policy-controlled.
+*Ask your code. Let the models argue.*
+
+It is an evidence-driven validation layer for AI-assisted software development—not another agent that must write the code itself.
 
 ## Highlights
 
-- **Ask** — evidence-backed answers with exact source ranges.
-- **Investigate** — structured Claims, Challenges, Verification, and uncertainty instead of hidden disagreement.
-- **Task** — explicit, plan-first, isolated patches with default-deny edits and checks.
-- **Review** — working-tree, staged, branch, commit, or explicit-diff validation with changed-symbol impact, concrete findings, confirmed properties, and uncertainty.
-- **Decide** — decompose proposals into falsifiable Claims, challenge assumptions, verify repository facts, and generate implementation or revision handoffs.
+- **Understand — Ask and Investigate**: cited answers, tested hypotheses, and visible uncertainty.
+- **Validate — Review and Decide**: challenge plans and inspect working-tree, staged, branch, commit, or pasted changes in repository context.
+- **Act — Task**: optional plan-first, isolated patches with default-deny edits and checks.
 - **Code graph** — deterministic symbols, imports, calls, references, callers/callees, and bounded paths.
 - **Project Knowledge** — index once, query many times, and reuse unchanged structural state.
-- **Adaptive analysis** — Auto, Fast, Balanced, and Deep routes with conditional roles and early exit.
+- **Adaptive analysis** — use the smallest useful workflow: multiple models, one model, or zero model calls.
 - **Graph-aware retrieval** — BM25, deterministic feature vectors, fusion, graph expansion, context budgets, and inspectable plans.
 - **Local-first product** — loopback web workspace, CLI, and a compact read-only MCP server.
 - **Provider boundaries** — OpenAI-compatible API and Local endpoints; credentials remain server/process-side.
 - **Deterministic demo** — full Ask, Investigate, rejected hypothesis, revision, diff, and verdict flow without an API key.
+
+## Daily workflows
+
+### Validate an AI decision
+
+```text
+Coding agent proposes a fix
+  → Conclave Decide challenges its assumptions
+  → repository evidence validates the claims
+  → implementation or revision handoff
+```
+
+### Review AI-generated changes
+
+Open **Review**, then select **Staged changes**, **Working tree**, **Branch comparison**, **Commit comparison**, or paste a unified diff. Conclave reports what changed, what it affects, what is confirmed, and what remains uncertain.
+
+### Understand unfamiliar code
+
+Use **Ask** for a concise cited answer or **Investigate** for causal, cross-module questions. Task remains available when you explicitly want Conclave to plan or produce an isolated change.
+
+## Bring your models
+
+**Use the models you already have.** Roles are independent from models, and presets are the normal path—per-role routing is optional.
+
+- **Local — Ollama, LM Studio, or a compatible loopback endpoint.** Repository reasoning can remain on your machine when both inference and embeddings use local loopback endpoints.
+- **Currently free compatible providers — OpenCode Zen or OpenRouter.** Use currently available free models without treating today's catalog as permanent. Availability, limits, and data handling are provider-controlled. OpenRouter requires your own OpenRouter API key, including when you select a currently free model.
+- **BYOK — OpenAI or another OpenAI-compatible HTTPS provider.** Bring your own provider, model, endpoint, and API key.
+- **Mix & Match.** Model A can investigate, Model B can challenge, and another configured model can implement or independently review. Model agreement is not proof; repository evidence and deterministic verification decide.
+- **No model required.** Sometimes the best model is no model. When Project Knowledge already proves an answer or Review result, Conclave can finish with **0 model calls**—reducing latency, cost, and unnecessary source transmission.
 
 ## Architecture
 
@@ -52,7 +81,7 @@ npm install
 npm run demo
 ```
 
-`npm run demo` runs the deterministic end-to-end fixture using fake model responses. It does not need an API key and leaves the bundled demo repository unchanged.
+`npm run demo` runs the deterministic end-to-end fixture using fake model responses. It does not need an API key and leaves the bundled demo repository unchanged. The direct Ask path visibly resolves through Project Knowledge with **Model calls: 0**; fake providers cover the paths where model reasoning is required.
 
 For the full release gate:
 
@@ -94,7 +123,7 @@ npm run dev -- mcp /path/to/repository
 
 The stdio MCP server is read-only. It exposes compact search, symbol, graph, graph-path, evidence, Ask, and Investigate tools. External clients cannot select another repository root, access environment variables, configure providers, run commands, or enter Task Mode. MCP responses label repository content as untrusted evidence.
 
-## Providers and privacy
+## Provider details and privacy
 
 Conclave uses the OpenAI-compatible Chat Completions API where base URL, model, and credentials are sufficient. This supports OpenAI, OpenRouter, OpenCode Zen, Ollama, LM Studio, and compatible services when configured. Native Anthropic and Gemini protocols are not implemented.
 
@@ -103,17 +132,17 @@ npm run dev -- config --json
 npm run dev -- provider-check
 ```
 
-- **Free Mode** defaults to OpenCode Zen at `https://opencode.ai/zen/v1`, uses a server-owned credential, and restricts every role to the host allowlist. It is external inference: selected repository excerpts may leave the machine.
-- **API Mode** uses process-provided credentials and requires HTTPS.
-- **Local Mode** accepts loopback HTTP(S) endpoints only. Repository retrieval is local; fully local operation also requires local inference and embedding endpoints.
+- **Free configuration** defaults to OpenCode Zen at `https://opencode.ai/zen/v1`, uses the existing server-owned credential boundary, and restricts roles to a host allowlist. This repository does not publish a hosted Conclave Free service. Selected excerpts may leave the machine.
+- **API/BYOK Mode** uses your provider API key and requires HTTPS. OpenRouter works through the existing OpenAI-compatible adapter and requires an OpenRouter key; current free-model availability is controlled by OpenRouter.
+- **Local Mode** accepts loopback HTTP(S) endpoints for Ollama, LM Studio, or compatible services. Local inference alone is not an unconditional privacy guarantee: embeddings must also be local to keep both flows on the machine.
 
-The default Free ensemble assigns DeepSeek V4 Flash Free to investigation and verification, Nemotron 3 Ultra Free to skepticism, architecture, judgment, and planning, and North Mini Code Free to implementation. Role overrides inherit the active mode endpoint and credential; the credential is never copied into role configuration. An active personal provider set in Settings overrides `.env`, can use the user's own key, and cannot reuse the locked server-owned Free credential.
+The checked-in Free configuration currently assigns different provider-controlled model IDs by role; those models and their availability can change. Role overrides inherit the active mode endpoint and credential without copying the credential into role configuration. An active personal provider set in Settings overrides `.env`, uses the user's own key, and cannot reuse the locked server-owned Free credential.
 
 `provider-check` performs one bounded inference and reports the effective endpoint host, exact default model, and role-to-provider/model assignments without returning a credential. Provider model availability remains controlled by OpenCode Zen and may change.
 
 The default `conclave-local-hash-v1` embedding is deterministic feature hashing for offline use and CI. Learned OpenAI-compatible embeddings are opt-in and require an explicit model, endpoint, and dimension configuration. Conclave never silently switches embedding strategies.
 
-See [.env.example](.env.example) for configuration fields. The CLI and local web entry point load a root `.env` as a fallback; variables already owned by the process take priority. Credentials are not stored in the index or exposed to the browser.
+See [.env.example](.env.example) for Free, OpenRouter, OpenAI-compatible BYOK, local inference, embeddings, and optional role overrides. The CLI and local web entry point load a root `.env` as a fallback; variables already owned by the process take priority. Runtime credentials are held process/server-side, are not stored in the repository index, and are not inherited by repository commands. Personal keys entered in Settings are sent to the local server, stored separately in an owner-only settings file, and never returned in settings responses; see [Security boundaries](docs/security.md).
 
 For a credential-aware live check, run `npm run test:zen`. It exits safely when no Free credential is configured; set `CONCLAVE_ZEN_FULL_SMOKE=1` to additionally run one real repository reasoning flow. See [Phase 7 Free Mode](docs/phase-7-zen-free.md).
 

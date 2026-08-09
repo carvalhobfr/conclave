@@ -67,6 +67,12 @@ The deterministic impact ceiling is 100 changed symbols, 100 impacted symbols, a
 
 Decision Validation does not execute the proposal. Task remains the explicit mutation surface with its existing permissions and isolation.
 
+## Model independence
+
+The model that wrote a proposal or diff does not need to validate it. Roles describe responsibilities, not permanent model identities: a local model can investigate, a BYOK model can challenge, and another configured model can implement or review. Presets are the ordinary path; per-role provider/model overrides are optional.
+
+Model agreement is never sufficient evidence. Project Knowledge and deterministic verification remain authoritative, and a structurally complete result may use zero model calls. First-class Review uses the adaptive reasoning roles rather than the Task Reviewer's fixed compatibility path.
+
 ## Product surface
 
 The local web app includes dedicated Review and Decide workspaces. Review can select working tree, staged changes, branches, commits, or an explicit diff and shows findings, confirmed properties, uncertainty, changed symbols, impact, route, calls, and revision handoff. Decide accepts proposal and objective text and shows decomposed Claims plus implementation/revision handoff.
@@ -92,5 +98,5 @@ The fixtures deliberately do not optimize zero-call rate. They require zero call
 - Static impact cannot prove runtime behavior involving dynamic dispatch, reflection, generated code, framework wiring, external systems, or configuration outside indexed safe files.
 - Secret detection is pattern-based and has false positives and false negatives; sensitive-path exclusion remains a separate defense.
 - Documentation approval validates bounded structure and safety, not prose truth.
-- Type-only deterministic approval is intentionally narrow. Ordinary code changes require adaptive validation unless a future deterministic proof rule is both concrete and regression-tested.
+- Type-only deterministic approval is intentionally narrow. Ordinary runtime code changes require adaptive validation unless a deterministic proof rule is both concrete and regression-tested.
 - Git review is local and read-only. Phase 9 does not clone remote repositories, publish reviews, apply handoffs, or mutate the source repository.

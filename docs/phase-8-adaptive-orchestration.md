@@ -28,7 +28,7 @@ For questions that are not directly answerable, the assessment records explainab
 ## Analysis depth
 
 - **Auto** chooses the smallest useful route from deterministic evidence. This is the default interactive setting.
-- **Fast** targets zero to two model calls, one reasoning round, a short provider timeout, and no automatic tribunal. Insufficient results remain uncertain and suggest deeper analysis.
+- **Fast** targets zero to two model calls, one reasoning round, a short provider timeout, and no automatic final adjudication. Insufficient results remain uncertain and suggest deeper analysis.
 - **Balanced** permits a moderate number of calls and retrievals, with structural or adversarial roles selected only when the evidence requires them.
 - **Deep** permits the existing hard reasoning ceiling, a longer provider timeout, and more aggressive adversarial review.
 

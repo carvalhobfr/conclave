@@ -59,6 +59,10 @@ describe("Conclave product UI", () => {
     render(<App />);
     await screen.findByText("auth-repository");
 
+    expect(screen.getAllByText("AI writes. Conclave verifies.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Understand")).toBeTruthy();
+    expect(screen.getByText("Validate")).toBeTruthy();
+    expect(screen.getByText("Act")).toBeTruthy();
     expect(screen.getByRole<HTMLInputElement>("radio", { name: /Auto/ }).checked).toBe(true);
     expect(screen.getByText("Chooses the smallest useful reasoning workflow.")).toBeTruthy();
     expect(screen.getByText(/Adds adversarial review/i)).toBeTruthy();
@@ -141,6 +145,10 @@ describe("Conclave product UI", () => {
     fireEvent.click(within(screen.getByRole("navigation", { name: "Workspace navigation" })).getByRole("button", { name: /Settings/ }));
     expect(screen.getByRole("region", { name: "Provider and role configuration" })).toBeTruthy();
     expect(await screen.findByText(/credentials never come back to the browser/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Use the models you already have" })).toBeTruthy();
+    expect(screen.getByText("Free configuration")).toBeTruthy();
+    expect(screen.getByText("Bring your own API")).toBeTruthy();
+    expect(screen.getByText("Custom endpoint")).toBeTruthy();
   });
 
   it("opens repositories through a device folder picker instead of a typed path", async () => {
@@ -246,6 +254,9 @@ describe("Conclave product UI", () => {
     fireEvent.click(profile);
     fireEvent.click(screen.getByText("Advanced routing"));
 
+    expect(screen.getByText("Reasoning roles")).toBeTruthy();
+    expect(screen.getByText("Task roles")).toBeTruthy();
+    expect(screen.getByText(/First-class Review uses the adaptive reasoning roles/i)).toBeTruthy();
     expect(screen.getByLabelText<HTMLInputElement>("implementer model").value).toBe("gpt-5-codex");
     expect(screen.getByLabelText<HTMLInputElement>("judge model").value).toBe("gpt-5");
     expect(screen.getByLabelText<HTMLInputElement>("reviewer model").value).toBe("gpt-5-mini");
