@@ -5,6 +5,7 @@ import type {
   Claim,
   ReasoningPreset,
 } from "../domain/reasoning.js";
+import type { ReasoningPlan, SelectedAnalysisDepth } from "../domain/adaptive-reasoning.js";
 
 function complexQuestion(question: string): boolean {
   return /\b(why|how|might|cause|causal|lifecycle|initiali[sz]|refresh|race|cleanup|state flow|disappear)\b/i.test(
@@ -30,15 +31,23 @@ export function routeReasoningAgents(
   question: string,
   context: ContextBundle,
   claims: readonly Claim[],
+  depth: SelectedAnalysisDepth = "deep",
+  plan?: ReasoningPlan,
 ): readonly AgentSelection[] {
   const complex = complexQuestion(question);
   const crossModule = crossModuleContext(context) || context.stats.filesRepresented >= 3;
   const uncertain = claims.some(
     (claim) => claim.uncertainty !== "none" || claim.evidenceIds.length === 0,
   );
-  const skepticSelected = complex || uncertain;
-  const architectSelected = preset !== "free-like" && complex && crossModule;
-  const selections: Readonly<Record<AgentRole, AgentSelection>> = {
+  const planned = (role: AgentRole): "required" | "conditional" | undefined =>
+    plan?.roles.find((item) => item.role === role)?.requirement;
+  const skepticSelected = planned("skeptic") === "required" ||
+    ((plan === undefined || planned("skeptic") !== undefined) && (complex || uncertain || claims.length > 1));
+  const architectSelected = preset !== "free-like" && (
+    planned("architect") === "required" ||
+    ((plan === undefined || planned("architect") !== undefined) && complex && crossModule)
+  );
+  const selections: Readonly<Record<Exclude<AgentRole, "conductor">, AgentSelection>> = {
     investigator: { role: "investigator", selected: true, reason: "claims require an initial investigator" },
     skeptic: {
       role: "skeptic",
@@ -59,8 +68,8 @@ export function routeReasoningAgents(
             ? "cross-module causal context benefits from architecture review"
             : "question is not both causal and cross-module",
     },
-    verifier: { role: "verifier", selected: true, reason: "material claims require verification" },
-    judge: { role: "judge", selected: true, reason: "verified claims require adjudication" },
+    verifier: { role: "verifier", selected: claims.length > 0, reason: claims.length > 0 ? "material claims require verification" : "no material claims are available" },
+    judge: { role: "judge", selected: false, reason: depth === "deep" ? "final adjudication is deferred until verification" : "Judge runs only if verification leaves meaningful disagreement" },
   };
   return [
     selections.investigator,

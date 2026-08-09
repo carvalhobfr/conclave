@@ -24,6 +24,11 @@ export interface TaskAgentExecution<T> {
   readonly calls: readonly TaskAgentCallRecord[];
 }
 
+export interface TaskAgentExecutionOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
 export class TaskAgentExecutionError extends Error {
   public readonly role: TaskAgentRole;
   public readonly calls: readonly TaskAgentCallRecord[];
@@ -56,7 +61,9 @@ export class StructuredTaskAgentRuntime {
     prompt: string,
     validate: (raw: string) => T,
     callBudget: number,
+    options: TaskAgentExecutionOptions = {},
   ): Promise<TaskAgentExecution<T>> {
+    options.signal?.throwIfAborted();
     const assignment = this.#assignments.get(role);
     if (assignment === undefined) throw new TaskAgentExecutionError(`No assignment configured for ${role}`, role);
     const provider = this.#providers.get(assignment.providerId);
@@ -79,12 +86,15 @@ export class StructuredTaskAgentRuntime {
       const started = performance.now();
       let response;
       try {
+        options.signal?.throwIfAborted();
         response = await provider.generate({
           model: assignment.modelId,
           messages,
           maxOutputTokens: this.#limits.maxOutputTokensPerCall,
           temperature: 0,
           responseFormat: "json",
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         });
       } catch (error) {
         throw new TaskAgentExecutionError(

@@ -7,6 +7,12 @@ import type {
 } from "../domain/execution-mode.js";
 import type { CredentialSource } from "../domain/storage.js";
 import type { ProviderId } from "../domain/provider.js";
+import {
+  assertFreeModelAllowed,
+  DEFAULT_FREE_MODEL,
+  DEFAULT_ZEN_BASE_URL,
+  parseFreeModelAllowlist,
+} from "./free-mode-config.js";
 
 const PROVIDER_IDS = new Set<ProviderId>([
   "openai",
@@ -39,6 +45,17 @@ function parseProvider(value: string | undefined, fallback: ProviderId): Exclude
 function optionalNonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+function providerTimeoutMs(environment: NodeJS.ProcessEnv, mode: RuntimeConfig["mode"]): number {
+  const fallback = mode === "free" ? 180_000 : 60_000;
+  const raw = optionalNonEmpty(environment["CONCLAVE_PROVIDER_TIMEOUT_MS"]);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 5_000 || value > 300_000) {
+    throw new ConfigurationError("CONCLAVE_PROVIDER_TIMEOUT_MS must be an integer between 5000 and 300000");
+  }
+  return value;
 }
 
 function validateBaseUrl(baseUrl: string, mode: RuntimeConfig["mode"]): string {
@@ -109,14 +126,19 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
     if (LOCAL_PROVIDERS.has(provider)) {
       throw new ConfigurationError("Free Mode requires an externally hosted provider");
     }
+    const allowedModels = parseFreeModelAllowlist(environment["CONCLAVE_FREE_MODEL_ALLOWLIST"]);
+    const model = optionalNonEmpty(environment["CONCLAVE_FREE_MODEL"]) ?? DEFAULT_FREE_MODEL;
+    assertFreeModelAllowed(model, allowedModels);
     const config: FreeModeConfig = {
       mode,
       privacyBoundary: "external",
       credentialEnvironmentVariable: "CONCLAVE_FREE_API_KEY",
+      allowedModels,
+      providerTimeoutMs: providerTimeoutMs(environment, mode),
       providerSelection: providerSelection(
         provider,
-        optionalNonEmpty(environment["CONCLAVE_FREE_MODEL"]),
-        environment["CONCLAVE_FREE_BASE_URL"],
+        model,
+        optionalNonEmpty(environment["CONCLAVE_FREE_BASE_URL"]) ?? DEFAULT_ZEN_BASE_URL,
         mode,
       ),
     };
@@ -129,6 +151,7 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
       mode,
       privacyBoundary: "external",
       credentialEnvironmentVariable: "CONCLAVE_API_KEY",
+      providerTimeoutMs: providerTimeoutMs(environment, mode),
       providerSelection: providerSelection(
         provider,
         optionalNonEmpty(environment["CONCLAVE_MODEL"]),
@@ -147,6 +170,7 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
     const config: LocalModeConfig = {
       mode,
       privacyBoundary: "local-only",
+      providerTimeoutMs: providerTimeoutMs(environment, mode),
       providerSelection: providerSelection(
         provider,
         optionalNonEmpty(environment["CONCLAVE_MODEL"]),

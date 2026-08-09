@@ -11,6 +11,7 @@ import type {
 } from "../domain/repository.js";
 import { assessRepositoryContent } from "../security/content-safety.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
+import { isSensitiveRepositoryPath } from "../security/sensitive-repository-path.js";
 import { detectLanguage, isLikelyBinary } from "./file-classifier.js";
 import { createRepositoryIgnore } from "./ignore-rules.js";
 
@@ -91,7 +92,7 @@ export class LocalFolderRepository implements RepositorySource {
         const relativePath = toPosixPath(relative(rootPath, absolutePath));
         const ignoreCandidate = entry.isDirectory() ? `${relativePath}/` : relativePath;
 
-        if (ignore.ignores(ignoreCandidate)) {
+        if (isSensitiveRepositoryPath(relativePath) || ignore.ignores(ignoreCandidate)) {
           stats.ignoredEntries += 1;
           continue;
         }

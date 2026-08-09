@@ -8,6 +8,7 @@ describe("runtime configuration", () => {
     const environment = {
       CONCLAVE_FREE_API_KEY: "server-secret-value",
       CONCLAVE_FREE_MODEL: "configured-model",
+      CONCLAVE_FREE_MODEL_ALLOWLIST: "configured-model",
     };
     const config = loadRuntimeConfig(environment);
     const publicConfig = describeRuntimeConfig(config, new EnvironmentCredentialSource(environment));
@@ -21,8 +22,20 @@ describe("runtime configuration", () => {
         credentialConfigured: true,
       }),
     );
+    expect(config.providerTimeoutMs).toBe(180_000);
     expect(JSON.stringify(config)).not.toContain("server-secret-value");
     expect(JSON.stringify(publicConfig)).not.toContain("server-secret-value");
+  });
+
+  it("supports a bounded provider timeout override", () => {
+    expect(loadRuntimeConfig({
+      CONCLAVE_MODE: "api",
+      CONCLAVE_BASE_URL: "https://provider.example/v1",
+      CONCLAVE_PROVIDER_TIMEOUT_MS: "120000",
+    }).providerTimeoutMs).toBe(120_000);
+    expect(() => loadRuntimeConfig({
+      CONCLAVE_PROVIDER_TIMEOUT_MS: "999999",
+    })).toThrow("between 5000 and 300000");
   });
 
   it("supports loopback OpenAI-compatible Local Mode without credentials", () => {

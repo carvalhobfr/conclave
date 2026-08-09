@@ -110,7 +110,7 @@ function stringIds(value: unknown, label: string, allowed: ReadonlySet<string>):
   const values = array(value, label, 30).map((entry) => text(entry, label, 200));
   for (const id of values) {
     if (!allowed.has(id)) {
-      throw new StructuredOutputError(`${label} references unknown id: ${id}`);
+      throw new StructuredOutputError(`${label} references unknown id: ${id}. Use only source evidenceIds supplied in the evidence records; never use packed IDs or graph edge IDs.`);
     }
   }
   return [...new Set(values)];
@@ -141,7 +141,7 @@ function parseClaimCheck(value: unknown): ClaimCheck | undefined {
   }
   switch (value["kind"]) {
     case "symbol-exists":
-      assertKeys(value, ["kind", "symbol", "expectation"], "Symbol check");
+      assertKeys(value, ["kind", "symbol", "path", "expectation"], "Symbol check");
       return {
         kind: "symbol-exists",
         symbol: text(value["symbol"], "Check symbol", 300),
@@ -150,7 +150,7 @@ function parseClaimCheck(value: unknown): ClaimCheck | undefined {
     case "references":
     case "callers":
     case "callees":
-      assertKeys(value, ["kind", "symbol", "expectation"], "Graph check");
+      assertKeys(value, ["kind", "symbol", "path", "expectation"], "Graph check");
       return {
         kind: value["kind"],
         symbol: text(value["symbol"], "Check symbol", 300),
@@ -173,13 +173,26 @@ function parseClaimCheck(value: unknown): ClaimCheck | undefined {
         expectation: expectation(value["expectation"]),
       };
     }
-    case "text":
-      assertKeys(value, ["kind", "text", "expectation"], "Text check");
+    case "text": {
+      // Some OpenAI-compatible models add a source `path` alongside a text
+      // check. It is metadata only; deterministic verification remains a
+      // bounded repository text search and never trusts that path as evidence.
+      assertKeys(value, ["kind", "text", "path", "query", "expectation"], "Text check");
+      const textValue = typeof value["text"] === "string" && value["text"].trim() !== ""
+        ? value["text"]
+        : typeof value["path"] === "string" && value["path"].trim() !== ""
+          ? value["path"]
+          : value["query"];
+      // A malformed optional check should not discard otherwise valid claims.
+      // The claim still retains its cited evidence; it simply skips the
+      // deterministic text verification step.
+      if (typeof textValue !== "string" || textValue.trim() === "") return undefined;
       return {
         kind: "text",
-        text: text(value["text"], "Check text", 1_000),
+        text: text(textValue, "Check text", 1_000),
         expectation: expectation(value["expectation"]),
       };
+    }
     default:
       throw new StructuredOutputError("Claim check kind is invalid");
   }
@@ -262,7 +275,6 @@ export function parseInvestigatorOutput(
       ...(check === undefined ? {} : { check }),
     };
   });
-  if (claims.length === 0) throw new StructuredOutputError("Investigator must return at least one claim");
   return {
     summary: text(parsed["summary"], "Investigator summary"),
     claims,

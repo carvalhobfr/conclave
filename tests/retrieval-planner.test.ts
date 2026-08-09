@@ -84,6 +84,41 @@ describe("graph-first retrieval planner", () => {
     expect(embeddingProvider.calls).toBe(1);
   });
 
+  it("does not let an incidental symbol match suppress broad retrieval", async () => {
+    const { planner, embeddingProvider } = await plannerFixture();
+    const retrieval = await planner.retrieve(
+      "Summarize the Session architecture and cite source files for each claim.",
+    );
+
+    expect(retrieval.plan.deterministicEvidenceSufficient).toBe(false);
+    expect(retrieval.plan.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "lexical", status: "executed" }),
+      expect.objectContaining({ kind: "semantic-feature-vector", status: "executed" }),
+      expect.objectContaining({ kind: "hybrid-fusion", status: "executed" }),
+    ]));
+    expect(retrieval.plan.operations).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "exact-symbol" }),
+    ]));
+    expect(retrieval.results.some((result) => result.signals.exactSymbol !== undefined)).toBe(false);
+    expect(embeddingProvider.calls).toBe(1);
+  });
+
+  it("diversifies colon-delimited compound questions across their facets", async () => {
+    const { planner, embeddingProvider } = await plannerFixture();
+    const retrieval = await planner.retrieve(
+      "Summarize this repository: authentication, player subscriptions, and analytics. Cite source files.",
+      { budget: { finalEvidence: 10, retrievalCandidates: 30 } },
+    );
+
+    expect(retrieval.plan.reasons).toContain("compound query diversified across 3 facets");
+    expect(retrieval.results.map((result) => result.evidence.path)).toEqual(expect.arrayContaining([
+      "src/auth/AuthProvider.tsx",
+      "src/player/events.ts",
+      "src/analytics/windowEvents.ts",
+    ]));
+    expect(embeddingProvider.calls).toBe(3);
+  });
+
   it("plans bounded symbol paths without file-ownership shortcuts", async () => {
     const { planner, embeddingProvider } = await plannerFixture();
     const retrieval = await planner.retrieve(

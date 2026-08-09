@@ -32,9 +32,11 @@ No remote Git import is presented as available.
 
 ## Product surfaces
 
-- **Ask** runs the lightweight Investigator + Judge route for evidence-backed repository questions. The role route shows skipped agents rather than pretending all roles ran.
-- **Investigate** runs the bounded Conclave route and preserves supported, rejected, and uncertain hypotheses alongside evidence and verification counts.
+- **Ask** queries Project Knowledge first and can return a cited static answer with zero model calls. Model roles run only when semantic interpretation remains necessary.
+- **Investigate** runs an adaptive bounded route and preserves supported, rejected, and uncertain hypotheses alongside evidence and verification counts.
 - **Task** is explicit. It starts in plan-only mode and displays the objective, verified plan, expected files, permissions, engine events, review/revision progress, checks, verdict, and final isolated diff.
+- **Analysis depth** keeps intent separate from Auto, Fast, Balanced, and Deep reasoning budgets. Auto is the default.
+- **Progress and cancellation** expose semantic engine events and evidence-backed snapshots. Cancellation aborts pending provider/command work instead of merely hiding a spinner.
 - **Evidence** opens exact source excerpts with canonical path and line range.
 - **Graph** scopes exploration to a symbol and its bounded neighbors. It does not attempt to render the entire repository graph.
 - **Retrieval** reports executed/skipped operations, evidence count, source bytes, and approximate context tokens.

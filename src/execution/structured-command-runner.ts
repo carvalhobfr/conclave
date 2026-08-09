@@ -18,8 +18,9 @@ function appendBounded(
 }
 
 export class StructuredCommandRunner {
-  public run(approved: ApprovedCommand): Promise<CheckResult> {
+  public run(approved: ApprovedCommand, signal?: AbortSignal): Promise<CheckResult> {
     approved.assertPolicyApproval();
+    signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
       const started = performance.now();
       const child = spawn(approved.executable, [...approved.args], {
@@ -34,6 +35,14 @@ export class StructuredCommandRunner {
       let outputBytes = 0;
       let outputTruncated = false;
       let timedOut = false;
+      let cancelled = false;
+      const stop = (): void => {
+        if (process.platform !== "win32" && child.pid !== undefined) {
+          try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+        } else {
+          child.kill("SIGKILL");
+        }
+      };
       const capture = (target: "stdout" | "stderr", chunk: Buffer): void => {
         const appended = appendBounded(
           target === "stdout" ? stdout : stderr,
@@ -53,22 +62,25 @@ export class StructuredCommandRunner {
       });
       const timeout = setTimeout(() => {
         timedOut = true;
-        if (process.platform !== "win32" && child.pid !== undefined) {
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {
-            child.kill("SIGKILL");
-          }
-        } else {
-          child.kill("SIGKILL");
-        }
+        stop();
       }, approved.timeoutMs);
+      const abort = (): void => {
+        cancelled = true;
+        stop();
+      };
+      signal?.addEventListener("abort", abort, { once: true });
       child.once("error", (error) => {
         clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
         reject(error);
       });
       child.once("close", (code) => {
         clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
+        if (cancelled) {
+          reject(signal?.reason instanceof Error ? signal.reason : new Error("Command cancelled"));
+          return;
+        }
         resolve({
           requestId: approved.requestId,
           command: approved.command,

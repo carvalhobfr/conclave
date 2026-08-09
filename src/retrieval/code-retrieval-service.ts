@@ -13,6 +13,7 @@ import {
 } from "../domain/retrieval-plan.js";
 import type { ContextBundle } from "../domain/context-bundle.js";
 import { ContextPacker } from "./context-packer.js";
+import { ProjectKnowledge } from "../knowledge/project-knowledge.js";
 
 export interface RelatedEvidence {
   readonly evidence: Evidence;
@@ -28,6 +29,7 @@ export class CodeRetrievalService {
   readonly #graphQueries: GraphQueryService;
   readonly #planner: RetrievalPlanner;
   readonly #contextPacker: ContextPacker;
+  readonly #knowledge: ProjectKnowledge;
 
   public constructor(index: RepositoryCodeIndex, embeddingProvider: EmbeddingProvider) {
     this.#index = index;
@@ -37,10 +39,15 @@ export class CodeRetrievalService {
     this.#graphQueries = new GraphQueryService(index);
     this.#planner = new RetrievalPlanner(index, embeddingProvider);
     this.#contextPacker = new ContextPacker(index);
+    this.#knowledge = new ProjectKnowledge(index);
   }
 
   public get graph(): GraphQueryService {
     return this.#graphQueries;
+  }
+
+  public get knowledge(): ProjectKnowledge {
+    return this.#knowledge;
   }
 
   public get embedding(): RepositoryCodeIndex["embedding"] {

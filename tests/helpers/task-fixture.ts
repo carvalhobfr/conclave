@@ -248,10 +248,15 @@ function taskProvider(behavior: TaskFixtureBehavior): FakeProvider {
 export async function createTaskFixtureEngine(
   behavior: TaskFixtureBehavior,
   maxImplementationRounds = behavior === "false-success" ? 1 : 2,
+  onTaskRequest?: (request: GenerateRequest) => void,
 ): Promise<TaskExecutionEngine> {
   const reasoningProvider = reasoningFixtureProvider();
   const reasoning = await createReasoningFixtureEngine(reasoningProvider, 10, taskFixturePath);
-  const provider = taskProvider(behavior);
+  const scriptedProvider = taskProvider(behavior);
+  const provider = onTaskRequest === undefined ? scriptedProvider : new FakeProvider((request) => {
+    onTaskRequest(request);
+    return scriptedProvider.generate(request);
+  });
   const roles: readonly TaskAgentRole[] = ["planner", "implementer", "reviewer"];
   return new TaskExecutionEngine({
     investigator: reasoning,

@@ -117,6 +117,66 @@ function quotedText(query: string): string | undefined {
   return match?.[1];
 }
 
+function isExactSymbolQuery(query: string, symbols: readonly string[]): boolean {
+  const normalized = query.trim().replace(/[?.!]+$/, "").trim();
+  return symbols.some((symbol) => normalized === symbol);
+}
+
+const LOW_INFORMATION_SYMBOLS = new Set([
+  "config", "data", "name", "result", "session", "source", "state", "summarize", "value",
+]);
+
+function broadQueryFacets(query: string): readonly string[] {
+  const separator = query.indexOf(":");
+  if (separator < 0) return [query];
+  const list = query
+    .slice(separator + 1)
+    .replace(/[.?!]\s+(?:cite|include|provide|show)\b[\s\S]*$/i, "")
+    .trim();
+  const facets = list
+    .split(/,|\band\b/i)
+    .map((part) => part.replace(/^[\s:;-]+|[\s.?!;:-]+$/g, "").trim())
+    .filter((part) => part.length > 1 && part.length <= 100);
+  if (facets.length < 2 || facets.length > 6) return [query];
+  return [...new Set(facets)];
+}
+
+function expandPortfolioFacet(query: string): string {
+  const normalized = query.toLowerCase();
+  if (/\btechnolog(?:y|ies)\b|\btech stack\b/.test(normalized)) {
+    return `${query} stack framework library React Next TypeScript Node dependency package`;
+  }
+  if (/\bprojects?\b/.test(normalized)) {
+    return `${query} product professional freelance personal contribution outcome`;
+  }
+  if (/\bwork experience\b|\bemployment\b|\bcareer\b/.test(normalized)) {
+    return `${query} employment employer company role career professional experience`;
+  }
+  if (/\bcontact\b/.test(normalized)) {
+    return `${query} email github linkedin mailto`;
+  }
+  return query;
+}
+
+function interleaveRankings(
+  rankings: readonly (readonly RetrievalResult[])[],
+  limit: number,
+): readonly RetrievalResult[] {
+  const results: RetrievalResult[] = [];
+  const seen = new Set<string>();
+  const maximumLength = Math.max(0, ...rankings.map((ranking) => ranking.length));
+  for (let rank = 0; rank < maximumLength && results.length < limit; rank += 1) {
+    for (const ranking of rankings) {
+      const result = ranking[rank];
+      if (result === undefined || seen.has(result.evidence.id)) continue;
+      seen.add(result.evidence.id);
+      results.push({ ...result, rank: results.length + 1 });
+      if (results.length >= limit) break;
+    }
+  }
+  return results;
+}
+
 function operation(
   kind: RetrievalOperationKind,
   status: RetrievalOperation["status"],
@@ -170,9 +230,14 @@ export class RetrievalPlanner {
     const reasons: string[] = [];
     const deterministicResults: RetrievalResult[] = [];
     const graphEdges: GraphEdge[] = [];
-    const symbols = mentionedSymbols(this.#index, query);
+    const mentioned = mentionedSymbols(this.#index, query);
     const paths = mentionedPaths(this.#index, query);
     const intent = graphIntent(query);
+    const standaloneSymbol = isExactSymbolQuery(query, mentioned);
+    const symbols = intent !== undefined || standaloneSymbol
+      ? mentioned
+      : mentioned.filter((symbol) => !LOW_INFORMATION_SYMBOLS.has(symbol.toLowerCase()));
+    const explicitSymbolTarget = symbols.length > 0;
 
     const text = quotedText(query);
     if (text !== undefined) {
@@ -299,8 +364,13 @@ export class RetrievalPlanner {
     }
 
     const anyAmbiguous = resolutions.some((entry) => entry.resolution.status === "ambiguous");
+    // A symbol name appearing in prose is not necessarily the user's target. Common
+    // identifiers such as `source`, `name`, or `config` must not suppress broad
+    // retrieval for summary and causal questions.
+    const hasExplicitDeterministicTarget = text !== undefined || paths.length > 0 || explicitSymbolTarget;
     const deterministicEvidenceSufficient =
       !anyAmbiguous &&
+      hasExplicitDeterministicTarget &&
       (deterministicResults.length > 0 && (intent === undefined || graphResultCount > 0));
     const allowBroadFallback = options.allowBroadFallback ?? true;
     let results = this.#dedupeResults(deterministicResults).slice(0, budget.finalEvidence);
@@ -315,13 +385,38 @@ export class RetrievalPlanner {
       reasons.push(`semantic feature-vector retrieval skipped: ${reason}`);
     } else {
       const graphAware = options.graphAwareHybrid ?? true;
-      const broad = await this.#retriever.search(query, {
+      const facets = broadQueryFacets(query);
+      const perFacetLimit = Math.max(
+        budget.finalEvidence,
+        Math.ceil(budget.retrievalCandidates / facets.length),
+      );
+      const expandedFacets = facets.map(expandPortfolioFacet);
+      const structuralRankings = await Promise.all(expandedFacets.map((facet) => this.#retriever.search(facet, {
         strategy: "hybrid",
-        limit: budget.retrievalCandidates,
+        limit: perFacetLimit,
         expandGraph: graphAware,
+        includeExactSymbolSignals: explicitSymbolTarget,
         graphDepth: budget.graphDepth,
         graphEvidenceBudget: budget.graphNodes,
+      })));
+      const facetRankings = structuralRankings.map((ranking, index) => {
+        if (facets.length === 1) return ranking;
+        const fileResults = this.#reader.searchFileText(expandedFacets[index] ?? facets[index] ?? query, {
+          limit: Math.min(4, perFacetLimit),
+          contextLines: 12,
+        }).map((evidence, resultIndex): RetrievalResult => ({
+          evidence,
+          rank: resultIndex + 1,
+          score: 1 / (resultIndex + 1),
+          signals: { lexical: 1 / (resultIndex + 1) },
+          reasons: [{ strategy: "lexical", detail: `file-content rank ${String(resultIndex + 1)}` }],
+        }));
+        return this.#dedupeResults([...fileResults, ...ranking]).slice(0, perFacetLimit);
       });
+      const broad = interleaveRankings(
+        facetRankings,
+        budget.retrievalCandidates,
+      );
       operations.push(operation("lexical", "executed", "deterministic evidence was insufficient", broad.length));
       operations.push(
         operation(
@@ -341,6 +436,7 @@ export class RetrievalPlanner {
         ),
       );
       reasons.push("broader lexical and feature-vector retrieval required");
+      if (facets.length > 1) reasons.push(`compound query diversified across ${String(facets.length)} facets`);
       results = this.#dedupeResults([...deterministicResults, ...broad]).slice(0, budget.finalEvidence);
       const representedUnits = new Set(
         results

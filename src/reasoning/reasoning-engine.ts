@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 
 import type { Evidence, RetrievalResult } from "../domain/evidence.js";
 import type {
+  AnalysisRunOptions,
+  AnalysisSnapshot,
+  ReviewRecommendation,
+} from "../domain/adaptive-reasoning.js";
+import type {
   AgentRole,
   Challenge,
   Claim,
@@ -28,6 +33,16 @@ import { AgentExecutionError } from "./agent-runtime.js";
 import { DeterministicClaimVerifier, requestForClaimCheck } from "./deterministic-verifier.js";
 import { routeReasoningAgents } from "./reasoning-router.js";
 import {
+  budgetForDepth,
+  createReviewHandoff,
+  deterministicReasoningPlan,
+  evaluateReasoningSufficiency,
+  reviewRecommendation,
+  selectAnalysisDepth,
+} from "./adaptive-planner.js";
+import { conductorPrompt, parseConductorOutput, shouldInvokeConductor } from "./conductor.js";
+import { deterministicReasoningResult } from "./deterministic-result.js";
+import {
   architectPrompt,
   investigatorPrompt,
   judgePrompt,
@@ -44,13 +59,15 @@ import {
   type ChallengeOutput,
 } from "./structured-outputs.js";
 
-export type ReasoningMode = "single-pass" | "investigator-judge" | "conclave";
+export type ReasoningMode = "single-pass" | "investigator-judge" | "conclave" | "full-style";
 
 export interface ReasoningEngineOptions {
   readonly retrieval: CodeRetrievalService;
   readonly runtime: StructuredAgentRuntime;
   readonly preset: ReasoningPreset;
   readonly limits?: ReasoningLimits;
+  /** Emits operational trace events while a run is active; never model hidden reasoning. */
+  readonly onTrace?: (event: ReasoningTraceEvent) => void;
 }
 
 function stableId(prefix: string, ...parts: readonly (string | number)[]): string {
@@ -59,6 +76,17 @@ function stableId(prefix: string, ...parts: readonly (string | number)[]): strin
 
 function dedupeEvidence(items: readonly Evidence[]): readonly Evidence[] {
   return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
+function signalAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted ?? false;
+}
+
+function terminationIs(
+  value: ReasoningResult["terminationReason"],
+  expected: ReasoningResult["terminationReason"],
+): boolean {
+  return value === expected;
 }
 
 function outcomeFor(
@@ -100,12 +128,16 @@ function synthesizeAnswer(claims: readonly Claim[], evidence: readonly Evidence[
   };
   append("Supported", claims.filter((claim) => claim.status === "supported"));
   append("Uncertain", claims.filter((claim) => claim.status === "uncertain"));
-  if (lines.length === 0) return "No claims were verified as supported.";
+  if (lines.length === 0) {
+    return claims.length === 0
+      ? "Insufficient repository evidence was available to support a claim for this question."
+      : "No claims were verified as supported.";
+  }
   return lines.join("\n");
 }
 
 function roleUsage(records: readonly AgentCallRecord[]): readonly RoleUsage[] {
-  const roles: readonly AgentRole[] = ["investigator", "skeptic", "architect", "verifier", "judge"];
+  const roles: readonly AgentRole[] = ["conductor", "investigator", "skeptic", "architect", "verifier", "judge"];
   return roles.map((role) => {
     const selected = records.filter((record) => record.role === role);
     return {
@@ -133,49 +165,116 @@ export class ReasoningEngine {
   readonly #runtime: StructuredAgentRuntime;
   readonly #preset: ReasoningPreset;
   readonly #limits: ReasoningLimits;
+  readonly #onTrace: ((event: ReasoningTraceEvent) => void) | undefined;
 
   public constructor(options: ReasoningEngineOptions) {
     this.#retrieval = options.retrieval;
     this.#runtime = options.runtime;
     this.#preset = options.preset;
     this.#limits = options.limits ?? DEFAULT_REASONING_LIMITS;
+    this.#onTrace = options.onTrace;
   }
 
-  public async ask(question: string, mode: ReasoningMode = "conclave"): Promise<ReasoningResult> {
+  public async ask(
+    question: string,
+    mode: ReasoningMode = "conclave",
+    options: AnalysisRunOptions = {},
+  ): Promise<ReasoningResult> {
     const started = performance.now();
+    const requestedDepth = options.depth ?? "auto";
+    const assessment = this.#retrieval.knowledge.assess(question, options.intent ?? "ask");
+    const selectedDepth = mode === "full-style"
+      ? "deep"
+      : selectAnalysisDepth(requestedDepth, assessment);
+    const depthBudget = budgetForDepth(selectedDepth, this.#limits);
+    const limits = mode === "full-style" ? this.#limits : depthBudget.limits;
+    const plannedDepth = mode === "full-style" ? "balanced" : selectedDepth;
+    const basePlan = deterministicReasoningPlan(assessment, plannedDepth);
+    let plan = mode === "full-style"
+      ? {
+          ...basePlan,
+          depth: selectedDepth,
+          reasonCodes: ["depth:deep", "route:full-style", ...basePlan.reasonCodes.filter((code) => !code.startsWith("depth:"))],
+        }
+      : basePlan;
+    const direct = this.#retrieval.knowledge.answer(question);
+    if (
+      direct !== undefined &&
+      mode !== "single-pass" &&
+      mode !== "full-style" &&
+      (requestedDepth === "auto" || requestedDepth === "fast")
+    ) {
+      return deterministicReasoningResult({
+        question,
+        answer: direct,
+        assessment,
+        requestedDepth,
+        selectedDepth,
+        plan,
+        timeoutMs: depthBudget.providerTimeoutMs,
+        retrieval: this.#retrieval,
+        started,
+        ...(this.#onTrace === undefined ? {} : { onTrace: this.#onTrace }),
+        ...(options.onSnapshot === undefined ? {} : { onSnapshot: options.onSnapshot }),
+      });
+    }
     const trace: ReasoningTraceEvent[] = [];
     const calls: AgentCallRecord[] = [];
     const agentsExecuted = new Set<AgentRole>();
     let iteration = 0;
     let terminationReason: ReasoningResult["terminationReason"] = "completed";
-    const executionState = { agentFailed: false };
+    const executionState = { agentFailed: false, conductorFailed: false };
+    let conductorInvoked = false;
+    let conductorReason = "Skipped because deterministic routing was unambiguous.";
+    let earlyExitReason: string | undefined;
     const emit = (
       type: ReasoningTraceEventType,
       detail: string,
       fields: Partial<Pick<ReasoningTraceEvent, "role" | "claimId" | "requestId" | "data">> = {},
     ): void => {
-      trace.push({
+      const event: ReasoningTraceEvent = {
         sequence: trace.length + 1,
         type,
         occurredAt: new Date().toISOString(),
         iteration,
         detail,
         ...fields,
-      });
+      };
+      trace.push(event);
+      this.#onTrace?.(event);
     };
-    emit("reasoning_started", `Started ${mode} reasoning`);
+    emit("reasoning_started", `Started ${mode} knowledge-first reasoning`);
+    emit("query_assessed", `Classified ${assessment.queryKind} with ${assessment.deterministicCoverage} deterministic coverage`, {
+      data: {
+        resolvedEntities: assessment.resolvedEntities.length,
+        relevantFiles: assessment.relevantFiles.length,
+        crossModule: assessment.crossModule,
+      },
+    });
 
+    if (signalAborted(options.signal)) {
+      throw options.signal?.reason;
+    }
+
+    emit("initial_retrieval_started", "Retrieving bounded repository evidence");
     const initialRetrieval = await this.#retrieval.retrieve(question, {
       budget: {
         graphDepth: 2,
-        graphNodes: Math.min(30, this.#limits.maxEvidenceUnits * 2),
-        retrievalCandidates: Math.max(20, this.#limits.maxEvidenceUnits * 2),
-        finalEvidence: Math.min(10, this.#limits.maxEvidenceUnits),
+        graphNodes: Math.min(30, limits.maxEvidenceUnits * 2),
+        retrievalCandidates: Math.max(20, limits.maxEvidenceUnits * 2),
+        finalEvidence: Math.min(10, limits.maxEvidenceUnits),
         sourceBytes: 24_000,
-        approximateTokens: Math.min(6_000, this.#limits.maxApproximateInputTokens),
+        approximateTokens: Math.min(6_000, limits.maxApproximateInputTokens),
       },
     });
+    if (signalAborted(options.signal)) throw options.signal?.reason;
+    emit("initial_retrieval_completed", "Selected initial repository evidence", {
+      data: { evidence: initialRetrieval.results.length, graphEdges: initialRetrieval.graphEdges.length },
+    });
     const initialContext = this.#retrieval.packContext(initialRetrieval);
+    emit("context_packed", "Packed bounded context for selected roles", {
+      data: { evidence: initialContext.evidence.length, approximateTokens: initialContext.stats.approximateTokens },
+    });
     let evidence = dedupeEvidence(initialRetrieval.results.map((result) => result.evidence));
     let graphEdges = [...initialRetrieval.graphEdges];
     let claims: Claim[] = [];
@@ -184,15 +283,47 @@ export class ReasoningEngine {
     const retrievalRequests: ReasoningRetrievalRequest[] = [];
     const retrievalResults: FollowUpRetrievalResult[] = [];
 
+    const publishSnapshot = (
+      status: AnalysisSnapshot["status"],
+      remainingChecks: readonly string[],
+      provisionalConclusion?: string,
+    ): AnalysisSnapshot => {
+      const snapshot: AnalysisSnapshot = {
+        status,
+        ...(provisionalConclusion === undefined ? {} : { provisionalConclusion }),
+        supportedClaims: claims.filter((claim) => claim.status === "supported"),
+        rejectedClaims: claims.filter((claim) => claim.status === "rejected"),
+        uncertainClaims: claims.filter((claim) => claim.status === "uncertain" || claim.status === "proposed" || claim.status === "challenged"),
+        evidence,
+        remainingChecks,
+      };
+      options.onSnapshot?.(snapshot);
+      emit("snapshot_emitted", `Published ${status} evidence snapshot`, {
+        data: {
+          supported: snapshot.supportedClaims.length,
+          rejected: snapshot.rejectedClaims.length,
+          uncertain: snapshot.uncertainClaims.length,
+          remainingChecks: remainingChecks.length,
+        },
+      });
+      return snapshot;
+    };
+
     const executeAgent = async <T>(
       role: AgentRole,
       prompt: string,
       validate: (raw: string) => T,
+      optional = false,
     ): Promise<T | undefined> => {
-      const remainingCalls = this.#limits.maxAgentCalls - calls.length;
+      if (signalAborted(options.signal)) {
+        terminationReason = "cancelled";
+        emit("reasoning_cancelled", `Cancelled before ${role}`, { role });
+        return undefined;
+      }
+      const remainingCalls = limits.maxAgentCalls - calls.length;
       const estimatedInput = approximateTokenCount(Buffer.byteLength(prompt));
       const usedInput = calls.reduce((total, call) => total + call.approximateInputTokens, 0);
-      if (remainingCalls < 1 || usedInput + estimatedInput > this.#limits.maxApproximateInputTokens) {
+      if (remainingCalls < 1 || usedInput + estimatedInput > limits.maxApproximateInputTokens) {
         terminationReason = "budget-exhausted";
         emit("reasoning_budget_exhausted", `Skipped ${role}: reasoning budget exhausted`, { role });
         return undefined;
@@ -200,8 +331,19 @@ export class ReasoningEngine {
       agentsExecuted.add(role);
       emit("agent_started", `Started ${role}`, { role });
       try {
-        const execution = await this.#runtime.execute(role, prompt, validate, remainingCalls);
+        const execution = await this.#runtime.execute(role, prompt, validate, remainingCalls, {
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          timeoutMs: depthBudget.providerTimeoutMs,
+          ...(plan.modelRequirements[role] === undefined ? {} : { requirement: plan.modelRequirements[role] }),
+          previousModels: calls.map((call) => `${call.providerId}:${call.modelId}`),
+        });
         calls.push(...execution.calls);
+        for (const call of execution.calls) {
+          emit("model_selected", `${role} used ${call.providerId}/${call.modelId}: ${call.selectionReason}`, {
+            role,
+            data: { fallback: call.fallback, latencyMs: call.latencyMs },
+          });
+        }
         for (const call of execution.calls.filter((record) => record.repaired)) {
           emit("agent_output_repair_requested", `${role} structured output was repaired`, {
             role,
@@ -215,11 +357,50 @@ export class ReasoningEngine {
         return execution.output;
       } catch (error) {
         if (error instanceof AgentExecutionError) calls.push(...error.calls);
-        executionState.agentFailed = true;
-        emit("agent_completed", error instanceof Error ? error.message : `${role} failed`, { role });
+        const message = error instanceof Error ? error.message : `${role} failed`;
+        if (signalAborted(options.signal)) {
+          terminationReason = "cancelled";
+          emit("reasoning_cancelled", "User cancelled the active analysis", { role });
+        } else if (/timeout|timed out/i.test(message)) {
+          terminationReason = "timed-out";
+          emit("reasoning_timed_out", `${role} exceeded the ${selectedDepth} timeout policy`, { role });
+        } else if (role === "conductor") {
+          executionState.conductorFailed = true;
+        } else if (!optional) {
+          executionState.agentFailed = true;
+        }
+        emit("agent_completed", message, { role });
         return undefined;
       }
     };
+
+    const conductorNeeded = mode === "conclave" && shouldInvokeConductor(assessment, selectedDepth);
+    if (conductorNeeded && this.#runtime.hasAssignment("conductor")) {
+      conductorInvoked = true;
+      conductorReason = "Invoked because deterministic routing found a high-ambiguity reasoning case.";
+      emit("conductor_started", conductorReason, { role: "conductor" });
+      const conductor = await executeAgent(
+        "conductor",
+        conductorPrompt(question, assessment, selectedDepth, limits, true),
+        (raw) => parseConductorOutput(raw, selectedDepth, limits),
+        true,
+      );
+      if (conductor !== undefined) {
+        plan = conductor;
+        emit("conductor_completed", `Conductor selected ${conductor.strategy}`, {
+          role: "conductor",
+          data: { roles: conductor.roles.length },
+        });
+      } else {
+        conductorReason = "Conductor was unavailable or invalid; host deterministic routing supplied the bounded fallback plan.";
+        emit("conductor_completed", conductorReason, { role: "conductor" });
+      }
+    } else {
+      conductorReason = conductorNeeded
+        ? "Skipped because no Conductor assignment is configured; deterministic routing supplied the plan."
+        : "Skipped because deterministic routing was sufficiently clear.";
+      emit("conductor_skipped", conductorReason, { role: "conductor" });
+    }
 
     emit("agent_selected", "Investigator is required for evidence decomposition", {
       role: "investigator",
@@ -249,15 +430,29 @@ export class ReasoningEngine {
         };
       });
     }
+    publishSnapshot(
+      terminationIs(terminationReason, "cancelled") ? "cancelled" : terminationIs(terminationReason, "timed-out") ? "timed-out" : "working",
+      claims.length === 0 ? ["form at least one evidence-grounded claim"] : ["challenge material alternatives", "verify claims against repository structure"],
+      investigator?.summary,
+    );
 
-    const selections = routeReasoningAgents(this.#preset, question, initialContext, claims).map(
+    let selections = [
+      {
+        role: "conductor" as const,
+        selected: conductorInvoked,
+        reason: conductorReason,
+      },
+      ...routeReasoningAgents(this.#preset, question, initialContext, claims, selectedDepth, plan),
+    ].map(
       (selection) => {
         const baselineSelected =
           selection.role === "investigator" ||
           (mode === "investigator-judge" && selection.role === "judge");
         const selected =
-          claims.length > 0 || selection.role === "investigator"
-            ? mode === "conclave"
+          selection.role === "conductor"
+            ? conductorInvoked
+            : claims.length > 0 || selection.role === "investigator"
+            ? mode === "conclave" || mode === "full-style"
               ? selection.selected
               : baselineSelected
             : false;
@@ -269,11 +464,13 @@ export class ReasoningEngine {
               reason:
                 claims.length === 0 && selection.role !== "investigator"
                   ? "no valid investigator claims are available"
-                  : `${mode} baseline excludes ${selection.role}`,
+                  : selection.role === "conductor"
+                    ? conductorReason
+                    : `${mode} baseline excludes ${selection.role}`,
             };
       },
     );
-    for (const selection of selections.filter((item) => item.role !== "investigator")) {
+    for (const selection of selections.filter((item) => item.role !== "investigator" && item.role !== "conductor" && (item.role !== "judge" || mode !== "conclave"))) {
       emit(selection.selected ? "agent_selected" : "agent_skipped", selection.reason, {
         role: selection.role,
       });
@@ -294,8 +491,8 @@ export class ReasoningEngine {
       const key = retrievalRequestKey(request);
       const count = requestCounts.get(key) ?? 0;
       if (
-        retrievalRequests.length >= this.#limits.maxFollowUpRequests ||
-        count >= this.#limits.maxRepeatedRequestCount
+        retrievalRequests.length >= limits.maxFollowUpRequests ||
+        count >= limits.maxRepeatedRequestCount
       ) {
         emit("reasoning_no_progress", `Ignored repeated or over-budget retrieval request: ${key}`, {
           role: requestedBy,
@@ -319,7 +516,7 @@ export class ReasoningEngine {
       return id;
     };
 
-    if (mode === "conclave" && investigator !== undefined) {
+    if ((mode === "conclave" || mode === "full-style") && investigator !== undefined && !terminationIs(terminationReason, "cancelled")) {
       for (const request of investigator.retrievalRequests) enqueue(request, "investigator");
       for (const claim of claims) {
         if (claim.check !== undefined) enqueue(requestForClaimCheck(claim.check), "verifier", claim.id);
@@ -350,16 +547,17 @@ export class ReasoningEngine {
     };
 
     const claimIds = new Set(claims.map((claim) => claim.id));
-    if (mode === "conclave" && selections.find((item) => item.role === "skeptic")?.selected === true) {
+    const adaptiveWorkflow = mode === "conclave" || mode === "full-style";
+    if (adaptiveWorkflow && !terminationIs(terminationReason, "cancelled") && selections.find((item) => item.role === "skeptic")?.selected === true) {
       const output = await executeAgent("skeptic", skepticPrompt(question, claims, initialContext), (raw) =>
         parseSkepticOutput(raw, claimIds),
-      );
+      true);
       if (output !== undefined) addChallenges(output.challenges, "skeptic");
     }
-    if (mode === "conclave" && selections.find((item) => item.role === "architect")?.selected === true) {
+    if (adaptiveWorkflow && !terminationIs(terminationReason, "cancelled") && selections.find((item) => item.role === "architect")?.selected === true) {
       const output = await executeAgent("architect", architectPrompt(question, claims, initialContext), (raw) =>
         parseArchitectOutput(raw, claimIds),
-      );
+      true);
       if (output !== undefined) {
         addChallenges(output.challenges, "architect");
         for (const requested of output.retrievalRequests) {
@@ -368,20 +566,25 @@ export class ReasoningEngine {
       }
     }
 
-    if (mode === "conclave" && retrievalRequests.length > 0) {
+    if (adaptiveWorkflow && !terminationIs(terminationReason, "cancelled") && retrievalRequests.length > 0) {
       iteration += 1;
       const executor = new FollowUpRetrievalExecutor(
         this.#retrieval,
-        this.#limits.maxEvidenceUnits,
+        limits.maxEvidenceUnits,
         initialRetrieval.budget.graphDepth + 2,
       );
       for (const request of retrievalRequests) {
-        if (iteration > this.#limits.maxRounds) {
+        if (iteration > limits.maxRounds) {
           terminationReason = "budget-exhausted";
           emit("reasoning_budget_exhausted", "Maximum retrieval rounds reached");
           break;
         }
-        const result = await executor.execute(request);
+        if (signalAborted(options.signal)) {
+          terminationReason = "cancelled";
+          emit("reasoning_cancelled", "Cancelled during follow-up repository retrieval", { requestId: request.id });
+          break;
+        }
+        const result = await executor.execute(request, options.signal);
         retrievalResults.push(result);
         emit("retrieval_completed", `Completed ${retrievalRequestKey(request.request)}`, {
           role: request.requestedBy,
@@ -391,7 +594,7 @@ export class ReasoningEngine {
       }
       evidence = dedupeEvidence([...evidence, ...retrievalResults.flatMap((result) => result.evidence)]).slice(
         0,
-        this.#limits.maxEvidenceUnits,
+        limits.maxEvidenceUnits,
       );
       graphEdges = [...new Map([...graphEdges, ...retrievalResults.flatMap((result) => result.graphEdges)].map((edge) => [edge.id, edge])).values()];
       claims = claims.map((claim) => {
@@ -406,7 +609,7 @@ export class ReasoningEngine {
     }
 
     const resultByRequestId = new Map(retrievalResults.map((result) => [result.requestId, result]));
-    if (mode === "conclave") {
+    if (adaptiveWorkflow && !terminationIs(terminationReason, "cancelled")) {
       agentsExecuted.add("verifier");
       emit("verification_started", "Started deterministic verification", { role: "verifier" });
       const verifier = new DeterministicClaimVerifier();
@@ -448,6 +651,7 @@ export class ReasoningEngine {
           "verifier",
           verifierPrompt(question, unresolvedClaims, challenges, verifications, context),
           (raw) => parseVerifierOutput(raw, new Set(unresolvedClaims.map((claim) => claim.id)), allEvidenceIds, edgeIds),
+          true,
         );
         if (output !== undefined) {
           for (const decision of output.decisions) {
@@ -470,11 +674,48 @@ export class ReasoningEngine {
     }
 
     let judgeStatuses = new Map<string, VerificationOutcome>();
-    if (mode !== "single-pass" && claims.length > 0) {
+    const sufficiency = evaluateReasoningSufficiency(claims, verifications, 0);
+    const unresolvedAfterVerification = claims.filter((claim) => {
+      const relevant = verifications.filter((verification) => verification.claimId === claim.id);
+      return !relevant.some((verification) => verification.outcome !== "uncertain");
+    });
+    const conflictingVerification = claims.some((claim) => {
+      const outcomes = new Set(verifications.filter((verification) => verification.claimId === claim.id).map((verification) => verification.outcome));
+      return outcomes.has("supported") && outcomes.has("rejected");
+    });
+    const meaningfulDisagreement = conflictingVerification ||
+      challenges.length > 0 ||
+      unresolvedAfterVerification.length > 1;
+    const judgeSelected = claims.length > 0 && !terminationIs(terminationReason, "cancelled") && (
+      mode === "investigator-judge" ||
+      mode === "full-style" ||
+      (mode === "conclave" && (selectedDepth === "deep" || meaningfulDisagreement))
+    );
+    selections = selections.map((selection) => selection.role === "judge"
+      ? {
+          ...selection,
+          selected: judgeSelected,
+          reason: judgeSelected
+            ? selectedDepth === "deep" ? "Deep analysis requests independent final adjudication" : "unresolved competing claims require adjudication"
+            : sufficiency.sufficient
+              ? sufficiency.reason
+              : "verified claims do not contain a material disagreement",
+        }
+      : selection);
+    if (mode === "conclave" || mode === "full-style") {
+      const selection = selections.find((item) => item.role === "judge");
+      if (selection !== undefined) emit(selection.selected ? "agent_selected" : "agent_skipped", selection.reason, { role: "judge" });
+    }
+    if (!judgeSelected && sufficiency.sufficient) {
+      earlyExitReason = sufficiency.reason;
+      emit("reasoning_early_exit", earlyExitReason);
+      publishSnapshot("sufficient", [], synthesizeAnswer(claims, evidence));
+    }
+    if (judgeSelected) {
       emit("judge_started", "Started final adjudication", { role: "judge" });
       const output = await executeAgent("judge", judgePrompt(question, claims, challenges, verifications, evidence), (raw) =>
         parseJudgeOutput(raw, claimIds),
-      );
+      mode === "conclave");
       if (output !== undefined) judgeStatuses = new Map(output.decisions.map((decision) => [decision.claimId, decision.status]));
     }
 
@@ -516,6 +757,15 @@ export class ReasoningEngine {
         modelCalls: calls.length,
       },
     };
+    const finalSnapshot = publishSnapshot(
+      terminationIs(terminationReason, "cancelled")
+        ? "cancelled"
+        : terminationIs(terminationReason, "timed-out")
+          ? "timed-out"
+          : "complete",
+      sufficiency.sufficient ? [] : sufficiency.unresolvedClaimIds.map((id) => `resolve material claim ${id}`),
+      verdict.answer,
+    );
     emit("verdict_completed", "Completed evidence-grounded verdict", {
       data: {
         supported: verdict.claims.supported.length,
@@ -532,7 +782,7 @@ export class ReasoningEngine {
       followUpRequests: retrievalRequests.length,
       deterministicOperations: retrievalResults.reduce(
         (total, result) => total + result.deterministicOperations.length,
-        0,
+        initialRetrieval.plan.operations.filter((operation) => operation.status === "executed").length,
       ),
       evidenceCount: evidence.length,
       approximateInputTokens: usage.reduce((total, item) => total + item.approximateInputTokens, 0),
@@ -546,6 +796,9 @@ export class ReasoningEngine {
         rejected: verdict.claims.rejected.length,
         uncertain: verdict.claims.uncertain.length,
       },
+      deterministicAnswer: false,
+      conductorInvoked,
+      earlyExit: earlyExitReason !== undefined,
     };
     const state: ReasoningCaseState = {
       question,
@@ -561,6 +814,32 @@ export class ReasoningEngine {
       graphEdges,
       selections,
     };
-    return { verdict, state, trace, metrics, terminationReason };
+    const baseReview = reviewRecommendation(assessment, claims, new Set(evidence.map((item) => item.path)).size);
+    const review: ReviewRecommendation = baseReview.recommended
+      ? {
+          ...baseReview,
+          handoff: createReviewHandoff(question, verdict.answer, claims, evidence, graphEdges),
+        }
+      : baseReview;
+    return {
+      verdict,
+      state,
+      trace,
+      metrics,
+      analysis: {
+        requestedDepth,
+        selectedDepth,
+        assessment,
+        plan,
+        conductorInvoked,
+        conductorReason,
+        timeoutMs: depthBudget.providerTimeoutMs,
+        deterministicAnswer: false,
+        ...(earlyExitReason === undefined ? {} : { earlyExitReason }),
+        finalSnapshot,
+        review,
+      },
+      terminationReason,
+    };
   }
 }

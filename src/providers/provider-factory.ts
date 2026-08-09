@@ -6,6 +6,7 @@ import { OpenAiCompatibleProvider, type FetchLike } from "./openai-compatible-pr
 
 export interface ProviderFactoryOptions {
   readonly fetchImplementation?: FetchLike;
+  readonly timeoutMs?: number;
 }
 
 export function createProvider(
@@ -20,7 +21,8 @@ export function createProvider(
     );
   }
   if (selection.baseUrl === undefined) {
-    throw new ConfigurationError(`CONCLAVE_BASE_URL is required for provider ${selection.provider}`);
+    const variable = config.mode === "free" ? "CONCLAVE_FREE_BASE_URL" : "CONCLAVE_BASE_URL";
+    throw new ConfigurationError(`${variable} is required for provider ${selection.provider}`);
   }
 
   const apiKey =
@@ -41,6 +43,7 @@ export function createProvider(
       ? {}
       : { fetchImplementation: options.fetchImplementation }),
     allowInsecureHttp: config.mode === "local",
+    timeoutMs: options.timeoutMs ?? config.providerTimeoutMs ?? (config.mode === "free" ? 180_000 : 60_000),
     maxTokensField: config.mode === "local" ? "max_tokens" : "max_completion_tokens",
   });
 }

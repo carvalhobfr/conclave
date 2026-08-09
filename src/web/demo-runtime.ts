@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
 import type { GenerateRequest, GenerateResponse } from "../domain/provider.js";
-import type { AgentRole } from "../domain/reasoning.js";
+import type { AgentRole, ReasoningTraceEvent } from "../domain/reasoning.js";
 import { DEFAULT_REASONING_LIMITS } from "../domain/reasoning.js";
 import type { ExecutionPermissions, TaskAgentRole } from "../domain/task-execution.js";
 import { DEFAULT_TASK_EXECUTION_LIMITS } from "../domain/task-execution.js";
@@ -55,16 +55,49 @@ export function initializeAuth(setSession: (session: Session | null) => void): v
 }
 `;
 
-export function createDemoReasoningEngine(root: string): Promise<ReasoningEngine> {
+export function createDemoReasoningEngine(
+  root: string,
+  onTrace?: (event: ReasoningTraceEvent) => void,
+  existingRetrieval?: CodeRetrievalService,
+): Promise<ReasoningEngine> {
   const provider = new FakeProvider((request) => {
     const system = message(request, "system");
     const prompt = message(request, "user");
+    if (system.includes("You are the Conductor")) {
+      const routing = jsonBetween(prompt, "BEGIN TRUSTED ROUTING ASSESSMENT", "END TRUSTED ROUTING ASSESSMENT");
+      const depth = routing["requestedDepth"] === "deep" ? "deep" : "balanced";
+      return response(request, {
+        depth,
+        strategy: "causal-investigation",
+        roles: [
+          { role: "investigator", requirement: "required" },
+          { role: "skeptic", requirement: depth === "deep" ? "required" : "conditional" },
+          { role: "architect", requirement: depth === "deep" ? "required" : "conditional" },
+          { role: "verifier", requirement: "conditional" },
+          { role: "judge", requirement: "conditional" },
+        ],
+        modelRequirements: {
+          investigator: { reasoning: "medium", coding: "medium", speed: "normal", context: "medium" },
+          architect: { reasoning: "high", coding: "high", speed: "normal", context: "large" },
+          judge: { reasoning: "high", speed: "slow-ok", context: "medium", independencePreferred: true },
+        },
+        finalReview: depth === "deep" ? "recommended" : "conditional",
+        reasonCodes: ["causal-language", "cross-module-auth-lifecycle"],
+      });
+    }
     if (system.includes("You are the Investigator")) {
       const task = jsonBetween(prompt, "BEGIN TRUSTED TASK", "END TRUSTED TASK");
       const repository = jsonBetween(prompt, "BEGIN UNTRUSTED REPOSITORY EVIDENCE", "END UNTRUSTED REPOSITORY EVIDENCE");
       const packed = repository["evidence"] as { evidenceIds: string[] }[];
       const evidenceId = packed[0]?.evidenceIds[0];
       if (evidenceId === undefined) throw new Error("Demo retrieval returned no evidence");
+      if (/persist.*(?:login\s+)?token/i.test(String(task["question"]))) {
+        return response(request, {
+          summary: "Login persistence resolves to a statically verifiable caller relationship.",
+          claims: [{ statement: "Login calls persistToken to store the token.", evidenceIds: [evidenceId], uncertainty: "none", check: { kind: "callers", symbol: "persistToken", expectation: "present" } }],
+          retrievalRequests: [],
+        });
+      }
       if (String(task["question"]).startsWith("Where")) {
         return response(request, {
           summary: "A direct caller lookup is sufficient.",
@@ -96,18 +129,27 @@ export function createDemoReasoningEngine(root: string): Promise<ReasoningEngine
     }
     throw new Error("Unexpected Demo reasoning role");
   });
-  return createReasoning(root, provider);
+  return createReasoning(root, provider, onTrace, existingRetrieval);
 }
 
-async function createReasoning(root: string, provider: FakeProvider): Promise<ReasoningEngine> {
+async function createReasoning(
+  root: string,
+  provider: FakeProvider,
+  onTrace?: (event: ReasoningTraceEvent) => void,
+  existingRetrieval?: CodeRetrievalService,
+): Promise<ReasoningEngine> {
   const embedding = new LocalHashEmbeddingProvider();
-  const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
-  const roles: readonly AgentRole[] = ["investigator", "skeptic", "architect", "verifier", "judge"];
+  const retrieval = existingRetrieval ?? new CodeRetrievalService(
+    (await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root)).index,
+    embedding,
+  );
+  const roles: readonly AgentRole[] = ["conductor", "investigator", "skeptic", "architect", "verifier", "judge"];
   return new ReasoningEngine({
-    retrieval: new CodeRetrievalService(indexed.index, embedding),
+    retrieval,
     runtime: new StructuredAgentRuntime(new Map([["fake", provider]]), roles.map((role) => ({ role, providerId: "fake", modelId: `demo-${role}` })), DEFAULT_REASONING_LIMITS),
     preset: "full",
     limits: DEFAULT_REASONING_LIMITS,
+    ...(onTrace === undefined ? {} : { onTrace }),
   });
 }
 

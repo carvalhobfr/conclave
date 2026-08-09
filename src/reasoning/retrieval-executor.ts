@@ -9,6 +9,10 @@ import { approximateTokenCount } from "../retrieval/context-packer.js";
 import type { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import type { GraphRelationResult } from "../graph/graph-query.js";
 
+function signalAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted ?? false;
+}
+
 export function retrievalRequestKey(request: RetrievalRequest): string {
   switch (request.kind) {
     case "symbol":
@@ -47,7 +51,8 @@ export class FollowUpRetrievalExecutor {
     this.#maxGraphDepth = maxGraphDepth;
   }
 
-  public async execute(record: ReasoningRetrievalRequest): Promise<FollowUpRetrievalResult> {
+  public async execute(record: ReasoningRetrievalRequest, signal?: AbortSignal): Promise<FollowUpRetrievalResult> {
+    if (signalAborted(signal)) throw signal?.reason;
     const evidence: Evidence[] = [];
     const graphEdges: GraphEdge[] = [];
     const deterministicOperations: string[] = [];
@@ -115,6 +120,7 @@ export class FollowUpRetrievalExecutor {
             finalEvidence: this.#maxEvidence,
           },
         });
+        if (signalAborted(signal)) throw signal?.reason;
         evidence.push(...retrieval.results.map((result) => result.evidence));
         graphEdges.push(...retrieval.graphEdges);
         deterministicOperations.push(

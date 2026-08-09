@@ -65,6 +65,7 @@ export interface SearchOptions {
   readonly strategy?: RetrievalStrategy;
   readonly limit?: number;
   readonly expandGraph?: boolean;
+  readonly includeExactSymbolSignals?: boolean;
   readonly graphDepth?: number;
   readonly graphEvidenceBudget?: number;
 }
@@ -271,7 +272,9 @@ export class HybridRetriever {
     addRanking(semantic, "semantic", this.#config.weights.semantic, "semantic");
     if (strategy === "hybrid") {
       const symbols = symbolSignals(units, query);
-      addRanking(symbols.exact, "exactSymbol", this.#config.weights.exactSymbol, "exact-symbol");
+      if (options.includeExactSymbolSignals !== false) {
+        addRanking(symbols.exact, "exactSymbol", this.#config.weights.exactSymbol, "exact-symbol");
+      }
       addRanking(symbols.partial, "partialSymbol", this.#config.weights.partialSymbol, "partial-symbol");
       addRanking(pathSignals(units, query), "path", this.#config.weights.path, "path");
       if (options.expandGraph !== false) {

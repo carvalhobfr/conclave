@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "../domain/execution-mode.js";
 import type { TaskAgentAssignment, TaskAgentRole } from "../domain/task-execution.js";
+import { assertFreeModelAllowed, DEFAULT_FREE_TASK_MODELS } from "./free-mode-config.js";
 
 export interface TaskConfiguration {
   readonly assignments: readonly TaskAgentAssignment[];
@@ -45,10 +46,13 @@ export function loadTaskConfiguration(
   return {
     assignments: ROLES.map((role) => {
       const prefix = `CONCLAVE_${role.toUpperCase()}`;
+      const modelId = nonEmpty(environment[`${prefix}_MODEL`])
+        ?? (runtime.mode === "free" ? DEFAULT_FREE_TASK_MODELS[role] : defaultModel);
+      if (runtime.mode === "free") assertFreeModelAllowed(modelId, runtime.allowedModels);
       return {
         role,
         providerId: nonEmpty(environment[`${prefix}_PROVIDER`]) ?? runtime.providerSelection.provider,
-        modelId: nonEmpty(environment[`${prefix}_MODEL`]) ?? defaultModel,
+        modelId,
       };
     }),
     allowedPackageScripts: packageScripts(environment["CONCLAVE_ALLOWED_PACKAGE_SCRIPTS"]),

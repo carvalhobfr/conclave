@@ -75,6 +75,17 @@ describe("bounded reasoning retrieval", () => {
     expect(path.approximateTokens).toBeGreaterThan(0);
   });
 
+  it("honors cancellation at a follow-up retrieval boundary", async () => {
+    const service = await reasoningFixture();
+    const controller = new AbortController();
+    controller.abort(new DOMException("cancel retrieval", "AbortError"));
+
+    await expect(new FollowUpRetrievalExecutor(service, 10, 3).execute(
+      request("request_cancelled", { kind: "callers", symbol: "bootstrapSession" }),
+      controller.signal,
+    )).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("canonicalizes equivalent requests for loop deduplication", () => {
     expect(retrievalRequestKey({ kind: "callers", symbol: "persistToken" })).toBe(
       retrievalRequestKey({ kind: "callers", symbol: "persistToken" }),

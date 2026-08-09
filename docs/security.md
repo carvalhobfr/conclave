@@ -66,6 +66,11 @@ Local Mode is marked `local-only`, accepts only loopback HTTP(S) provider endpoi
 - Deterministic verification overrides model agreement, and rejected claims are excluded by deterministic answer synthesis.
 - Execution traces retain concise structured conclusions and usage metadata. They do not store hidden chain-of-thought.
 - Reasoning is capped by model-call, round, repeated-request, evidence, graph, approximate-token, and output-token limits.
+- Project Knowledge direct answers use only validated index data and extracted/resolved graph provenance. Model-inferred relationships cannot satisfy deterministic verification.
+- The deterministic pre-router and depth presets can reduce work but cannot raise hard ceilings or change repository, provider, credential, or Task authority.
+- A configured Conductor may propose only a strict reasoning plan. Unknown fields, provider endpoints, model identities, permissions, and budget increases are rejected; the host remains authoritative.
+- Model capability profiles are host/user configuration. Explicit assignments are authoritative while healthy, and fallback is disabled unless the host explicitly enables it.
+- Cancellation and depth-aware timeouts propagate to provider fetches. Public snapshots contain structured claims and evidence only, never hidden model reasoning.
 
 ## Task execution
 
@@ -92,13 +97,17 @@ model requests a typed capability
 
 ## Local web application
 
-- The Phase 5 product server binds to `127.0.0.1`; it is not a hosted API surface and does not implement Free Mode hosting.
+- The product server binds to `127.0.0.1`; it is not a public hosted API surface.
 - Browser requests are display/application requests only. The browser never receives provider credentials, raw repository index state, arbitrary filesystem authority, direct command execution, or direct patch authority.
 - Local folder opening is canonicalized and restricted to `CONCLAVE_WEB_ALLOWED_ROOT` (or the server working directory by default). Browser-provided paths outside that boundary are rejected.
+- Browser folder import removes environment files, private keys, and common credential files before reading file contents. The server repeats the same case-insensitive path check before writing an imported file, and local ingestion repeats it before filesystem reads. `.env.example` is allowed as documentation but still passes through content-level secret detection.
 - API JSON bodies are capped at 64 KB and API errors are converted to concise product-safe messages rather than provider headers, credentials, or stack traces.
-- Provider configuration continues to be read by the local server process from existing environment-backed configuration. Phase 5 adds no plaintext browser credential store.
+- The server-owned Free credential is read only by the local server process and is never sent to the browser, diagnostics, logs, role assignments, or the settings file.
+- Personal provider sets deliberately store a user's own key in the owner-only local settings file (`0600`). The API never returns the key, and an active personal set overrides `.env` without gaining access to the server-owned Free credential. The file is not encrypted and should be protected like any local credential file.
 - Demo Mode uses a bundled repository fixture and FakeProvider responses labelled as deterministic demo inference. It does not represent a configured remote provider or hosted Free service.
 - Task permission controls request the existing Task Mode flags only. The core policy remains the authority for every patch and command capability; the UI cannot construct an approved command or apply a patch to the original repository.
+- Ask, Investigate, and Task browser jobs own server-side abort controllers. Cancellation reaches provider and approved child-process work; Task execution continues to use and clean an isolated workspace.
+- Adaptive aggregate metrics are process-local and contain counts, token estimates, and rates. They are not transmitted to an analytics service.
 
 ## Residual risks
 
@@ -106,9 +115,10 @@ model requests a typed capability
 - Prompt injection cannot be eliminated solely through delimiters and instructions; later structured outputs and evidence validation remain necessary.
 - Node tests and package scripts execute repository code. Because portable child-process filesystem and network isolation is unavailable, they require explicit repository-script and network grants and should be enabled only for trusted repositories. Isolation protects the original Git worktree from ordinary edits but is not a host sandbox against absolute-path access or child processes.
 - The child environment excludes credentials known to Conclave, but a hostile repository process may still discover host information through operating-system interfaces. Default-deny repository-code execution remains the safe mode.
-- The local web server has no authentication, multi-user session boundary, rate limiting, hosted request controls, or remote-path defense because it is loopback-only. Do not expose it through a reverse proxy or public network without a dedicated hosted security design.
+- Free Mode has host-controlled model allowlisting, a provider-neutral usage gate, a fixed-window request quota, and an in-process concurrency limit at the product-service boundary. Personal BYOK sets do not consume the host Free quota.
+- The local web server still has no authentication or multi-user session boundary. Its usage and concurrency state is process-local and keyed to the loopback client boundary, so it must not be exposed through a reverse proxy or public network without durable identity, distributed quotas, abuse controls, and a dedicated hosted security design.
 - Root ignore-file support does not yet reproduce nested Git ignore semantics.
 - Files can change during a scan. Symlink and canonical-path checks narrow traversal risk but do not provide an immutable filesystem snapshot.
 - JSON storage is owner-readable and atomic but not encrypted, multi-process safe, or suitable for credentials.
 - The code index contains non-secret repository source in plaintext with owner-only permissions; repository filesystem access still grants index access.
-- No hosted HTTP surface exists yet, so authentication, request-size controls, CSRF/CORS policy, and rate limiting are not implemented.
+- No public hosted HTTP surface exists yet. Authentication, durable/distributed quotas, billing, CSRF/CORS policy for public origins, and remote-repository defenses remain outside this phase.

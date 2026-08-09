@@ -1,7 +1,7 @@
 import type { IndexedCodeUnit, RepositoryCodeIndex } from "../domain/code-index.js";
 import type { Evidence } from "../domain/evidence.js";
 import { evidenceFromRange, evidenceFromUnit } from "./evidence-factory.js";
-import { normalizeIdentifier } from "./tokenizer.js";
+import { normalizeIdentifier, tokenizeCode } from "./tokenizer.js";
 
 export interface TextSearchOptions {
   readonly caseSensitive?: boolean;
@@ -11,6 +11,11 @@ export interface TextSearchOptions {
 export interface FileRange {
   readonly startLine: number;
   readonly endLine: number;
+}
+
+export interface FileTextSearchOptions {
+  readonly limit?: number;
+  readonly contextLines?: number;
 }
 
 function lineAtOffset(content: string, offset: number): number {
@@ -101,6 +106,74 @@ export class CodeIndexReader {
       }
     }
     return results;
+  }
+
+  public searchFileText(query: string, options: FileTextSearchOptions = {}): readonly Evidence[] {
+    const ignored = new Set(["and", "cite", "each", "file", "for", "from", "source", "summarize", "the", "this", "with"]);
+    const terms = [...new Set(tokenizeCode(query).filter((term) => term.length > 2 && !ignored.has(term)))];
+    if (terms.length === 0) return [];
+    const files = Object.values(this.#index.files).map((file) => {
+      const lines = file.sourceText.split("\n");
+      const lineTokens = lines.map((line) => tokenizeCode(line));
+      return { file, lines, lineTokens, tokens: new Set(lineTokens.flat()) };
+    });
+    const documentFrequency = new Map(terms.map((term) => [
+      term,
+      files.filter((entry) => entry.tokens.has(term)).length,
+    ]));
+    const contextLines = Math.max(1, Math.min(options.contextLines ?? 8, 40));
+    const scored = files.flatMap(({ file, lines, lineTokens }) => {
+      let bestStart = -1;
+      let bestScore = 0;
+      const pathTerms = new Set(tokenizeCode(file.path));
+      const pathScore = terms.reduce((score, term) => {
+        if (!pathTerms.has(term)) return score;
+        const frequencyInFiles = documentFrequency.get(term) ?? 0;
+        return score + Math.log(1 + (files.length + 1) / (frequencyInFiles + 1));
+      }, 0);
+      const scores = lines.map((line, index) => {
+        if (line.length > 1_000) return 0;
+        const frequencies = new Map<string, number>();
+        for (const term of lineTokens[index] ?? []) {
+          if (terms.includes(term)) frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
+        }
+        let score = 0;
+        for (const [term, frequency] of frequencies) {
+          const frequencyInFiles = documentFrequency.get(term) ?? 0;
+          const idf = Math.log(1 + (files.length + 1) / (frequencyInFiles + 1));
+          score += idf * (1 + Math.log(frequency));
+        }
+        const trimmed = line.trim();
+        const declarationOnly = /^(?:export\s+)?(?:interface|type)\b/.test(trimmed) ||
+          /^[A-Za-z_$][A-Za-z0-9_$]*\??:\s*(?:string|number|boolean)(?:\[\])?;$/.test(trimmed);
+        const commentOnly = /^(?:\/\/|\/\*|\*|\*\/)/.test(trimmed);
+        if (declarationOnly) score *= 0.2;
+        else if (commentOnly) score *= 0.35;
+        else if (/['"`]/.test(line)) score *= 1.35;
+        return score;
+      });
+      for (let start = 0; start < lines.length; start += 1) {
+        const score = scores.slice(start, start + contextLines).reduce((total, value) => total + value, 0) + pathScore;
+        if (score > bestScore) {
+          bestScore = score;
+          bestStart = start;
+        }
+      }
+      if (bestStart < 0) return [];
+      const startLine = bestStart + 1;
+      const endLine = Math.min(lines.length, startLine + contextLines - 1);
+      return [{ file, score: bestScore, startLine, endLine }];
+    });
+    return scored
+      .sort((left, right) => right.score - left.score || left.file.path.localeCompare(right.file.path))
+      .slice(0, options.limit ?? 10)
+      .map((result) => this.#remember(evidenceFromRange(
+        this.#index,
+        result.file.path,
+        result.startLine,
+        result.endLine,
+        "text-match",
+      )));
   }
 
   public readEvidence(id: string): Evidence | undefined {

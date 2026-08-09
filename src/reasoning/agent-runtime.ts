@@ -1,8 +1,11 @@
 import type { LlmProvider, TokenUsage } from "../domain/provider.js";
+import type { ModelProfile, ModelRequirement } from "../domain/adaptive-reasoning.js";
 import type { AgentAssignment, AgentRole, ReasoningLimits } from "../domain/reasoning.js";
 import { approximateTokenCount } from "../retrieval/context-packer.js";
 import { StructuredOutputError } from "./structured-outputs.js";
 import { roleSystemPrompt } from "./role-prompts.js";
+import { ModelSelector } from "./model-selector.js";
+import { ProviderHealthTracker } from "../providers/provider-health.js";
 
 export interface AgentCallRecord {
   readonly role: AgentRole;
@@ -13,6 +16,8 @@ export interface AgentCallRecord {
   readonly providerUsage?: TokenUsage;
   readonly latencyMs: number;
   readonly repaired: boolean;
+  readonly selectionReason: string;
+  readonly fallback: boolean;
 }
 
 export interface AgentExecution<T> {
@@ -34,19 +39,58 @@ export class AgentExecutionError extends Error {
 
 export type StructuredValidator<T> = (raw: string) => T;
 
+export interface AgentExecutionOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly requirement?: ModelRequirement;
+  readonly previousModels?: readonly string[];
+}
+
+function signalAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted ?? false;
+}
+
 export class StructuredAgentRuntime {
   readonly #providers: ReadonlyMap<string, LlmProvider>;
   readonly #assignments: ReadonlyMap<AgentRole, AgentAssignment>;
   readonly #limits: ReasoningLimits;
+  readonly #selector: ModelSelector;
+  readonly #health: ProviderHealthTracker;
 
   public constructor(
     providers: ReadonlyMap<string, LlmProvider>,
     assignments: readonly AgentAssignment[],
     limits: ReasoningLimits,
+    options: {
+      readonly selector?: ModelSelector;
+      readonly health?: ProviderHealthTracker;
+      readonly profiles?: readonly ModelProfile[];
+      readonly fallbackPolicy?: "disabled" | "configured";
+    } = {},
   ) {
     this.#providers = providers;
     this.#assignments = new Map(assignments.map((assignment) => [assignment.role, assignment]));
     this.#limits = limits;
+    this.#health = options.health ?? new ProviderHealthTracker();
+    this.#selector = options.selector ?? new ModelSelector({
+      profiles: options.profiles ?? assignments.map((assignment) => ({
+        providerId: assignment.providerId,
+        modelId: assignment.modelId,
+        capabilities: { reasoning: "medium", coding: "medium", speed: "medium", context: "medium" },
+        costClass: "standard",
+      })),
+      explicitAssignments: assignments,
+      ...(options.fallbackPolicy === undefined ? {} : { fallbackPolicy: options.fallbackPolicy }),
+      health: this.#health,
+    });
+  }
+
+  public hasAssignment(role: AgentRole): boolean {
+    return this.#assignments.has(role);
+  }
+
+  public health(): readonly ReturnType<ProviderHealthTracker["get"]>[] {
+    return this.#health.all();
   }
 
   public async execute<T>(
@@ -54,8 +98,11 @@ export class StructuredAgentRuntime {
     userPrompt: string,
     validate: StructuredValidator<T>,
     callBudget = 1 + this.#limits.structuredOutputRepairAttempts,
+    options: AgentExecutionOptions = {},
   ): Promise<AgentExecution<T>> {
-    const assignment = this.#assignments.get(role);
+    if (signalAborted(options.signal)) throw options.signal?.reason;
+    const selection = this.#selector.select(role, options.requirement, options.previousModels);
+    const assignment = selection?.assignment;
     if (assignment === undefined) {
       throw new AgentExecutionError(`No assignment configured for ${role}`, role);
     }
@@ -84,17 +131,22 @@ export class StructuredAgentRuntime {
       const started = performance.now();
       let response;
       try {
+        if (signalAborted(options.signal)) throw options.signal?.reason;
         response = await provider.generate({
           model: assignment.modelId,
           messages,
           maxOutputTokens: this.#limits.maxOutputTokensPerCall,
           temperature: 0,
           responseFormat: "json",
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         });
       } catch (error) {
+        this.#health.record(assignment.providerId, assignment.modelId, false, Math.max(0, performance.now() - started));
         const message = error instanceof Error ? error.message : "unknown provider failure";
         throw new AgentExecutionError(`${role} provider failed: ${message}`, role, calls);
       }
+      this.#health.record(assignment.providerId, assignment.modelId, true, Math.max(0, performance.now() - started));
       const record: AgentCallRecord = {
         role,
         providerId: assignment.providerId,
@@ -104,6 +156,8 @@ export class StructuredAgentRuntime {
         ...(response.usage === undefined ? {} : { providerUsage: response.usage }),
         latencyMs: Math.max(0, performance.now() - started),
         repaired: attempt > 0,
+        selectionReason: selection?.reason ?? "explicit role assignment",
+        fallback: selection?.fallback ?? false,
       };
       calls.push(record);
       try {

@@ -28,6 +28,7 @@ interface MutableIndexStats {
   unitsIndexed: number;
   embeddingsCreated: number;
   embeddingCacheHits: number;
+  graphRebuilt: boolean;
 }
 
 function emptyStats(): MutableIndexStats {
@@ -42,6 +43,7 @@ function emptyStats(): MutableIndexStats {
     unitsIndexed: 0,
     embeddingsCreated: 0,
     embeddingCacheHits: 0,
+    graphRebuilt: false,
   };
 }
 
@@ -261,6 +263,8 @@ export class RepositoryIndexer {
     }
 
     const now = new Date().toISOString();
+    const changedFileCount = stats.filesAdded + stats.filesChanged + stats.filesDeleted;
+    stats.graphRebuilt = previous === undefined || changedFileCount > 0;
     const index: RepositoryCodeIndex = {
       schemaVersion: CODE_INDEX_SCHEMA_VERSION,
       indexingVersion: CODE_INDEXING_VERSION,
@@ -274,7 +278,12 @@ export class RepositoryIndexer {
       files,
       units,
       embeddingCache,
-      graphEdges: buildCodeGraph(files, units),
+      // Reuse the immutable graph when content hashes prove the repository structure
+      // did not change. Changed indexes still rebuild deterministically so import
+      // resolution remains authoritative across affected files.
+      graphEdges: previous !== undefined && changedFileCount === 0
+        ? previous.graphEdges
+        : buildCodeGraph(files, units),
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };

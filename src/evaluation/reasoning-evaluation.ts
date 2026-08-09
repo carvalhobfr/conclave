@@ -136,7 +136,9 @@ function modeFor(strategy: ReasoningEvaluationStrategy): ReasoningMode {
     case "investigator-judge":
       return "investigator-judge";
     case "conclave":
-      return "conclave";
+      // Preserve the Phase 3 benchmark's robust fixed workflow unchanged. Phase 8
+      // evaluates adaptive Auto separately in eval:adaptive.
+      return "full-style";
   }
 }
 

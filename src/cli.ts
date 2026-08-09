@@ -6,6 +6,7 @@ import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
 import { loadReasoningConfiguration } from "./config/reasoning-config.js";
 import { loadTaskConfiguration } from "./config/task-config.js";
+import { loadLocalEnvironment } from "./config/load-environment.js";
 import { createEmbeddingProvider } from "./embeddings/embedding-factory.js";
 import type { EmbeddingProvider } from "./domain/embedding.js";
 import {
@@ -20,7 +21,7 @@ import {
 import { FileSystemCodeIndexStore } from "./indexing/file-system-index-store.js";
 import { InMemoryCodeIndexStore } from "./indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "./indexing/repository-indexer.js";
-import { createProvider } from "./providers/provider-factory.js";
+import { createProviderRuntime } from "./providers/provider-runtime.js";
 import { diagnoseProvider } from "./providers/provider-diagnostics.js";
 import { ConclaveMcpService } from "./mcp/conclave-mcp-service.js";
 import { runMcpStdio } from "./mcp/server.js";
@@ -559,12 +560,13 @@ async function askRepository(args: readonly string[]): Promise<void> {
   }
   const runtimeConfig = loadRuntimeConfig();
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
-  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const providers = createProviderRuntime(runtimeConfig, new EnvironmentCredentialSource(), [...reasoningConfig.assignments, ...reasoningConfig.modelProfiles]);
   const indexed = await updateIndex(requestedPath);
   const runtime = new StructuredAgentRuntime(
-    new Map([[provider.id, provider]]),
+    providers,
     reasoningConfig.assignments,
     DEFAULT_REASONING_LIMITS,
+    { profiles: reasoningConfig.modelProfiles, fallbackPolicy: reasoningConfig.fallbackPolicy },
   );
   const result = await new ReasoningEngine({
     retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
@@ -618,7 +620,7 @@ async function evaluateReasoning(args: readonly string[]): Promise<void> {
   }
   const runtimeConfig = loadRuntimeConfig();
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
-  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const providers = createProviderRuntime(runtimeConfig, new EnvironmentCredentialSource(), [...reasoningConfig.assignments, ...reasoningConfig.modelProfiles]);
   const indexed = await updateIndex(requestedPath);
   const retrieval = new CodeRetrievalService(indexed.index, indexed.embeddingProvider);
   const report = await runReasoningEvaluation(
@@ -627,9 +629,10 @@ async function evaluateReasoning(args: readonly string[]): Promise<void> {
       Promise.resolve(new ReasoningEngine({
         retrieval,
         runtime: new StructuredAgentRuntime(
-          new Map([[provider.id, provider]]),
+          providers,
           reasoningConfig.assignments,
           DEFAULT_REASONING_LIMITS,
+          { profiles: reasoningConfig.modelProfiles, fallbackPolicy: reasoningConfig.fallbackPolicy },
         ),
         preset: reasoningConfig.preset,
       })),
@@ -653,15 +656,19 @@ async function executeTask(args: readonly string[]): Promise<void> {
   const runtimeConfig = loadRuntimeConfig();
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
   const taskConfig = loadTaskConfiguration(runtimeConfig);
-  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const providers = createProviderRuntime(
+    runtimeConfig,
+    new EnvironmentCredentialSource(),
+    [...reasoningConfig.assignments, ...reasoningConfig.modelProfiles, ...taskConfig.assignments],
+  );
   const indexed = await createEphemeralIndex(requestedPath);
-  const providers = new Map([[provider.id, provider]]);
   const reasoning = new ReasoningEngine({
     retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
     runtime: new StructuredAgentRuntime(
       providers,
       reasoningConfig.assignments,
       DEFAULT_REASONING_LIMITS,
+      { profiles: reasoningConfig.modelProfiles, fallbackPolicy: reasoningConfig.fallbackPolicy },
     ),
     preset: reasoningConfig.preset,
   });
@@ -738,7 +745,9 @@ function showConfig(args: readonly string[]): void {
 async function providerCheck(): Promise<void> {
   const credentials = new EnvironmentCredentialSource();
   const config = loadRuntimeConfig();
-  print(await diagnoseProvider(config, credentials), true);
+  const reasoning = loadReasoningConfiguration(config);
+  const task = loadTaskConfiguration(config);
+  print(await diagnoseProvider(config, credentials, { assignments: [...reasoning.assignments, ...task.assignments] }), true);
 }
 
 async function startMcp(args: readonly string[]): Promise<void> {
@@ -749,14 +758,14 @@ async function startMcp(args: readonly string[]): Promise<void> {
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
   const taskRequested = args.includes("--allow-task-mode");
   if (taskRequested) throw new Error("MCP Task Mode is not exposed in this release; the MCP server is read-only");
-  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const providers = createProviderRuntime(runtimeConfig, new EnvironmentCredentialSource(), [...reasoningConfig.assignments, ...reasoningConfig.modelProfiles]);
   const service = await ConclaveMcpService.open({
     repositoryRoot: requestedPath,
     allowedRoot: process.env["CONCLAVE_MCP_ALLOWED_ROOT"] ?? requestedPath,
     embeddingProvider: createEmbeddingProvider(process.env, new EnvironmentCredentialSource()),
     createReasoning: (retrieval) => new ReasoningEngine({
       retrieval,
-      runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoningConfig.assignments, DEFAULT_REASONING_LIMITS),
+      runtime: new StructuredAgentRuntime(providers, reasoningConfig.assignments, DEFAULT_REASONING_LIMITS, { profiles: reasoningConfig.modelProfiles, fallbackPolicy: reasoningConfig.fallbackPolicy }),
       preset: reasoningConfig.preset,
     }),
   });
@@ -766,10 +775,12 @@ async function startMcp(args: readonly string[]): Promise<void> {
 async function runDemo(): Promise<void> {
   const product = new ConclaveProductService();
   const project = await product.openDemo();
-  const ask = await product.run(project.id, "ask", "Where is bootstrapSession called?");
-  const investigate = await product.run(project.id, "investigate", "Why might authentication disappear after refresh?");
+  const directAsk = await product.run(project.id, "ask", "Where is bootstrapSession called?", "auto");
+  const minimalAsk = await product.run(project.id, "ask", "Where do we persist the login token?", "auto");
+  const adaptiveInvestigate = await product.run(project.id, "investigate", "Why might authentication disappear after refresh?", "auto");
+  const deepInvestigate = await product.run(project.id, "investigate", "Why might authentication disappear after refresh?", "deep");
   const task = await product.task(project.id, "Fix authentication disappearing after refresh.", false, { allowFileEdits: true, allowCommands: false, allowRepositoryScripts: false, allowNetwork: false });
-  print({ deterministicDemo: true, project, ask, investigate, task }, true);
+  print({ deterministicDemo: true, project, directAsk, minimalAsk, adaptiveInvestigate, deepInvestigate, task }, true);
 }
 
 async function main(): Promise<void> {
@@ -836,7 +847,7 @@ async function main(): Promise<void> {
   }
 }
 
-await main().catch((error: unknown) => {
+await loadLocalEnvironment().then(main).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "Unknown error";
   console.error(`Conclave error: ${message}`);
   process.exitCode = 1;

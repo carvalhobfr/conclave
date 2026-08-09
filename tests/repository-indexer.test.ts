@@ -80,6 +80,7 @@ describe("RepositoryIndexer", () => {
         filesSkippedSecret: 1,
         filesSkippedUnsupported: 1,
         embeddingsCreated: 2,
+        graphRebuilt: true,
       }),
     );
     expect(Object.keys(first.index.files)).toEqual(["src/old.ts", "src/session.ts"]);
@@ -90,7 +91,7 @@ describe("RepositoryIndexer", () => {
 
     const second = await indexer.index(root);
     expect(second.stats).toEqual(
-      expect.objectContaining({ filesUnchanged: 2, embeddingsCreated: 0, embeddingCacheHits: 2 }),
+      expect.objectContaining({ filesUnchanged: 2, embeddingsCreated: 0, embeddingCacheHits: 2, graphRebuilt: false }),
     );
     expect(embeddingProvider.batches).toHaveLength(1);
 
@@ -109,7 +110,7 @@ describe("RepositoryIndexer", () => {
 
     const third = await indexer.index(root);
     expect(third.stats).toEqual(
-      expect.objectContaining({ filesAdded: 1, filesChanged: 1, filesDeleted: 1, embeddingsCreated: 2 }),
+      expect.objectContaining({ filesAdded: 1, filesChanged: 1, filesDeleted: 1, embeddingsCreated: 2, graphRebuilt: true }),
     );
     expect(third.index.files["src/old.ts"]).toBeUndefined();
     expect(Object.values(third.index.units).map((unit) => unit.symbol)).not.toContain("oldSymbol");

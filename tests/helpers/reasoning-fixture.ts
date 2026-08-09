@@ -49,6 +49,20 @@ export function reasoningFixtureProvider(): FakeProvider {
       const packed = repository["evidence"] as { evidenceIds: string[] }[];
       const evidenceId = packed[0]?.evidenceIds[0];
       if (evidenceId === undefined) throw new Error("fixture retrieval returned no evidence");
+      if (/persist.*(?:login\s+)?token/i.test(String(task["question"]))) {
+        return response(request, {
+          summary: "Login persistence resolves to a statically verifiable caller relationship.",
+          claims: [
+            {
+              statement: "Login calls persistToken to store the token.",
+              evidenceIds: [evidenceId],
+              uncertainty: "none",
+              check: { kind: "callers", symbol: "persistToken", expectation: "present" },
+            },
+          ],
+          retrievalRequests: [],
+        });
+      }
       if (String(task["question"]).startsWith("Where")) {
         return response(request, {
           summary: "A direct caller lookup is sufficient.",

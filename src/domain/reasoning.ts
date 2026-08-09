@@ -2,8 +2,16 @@ import type { GraphEdge } from "./code-index.js";
 import type { ContextBundle } from "./context-bundle.js";
 import type { Evidence } from "./evidence.js";
 import type { PlannedRetrieval } from "./retrieval-plan.js";
+import type {
+  AnalysisDepth,
+  AnalysisSnapshot,
+  QueryAssessment,
+  ReasoningPlan,
+  ReviewRecommendation,
+  SelectedAnalysisDepth,
+} from "./adaptive-reasoning.js";
 
-export type AgentRole = "investigator" | "skeptic" | "architect" | "verifier" | "judge";
+export type AgentRole = "conductor" | "investigator" | "skeptic" | "architect" | "verifier" | "judge";
 
 export type ReasoningPreset = "free-like" | "full" | "local";
 
@@ -138,11 +146,20 @@ export const DEFAULT_REASONING_LIMITS: ReasoningLimits = {
 
 export type ReasoningTraceEventType =
   | "reasoning_started"
+  | "query_assessed"
+  | "deterministic_answer_completed"
+  | "initial_retrieval_started"
+  | "initial_retrieval_completed"
+  | "context_packed"
   | "agent_selected"
   | "agent_skipped"
   | "agent_started"
   | "agent_completed"
   | "agent_output_repair_requested"
+  | "model_selected"
+  | "conductor_started"
+  | "conductor_completed"
+  | "conductor_skipped"
   | "claim_proposed"
   | "claim_challenged"
   | "retrieval_requested"
@@ -154,7 +171,11 @@ export type ReasoningTraceEventType =
   | "judge_started"
   | "verdict_completed"
   | "reasoning_budget_exhausted"
-  | "reasoning_no_progress";
+  | "reasoning_no_progress"
+  | "reasoning_early_exit"
+  | "reasoning_cancelled"
+  | "reasoning_timed_out"
+  | "snapshot_emitted";
 
 export interface ReasoningTraceEvent {
   readonly sequence: number;
@@ -193,6 +214,9 @@ export interface ReasoningMetrics {
   readonly latencyMs: number;
   readonly roleUsage: readonly RoleUsage[];
   readonly finalClaims: Readonly<Record<VerificationOutcome, number>>;
+  readonly deterministicAnswer: boolean;
+  readonly conductorInvoked: boolean;
+  readonly earlyExit: boolean;
 }
 
 export interface Verdict {
@@ -231,5 +255,24 @@ export interface ReasoningResult {
   readonly state: ReasoningCaseState;
   readonly trace: readonly ReasoningTraceEvent[];
   readonly metrics: ReasoningMetrics;
-  readonly terminationReason: "completed" | "budget-exhausted" | "no-progress" | "agent-failure";
+  readonly analysis: {
+    readonly requestedDepth: AnalysisDepth;
+    readonly selectedDepth: SelectedAnalysisDepth;
+    readonly assessment: QueryAssessment;
+    readonly plan: ReasoningPlan;
+    readonly conductorInvoked: boolean;
+    readonly conductorReason: string;
+    readonly timeoutMs: number;
+    readonly deterministicAnswer: boolean;
+    readonly earlyExitReason?: string;
+    readonly finalSnapshot: AnalysisSnapshot;
+    readonly review: ReviewRecommendation;
+  };
+  readonly terminationReason:
+    | "completed"
+    | "budget-exhausted"
+    | "no-progress"
+    | "agent-failure"
+    | "cancelled"
+    | "timed-out";
 }

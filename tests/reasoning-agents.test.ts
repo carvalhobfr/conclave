@@ -31,6 +31,26 @@ describe("reasoning configuration", () => {
       expect.objectContaining({ providerId: "openrouter", modelId: "critical-model" }),
     );
   });
+
+  it("loads only host-configured capability profiles and keeps fallback opt-in", () => {
+    const environment = {
+      CONCLAVE_MODE: "api",
+      CONCLAVE_PROVIDER: "openai",
+      CONCLAVE_MODEL: "primary",
+      CONCLAVE_BASE_URL: "https://api.example/v1",
+      CONCLAVE_MODEL_FALLBACK_POLICY: "configured",
+      CONCLAVE_MODEL_PROFILES_JSON: JSON.stringify([{
+        providerId: "openrouter",
+        modelId: "review-model",
+        capabilities: { reasoning: "high", coding: "medium", speed: "medium", context: "large" },
+        costClass: "standard",
+      }]),
+    };
+    const config = loadReasoningConfiguration(loadRuntimeConfig(environment), environment);
+
+    expect(config.fallbackPolicy).toBe("configured");
+    expect(config.modelProfiles).toEqual([expect.objectContaining({ providerId: "openrouter", modelId: "review-model" })]);
+  });
 });
 
 describe("structured reasoning agents", () => {
@@ -68,6 +88,93 @@ describe("structured reasoning agents", () => {
         new Set(),
       ),
     ).toThrow(StructuredOutputError);
+  });
+
+  it("accepts an explicit insufficient-evidence result without fabricating claims", () => {
+    expect(parseInvestigatorOutput(
+      JSON.stringify({
+        summary: "The supplied repository evidence is insufficient.",
+        claims: [],
+        retrievalRequests: [],
+      }),
+      new Set(),
+    )).toEqual({
+      summary: "The supplied repository evidence is insufficient.",
+      claims: [],
+      retrievalRequests: [],
+    });
+  });
+
+  it("accepts model-added path metadata on a text check without trusting it", () => {
+    const parsed = parseInvestigatorOutput(
+      JSON.stringify({
+        summary: "The symbol is referenced in the repository.",
+        claims: [{
+          statement: "bootstrapSession appears in the repository.",
+          evidenceIds: ["evidence_1"],
+          uncertainty: "none",
+          check: { kind: "text", text: "bootstrapSession", path: "src/auth.ts", expectation: "present" },
+        }],
+        retrievalRequests: [],
+      }),
+      new Set(["evidence_1"]),
+    );
+
+    expect(parsed.claims[0]?.check).toEqual({ kind: "text", text: "bootstrapSession", expectation: "present" });
+  });
+
+  it("keeps a claim when an optional text check is empty", () => {
+    const parsed = parseInvestigatorOutput(
+      JSON.stringify({
+        summary: "The supplied evidence supports the claim.",
+        claims: [{
+          statement: "bootstrapSession is present.",
+          evidenceIds: ["evidence_1"],
+          uncertainty: "none",
+          check: { kind: "text", text: "", expectation: "present" },
+        }],
+        retrievalRequests: [],
+      }),
+      new Set(["evidence_1"]),
+    );
+
+    expect(parsed.claims[0]?.check).toBeUndefined();
+  });
+
+  it("accepts model-added path metadata on graph checks", () => {
+    const parsed = parseInvestigatorOutput(
+      JSON.stringify({
+        summary: "The caller is present.",
+        claims: [{
+          statement: "bootstrapSession has callers.",
+          evidenceIds: ["evidence_1"],
+          uncertainty: "none",
+          check: { kind: "callers", symbol: "bootstrapSession", path: "src/auth.ts", expectation: "present" },
+        }],
+        retrievalRequests: [],
+      }),
+      new Set(["evidence_1"]),
+    );
+
+    expect(parsed.claims[0]?.check).toEqual({ kind: "callers", symbol: "bootstrapSession", expectation: "present" });
+  });
+
+  it("accepts a model query alias on a text check", () => {
+    const parsed = parseInvestigatorOutput(
+      JSON.stringify({
+        summary: "The text is present.",
+        claims: [{
+          statement: "bootstrapSession is present.",
+          evidenceIds: ["evidence_1"],
+          uncertainty: "none",
+          check: { kind: "text", query: "bootstrapSession", expectation: "present" },
+        }],
+        retrievalRequests: [],
+      }),
+      new Set(["evidence_1"]),
+    );
+
+    expect(parsed.claims[0]?.check).toEqual({ kind: "text", text: "bootstrapSession", expectation: "present" });
   });
 
   it("repairs malformed output once and records both bounded calls", async () => {

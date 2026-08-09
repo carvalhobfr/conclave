@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { AnalysisDepth, AnalysisSnapshot } from "../domain/adaptive-reasoning.js";
 import type { ReasoningResult } from "../domain/reasoning.js";
 import type {
   CapabilityDecision,
@@ -54,6 +55,10 @@ export interface TaskExecutionRequest {
   readonly repositoryRoot: string;
   readonly objective: string;
   readonly planOnly?: boolean;
+  readonly signal?: AbortSignal;
+  readonly analysisDepth?: AnalysisDepth;
+  readonly onTrace?: (event: TaskTraceEvent) => void;
+  readonly onSnapshot?: (snapshot: AnalysisSnapshot) => void;
 }
 
 export interface TaskExecutionEngineOptions {
@@ -167,16 +172,25 @@ export class TaskExecutionEngine {
         detail,
         ...(data === undefined ? {} : { data }),
       });
+      request.onTrace?.(trace[trace.length - 1] as TaskTraceEvent);
     };
     emit("task_started", request.objective);
+    request.signal?.throwIfAborted();
     const originalRoot = await resolveRepositoryRoot(request.repositoryRoot);
-    const investigation = await this.#investigator.ask(request.objective);
+    const investigation = await this.#investigator.ask(request.objective, "conclave", {
+      depth: request.analysisDepth ?? "balanced",
+      intent: "task",
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      ...(request.onSnapshot === undefined ? {} : { onSnapshot: request.onSnapshot }),
+    });
+    request.signal?.throwIfAborted();
     const diagnosisClaims = investigation.verdict.claims.supported;
     if (diagnosisClaims.length === 0) {
       throw new TaskExecutionError("Task Mode requires at least one supported diagnosis claim");
     }
     const preChangeEvidence = investigation.state.evidence;
     const baseline = await this.#createIndexer().index(originalRoot);
+    request.signal?.throwIfAborted();
     const repositoryPaths = Object.keys(baseline.index.files).sort();
     const plan = await this.#executeRole(
       "planner",
@@ -189,6 +203,7 @@ export class TaskExecutionEngine {
           new Set(repositoryPaths),
         ),
       calls,
+      request.signal,
     );
     const task: ImplementationTask = {
       id: stableId("task", originalRoot, request.objective),
@@ -310,6 +325,7 @@ export class TaskExecutionEngine {
       let verdict: ExecutionVerdict | undefined;
 
       for (round = 1; round <= this.#limits.maxImplementationRounds; round += 1) {
+        request.signal?.throwIfAborted();
         if (performance.now() - started > this.#limits.maxExecutionDurationMs) {
           emit("execution_blocked", "Task execution duration budget exhausted");
           break;
@@ -339,6 +355,7 @@ export class TaskExecutionEngine {
               allowedPaths,
             ),
           calls,
+          request.signal,
         );
         state.claims.push(...implementer.claims);
         for (const claim of implementer.claims) {
@@ -385,6 +402,7 @@ export class TaskExecutionEngine {
         let patchApplicationFailed = false;
         let patchApplicationError: string | undefined;
         if (approvedPatches.length > 0) {
+          request.signal?.throwIfAborted();
           for (const path of new Set(approvedPatches.map((patch) => patch.path))) {
             if (!originalHashes.has(path)) originalHashes.set(path, (await editor.read(path)).hash);
           }
@@ -465,7 +483,7 @@ export class TaskExecutionEngine {
           }
           emit("command_started", item.capability.id);
           const command = item.capability.command;
-          const check = await runner.run(approved).catch(
+          const check = await runner.run(approved, request.signal).catch(
             (error: unknown): CheckResult => ({
               requestId: item.capability.id,
               command,
@@ -499,7 +517,7 @@ export class TaskExecutionEngine {
             request: item.capability.request,
             requestedBy: "verifier",
             iteration: round,
-          });
+          }, request.signal);
           state.postEvidence.push(
             ...result.evidence.filter((evidence) => !existingEvidenceIds.has(evidence.id)).slice(0, remainingEvidence),
           );
@@ -557,6 +575,7 @@ export class TaskExecutionEngine {
               new Set(state.postEvidence.map((item) => item.id)),
             ),
           calls,
+          request.signal,
         );
         state.review = this.#enforceReview(
           modelReview,
@@ -654,10 +673,14 @@ export class TaskExecutionEngine {
     prompt: string,
     validate: (raw: string) => T,
     calls: TaskAgentCallRecord[],
+    signal?: AbortSignal,
   ): Promise<T> {
     const remaining = this.#limits.maxModelCalls - calls.length;
     try {
-      const execution = await this.#runtime.execute(role, prompt, validate, remaining);
+      const execution = await this.#runtime.execute(role, prompt, validate, remaining, {
+        ...(signal === undefined ? {} : { signal }),
+        timeoutMs: 60_000,
+      });
       calls.push(...execution.calls);
       return execution.output;
     } catch (error) {

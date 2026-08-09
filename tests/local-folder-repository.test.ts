@@ -24,6 +24,7 @@ describe("LocalFolderRepository", () => {
       writeFile(join(root, ".gitignore"), "ignored.ts\n"),
       writeFile(join(root, ".conclaveignore"), "private/\n"),
       writeFile(join(root, ".env"), "SECRET=never-index-this\n"),
+      writeFile(join(root, ".ENV.LOCAL"), "SECRET=also-never-index-this\n"),
       writeFile(join(root, ".env.example"), "SAFE_PLACEHOLDER=\n"),
       writeFile(join(root, "ignored.ts"), "export const ignored = true;\n"),
       writeFile(join(root, "node_modules", "package", "index.js"), "module.exports = {};\n"),
@@ -46,6 +47,7 @@ describe("LocalFolderRepository", () => {
     expect(paths).toContain("src/credentials.ts");
     expect(paths).toContain(".env.example");
     expect(paths).not.toContain(".env");
+    expect(paths).not.toContain(".ENV.LOCAL");
     expect(paths).not.toContain("ignored.ts");
     expect(paths).not.toContain("node_modules/package/index.js");
     expect(paths).not.toContain("private/notes.md");

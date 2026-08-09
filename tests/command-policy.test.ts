@@ -35,7 +35,7 @@ async function fixture(): Promise<string> {
   );
   await writeFile(
     join(root, "environment.test.mjs"),
-    'import assert from "node:assert/strict";\nimport test from "node:test";\ntest("env", () => assert.equal(process.env.CONCLAVE_API_KEY, undefined));\n',
+    'import assert from "node:assert/strict";\nimport test from "node:test";\ntest("env", () => { assert.equal(process.env.CONCLAVE_API_KEY, undefined); assert.equal(process.env.CONCLAVE_FREE_API_KEY, undefined); });\n',
   );
   await writeFile(
     join(root, "package.json"),
@@ -70,6 +70,7 @@ async function policy(
 
 afterEach(async () => {
   delete process.env["CONCLAVE_API_KEY"];
+  delete process.env["CONCLAVE_FREE_API_KEY"];
   for (const path of temporaryPaths.splice(0)) await rm(path, { recursive: true, force: true });
 });
 
@@ -148,6 +149,7 @@ describe("structured command policy", () => {
   it("filters parent credentials from explicitly approved repository processes", async () => {
     const root = await fixture();
     process.env["CONCLAVE_API_KEY"] = "must-not-leak";
+    process.env["CONCLAVE_FREE_API_KEY"] = "free-key-must-not-leak";
     const authorization = await (await policy(root)).authorize("env", {
       kind: "node-test",
       path: "environment.test.mjs",
@@ -156,6 +158,7 @@ describe("structured command policy", () => {
 
     expect(result.status).toBe("passed");
     expect(result.stdout).not.toContain("must-not-leak");
+    expect(result.stdout).not.toContain("free-key-must-not-leak");
   });
 
   it("runs only an explicitly allowlisted package script and disables lifecycle hooks", async () => {

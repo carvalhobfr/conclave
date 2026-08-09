@@ -111,6 +111,26 @@ function redactSecret(message: string, secret: string | undefined): string {
   return secret === undefined || secret === "" ? message : message.replaceAll(secret, "[REDACTED]");
 }
 
+function networkFailureReason(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown network error";
+  const cause = error.cause;
+  if (cause instanceof Error && cause.message !== error.message) {
+    const code = "code" in cause && typeof cause.code === "string" ? ` [${cause.code}]` : "";
+    return `${error.message}${code}: ${cause.message}`;
+  }
+  const code = "code" in error && typeof error.code === "string" ? ` [${error.code}]` : "";
+  return `${error.message}${code}`;
+}
+
+function isTransientNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError" || error.name === "TimeoutError") return false;
+  if (error.message === "fetch failed") return true;
+  const cause = error.cause;
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
+  return ["ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENETUNREACH", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(String(cause.code));
+}
+
 export class OpenAiCompatibleProvider implements LlmProvider {
   public readonly id: OpenAiCompatibleProviderOptions["id"];
   readonly #endpoint: URL;
@@ -163,20 +183,41 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       body["response_format"] = { type: "json_object" };
     }
 
-    let response: Response;
-    try {
-      response = await this.#fetch(this.#endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(this.#apiKey === undefined ? {} : { authorization: `Bearer ${this.#apiKey}` }),
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.#timeoutMs),
-      });
-    } catch (error) {
-      const rawReason = error instanceof Error ? error.message : "unknown network error";
-      const reason = redactSecret(rawReason, this.#apiKey);
+    let response: Response | undefined;
+    let lastNetworkError: unknown;
+    const timeoutSignal = AbortSignal.timeout(request.timeoutMs ?? this.#timeoutMs);
+    const signal = request.signal === undefined
+      ? timeoutSignal
+      : AbortSignal.any([request.signal, timeoutSignal]);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await this.#fetch(this.#endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(this.#apiKey === undefined ? {} : { authorization: `Bearer ${this.#apiKey}` }),
+          },
+          body: JSON.stringify(body),
+          signal,
+        });
+        break;
+      } catch (error) {
+        lastNetworkError = error;
+        if (attempt === 0 && isTransientNetworkFailure(error)) {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(resolve, 250);
+            signal.addEventListener("abort", () => {
+              clearTimeout(timeout);
+              reject(signal.reason instanceof Error ? signal.reason : new Error("Provider request cancelled"));
+            }, { once: true });
+          });
+          continue;
+        }
+        break;
+      }
+    }
+    if (response === undefined) {
+      const reason = redactSecret(networkFailureReason(lastNetworkError), this.#apiKey);
       throw new ProviderError(`Provider request failed: ${reason}`, this.id);
     }
 

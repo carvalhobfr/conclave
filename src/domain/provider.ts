@@ -22,6 +22,10 @@ export interface GenerateRequest {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly responseFormat?: "text" | "json";
+  /** Cancels in-flight provider work; it grants no additional provider authority. */
+  readonly signal?: AbortSignal;
+  /** Per-call policy timeout selected by the host orchestration depth. */
+  readonly timeoutMs?: number;
 }
 
 export interface TokenUsage {

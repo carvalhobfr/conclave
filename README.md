@@ -2,7 +2,7 @@
 
 **Ask your code. Let the models argue.**
 
-Conclave is a local-first code intelligence system for evidence-driven reasoning and bounded code changes. It indexes TypeScript and JavaScript repositories, retrieves compact provenance-backed evidence, challenges proposed explanations, verifies claims against deterministic code relationships, and returns either a verdict or an isolated patch.
+Conclave builds a structural model of your codebase first. It uses deterministic graph and retrieval tools to answer what it can, then selectively invokes specialized models only when reasoning is actually needed. Evidence-backed Task changes remain bounded and isolated.
 
 It is designed for developers and coding agents that need more than a broad source dump: every answer is grounded in repository evidence, and every Task capability remains policy-controlled.
 
@@ -12,6 +12,8 @@ It is designed for developers and coding agents that need more than a broad sour
 - **Investigate** — structured Claims, Challenges, Verification, and uncertainty instead of hidden disagreement.
 - **Task** — explicit, plan-first, isolated patches with default-deny edits and checks.
 - **Code graph** — deterministic symbols, imports, calls, references, callers/callees, and bounded paths.
+- **Project Knowledge** — index once, query many times, and reuse unchanged structural state.
+- **Adaptive analysis** — Auto, Fast, Balanced, and Deep routes with conditional roles and early exit.
 - **Graph-aware retrieval** — BM25, deterministic feature vectors, fusion, graph expansion, context budgets, and inspectable plans.
 - **Local-first product** — loopback web workspace, CLI, and a compact read-only MCP server.
 - **Provider boundaries** — OpenAI-compatible API and Local endpoints; credentials remain server/process-side.
@@ -24,7 +26,9 @@ flowchart LR
   Repo[Repository] --> Index[Safe parser and incremental index]
   Index --> Retrieval[Graph-aware retrieval]
   Retrieval --> Evidence[Bounded evidence + provenance]
-  Evidence --> Reasoning[Claims, challenges, deterministic verification]
+  Evidence --> Router{Deterministic answer sufficient?}
+  Router -->|Yes| Answer[Direct cited answer]
+  Router -->|No| Reasoning[Adaptive claims, challenges, verification]
   Reasoning --> Task[Isolated, policy-controlled Task execution]
   CLI[CLI] --> Retrieval
   Web[Loopback web app] --> Reasoning
@@ -63,6 +67,8 @@ npm run start:web
 
 Open `http://127.0.0.1:4317`. The server listens only on loopback. Demo Mode works without credentials; opening another folder requires it to be inside `CONCLAVE_WEB_ALLOWED_ROOT` (or the process working directory by default).
 
+Analysis depth defaults to Auto. Fast prioritizes deterministic evidence and minimal calls; Balanced permits additional conditional reasoning; Deep trades latency and context for more adversarial review. Active runs show evidence-backed progress and can be cancelled without applying Task work to the original repository.
+
 ## Use the CLI
 
 ```bash
@@ -93,13 +99,19 @@ npm run dev -- config --json
 npm run dev -- provider-check
 ```
 
+- **Free Mode** defaults to OpenCode Zen at `https://opencode.ai/zen/v1`, uses a server-owned credential, and restricts every role to the host allowlist. It is external inference: selected repository excerpts may leave the machine.
 - **API Mode** uses process-provided credentials and requires HTTPS.
 - **Local Mode** accepts loopback HTTP(S) endpoints only. Repository retrieval is local; fully local operation also requires local inference and embedding endpoints.
-- **Free Mode** is a server-owned configuration boundary, not a hosted public service in v1.
+
+The default Free ensemble assigns DeepSeek V4 Flash Free to investigation and verification, Nemotron 3 Ultra Free to skepticism, architecture, judgment, and planning, and North Mini Code Free to implementation. Role overrides inherit the active mode endpoint and credential; the credential is never copied into role configuration. An active personal provider set in Settings overrides `.env`, can use the user's own key, and cannot reuse the locked server-owned Free credential.
+
+`provider-check` performs one bounded inference and reports the effective endpoint host, exact default model, and role-to-provider/model assignments without returning a credential. Provider model availability remains controlled by OpenCode Zen and may change.
 
 The default `conclave-local-hash-v1` embedding is deterministic feature hashing for offline use and CI. Learned OpenAI-compatible embeddings are opt-in and require an explicit model, endpoint, and dimension configuration. Conclave never silently switches embedding strategies.
 
-See [.env.example](.env.example) for configuration fields. Credentials are not stored in the index or exposed to the browser.
+See [.env.example](.env.example) for configuration fields. The CLI and local web entry point load a root `.env` as a fallback; variables already owned by the process take priority. Credentials are not stored in the index or exposed to the browser.
+
+For a credential-aware live check, run `npm run test:zen`. It exits safely when no Free credential is configured; set `CONCLAVE_ZEN_FULL_SMOKE=1` to additionally run one real repository reasoning flow. See [Phase 7 Free Mode](docs/phase-7-zen-free.md).
 
 ## Safety model
 
@@ -126,6 +138,7 @@ npm run eval
 npm run eval:graph
 npm run eval:release
 npm run eval:reasoning
+npm run eval:adaptive
 npm run eval:task
 ```
 
@@ -135,7 +148,8 @@ The release corpus contains 12 retrieval cases across authentication, storage, l
 
 - TypeScript parsing is syntax-aware but does not use a `Program`, type-checker, or `tsconfig` aliases.
 - Graph edges cover deterministic static relationships; dynamic dispatch and framework wiring can remain unresolved.
-- Remote Git import and hosted Free Mode are intentionally not included.
+- Unchanged repositories reuse the graph. A detected content change currently recomputes graph edges deterministically to preserve cross-file resolution.
+- Remote Git import and a public hosted service are intentionally not included. Phase 7 adds only the provider-neutral hosted foundation: model allowlisting, usage gating, quota windows, and concurrency limits at the application boundary.
 - Task patches replace existing regular-file content; they do not automatically apply, commit, push, create, rename, or delete source files.
 - Repository scripts are not a portable filesystem/network sandbox and should be used only for trusted repositories.
 - MCP Task Mode is intentionally unavailable in v1.
@@ -149,6 +163,8 @@ The release corpus contains 12 retrieval cases across authentication, storage, l
 - [Task execution](docs/phase-4-task-execution.md)
 - [Web product](docs/phase-5-product-ui.md)
 - [Release readiness and MCP](docs/phase-6-release-readiness.md)
+- [OpenCode Zen Free Mode and hosted foundation](docs/phase-7-zen-free.md)
+- [Knowledge-first adaptive orchestration](docs/phase-8-adaptive-orchestration.md)
 - [Security boundaries](docs/security.md)
 
 ## Contributing and license

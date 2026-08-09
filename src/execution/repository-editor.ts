@@ -12,6 +12,7 @@ import type {
 import { createRepositoryIgnore } from "../repositories/ignore-rules.js";
 import { assessRepositoryContent } from "../security/content-safety.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
+import { isSensitiveRepositoryPath } from "../security/sensitive-repository-path.js";
 
 export class RepositoryEditError extends Error {
   public constructor(message: string) {
@@ -64,12 +65,7 @@ function protectedPath(path: string): boolean {
     parts.includes(".conclave") ||
     parts.includes(".codex") ||
     parts.includes(".agents") ||
-    name === ".env" ||
-    name.startsWith(".env.") ||
-    name.endsWith(".pem") ||
-    name.endsWith(".key") ||
-    name.startsWith("id_rsa") ||
-    name.startsWith("id_ed25519") ||
+    isSensitiveRepositoryPath(path) ||
     name.includes("credential") ||
     name.includes("secret")
   );

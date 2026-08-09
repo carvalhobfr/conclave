@@ -7,13 +7,14 @@ Phase 3 consumes the Phase 2/2.5 `PlannedRetrieval` and `ContextBundle` APIs. It
 `ReasoningEngine` owns one explicit `ReasoningCaseState` per question:
 
 ```text
-question + initial retrieval
+question + Project Knowledge assessment
+  -> direct deterministic answer when sufficient
+  -> otherwise optional Conductor for high ambiguity
   -> Investigator claims
-  -> deterministic routing
   -> optional Skeptic / Architect challenges
   -> validated, deduplicated follow-up requests
   -> deterministic checks, then model Verifier only for unresolved claims
-  -> Judge adjudication
+  -> conditional Judge adjudication
   -> deterministic verdict synthesis
 ```
 
@@ -29,9 +30,11 @@ Roles determine prompts and output schemas. `AgentAssignment` independently sele
 
 The deterministic router uses question shape, claim uncertainty, represented files, and cross-module graph context:
 
-- Investigator, Verifier, and Judge are selected for normal Conclave runs.
-- Skeptic is selected for causal/lifecycle questions or uncertain claims.
-- Architect is selected for causal, cross-module questions in full/local presets.
+- Investigator is selected when semantic interpretation is necessary.
+- Skeptic is selected for causal/lifecycle questions, conflicting evidence, or Deep review.
+- Architect is selected for causal, cross-module, or Deep questions.
+- Verifier runs only for claims not resolved by deterministic checks.
+- Judge runs only for meaningful disagreement, explicit Deep review, or preserved comparison routes.
 - The free-like preset avoids Architect calls.
 
 Every selection or skip includes an inspectable reason.
@@ -58,7 +61,7 @@ The Judge receives claims, challenges, and verification records—not cumulative
 - selection, claim, retrieval, verification, budget, and completion trace events;
 - per-role provider/model IDs, calls, approximate tokens, provider-reported usage, and latency;
 - retrieval rounds, follow-up count, deterministic operations, evidence count, and final claim counts;
-- a termination reason: completed, budget exhausted, no progress, or agent failure.
+- a termination reason: completed, budget exhausted, no progress, agent failure, cancelled, or timed out.
 
 Trace records retain concise decisions and engineering metadata, never hidden reasoning.
 

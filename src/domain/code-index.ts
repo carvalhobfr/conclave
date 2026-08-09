@@ -133,6 +133,7 @@ export interface IndexUpdateStats {
   readonly unitsIndexed: number;
   readonly embeddingsCreated: number;
   readonly embeddingCacheHits: number;
+  readonly graphRebuilt: boolean;
 }
 
 export interface IndexUpdateResult {

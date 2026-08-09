@@ -3,10 +3,13 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadLocalEnvironment } from "../config/load-environment.js";
 import type { ExecutionPermissions } from "../domain/task-execution.js";
+import type { ConfigurableProviderId, ImportedRepositoryFile, ProductAnalysisDepth, ProviderModelsInput, SaveProviderSettingsInput } from "./contracts.js";
 import { ConclaveProductService, ProductServiceError } from "./product-service.js";
 
 const BODY_LIMIT_BYTES = 64_000;
+const IMPORT_BODY_LIMIT_BYTES = 20_000_000;
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -19,14 +22,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function body(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function body(request: IncomingMessage, limit = BODY_LIMIT_BYTES): Promise<Record<string, unknown>> {
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of request) {
     if (!Buffer.isBuffer(chunk)) throw new ProductServiceError("invalid_body", "Request body must be byte data.", "Try the web application again.");
     const value: Uint8Array = chunk;
     size += value.byteLength;
-    if (size > BODY_LIMIT_BYTES) throw new ProductServiceError("body_too_large", "Request body exceeds the local API limit.", "Submit a smaller request.");
+    if (size > limit) throw new ProductServiceError("body_too_large", "Request body exceeds the local API limit.", "Submit a smaller request.");
     chunks.push(value);
   }
   if (chunks.length === 0) return {};
@@ -49,6 +52,14 @@ function boolean(value: unknown): boolean {
   return value === true;
 }
 
+function analysisDepth(value: unknown): ProductAnalysisDepth {
+  if (value === undefined) return "auto";
+  if (value !== "auto" && value !== "fast" && value !== "balanced" && value !== "deep") {
+    throw new ProductServiceError("invalid_depth", "Analysis depth must be Auto, Fast, Balanced, or Deep.", "Choose a supported analysis depth.");
+  }
+  return value;
+}
+
 function send(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -66,6 +77,33 @@ function permissions(value: unknown): ExecutionPermissions {
     allowRepositoryScripts: boolean(parsed["allowRepositoryScripts"]),
     allowNetwork: boolean(parsed["allowNetwork"]),
   };
+}
+
+function providerSettings(value: Record<string, unknown>): SaveProviderSettingsInput {
+  if (!Array.isArray(value["sets"])) throw new ProductServiceError("invalid_request", "Provider sets are required.", "Reload Settings and try again.");
+  return {
+    ...(typeof value["activeSetId"] === "string" ? { activeSetId: value["activeSetId"] } : {}),
+    sets: value["sets"] as SaveProviderSettingsInput["sets"],
+  };
+}
+
+function providerModels(value: Record<string, unknown>): ProviderModelsInput {
+  return {
+    provider: string(value["provider"], "Provider") as ConfigurableProviderId,
+    ...(typeof value["apiKey"] === "string" ? { apiKey: value["apiKey"] } : {}),
+    ...(typeof value["setId"] === "string" ? { setId: value["setId"] } : {}),
+    ...(typeof value["connectionId"] === "string" ? { connectionId: value["connectionId"] } : {}),
+  };
+}
+
+function importedFiles(value: unknown): readonly ImportedRepositoryFile[] {
+  if (!Array.isArray(value)) throw new ProductServiceError("invalid_request", "A repository folder selection is required.", "Choose a folder and try again.");
+  return value.map((file) => {
+    if (!isRecord(file) || typeof file["path"] !== "string" || typeof file["content"] !== "string") {
+      throw new ProductServiceError("invalid_repository_file", "A selected repository file could not be read.", "Choose the folder again.");
+    }
+    return { path: file["path"], content: file["content"] };
+  });
 }
 
 function safeStaticPath(root: string, pathname: string): string {
@@ -89,23 +127,67 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (url.pathname === "/api/health" && request.method === "GET") { send(response, 200, { ok: true }); return; }
-      if (url.pathname === "/api/runtime" && request.method === "GET") { send(response, 200, product.runtime()); return; }
+      if (url.pathname === "/api/runtime" && request.method === "GET") { send(response, 200, await product.runtime()); return; }
+      if (url.pathname === "/api/metrics/adaptive" && request.method === "GET") { send(response, 200, product.adaptiveMetrics()); return; }
+      if (url.pathname === "/api/settings/providers" && request.method === "GET") { send(response, 200, await product.providerSettings()); return; }
+      if (url.pathname === "/api/settings/providers" && request.method === "PUT") {
+        send(response, 200, await product.saveProviderSettings(providerSettings(await body(request))));
+        return;
+      }
+      if (url.pathname === "/api/settings/provider-models" && request.method === "POST") {
+        send(response, 200, await product.providerModels(providerModels(await body(request))));
+        return;
+      }
       if (url.pathname === "/api/projects/demo" && request.method === "POST") { send(response, 200, await product.openDemo()); return; }
       if (url.pathname === "/api/projects/open" && request.method === "POST") {
         const payload = await body(request);
         send(response, 200, await product.openLocal(string(payload["path"], "Repository path")));
         return;
       }
+      if (url.pathname === "/api/projects/import" && request.method === "POST") {
+        const payload = await body(request, IMPORT_BODY_LIMIT_BYTES);
+        send(response, 200, await product.importLocal(string(payload["name"], "Repository name"), importedFiles(payload["files"])));
+        return;
+      }
       if (url.pathname === "/api/run" && request.method === "POST") {
         const payload = await body(request);
         const intent = string(payload["intent"], "Intent");
         if (intent !== "ask" && intent !== "investigate") throw new ProductServiceError("invalid_intent", "This endpoint supports Ask and Investigate only.", "Select an explicit read-only intent.");
-        send(response, 200, await product.run(string(payload["projectId"], "Project"), intent, string(payload["query"], "Question")));
+        send(response, 200, await product.run(string(payload["projectId"], "Project"), intent, string(payload["query"], "Question"), analysisDepth(payload["depth"])));
+        return;
+      }
+      if (url.pathname === "/api/runs" && request.method === "POST") {
+        const payload = await body(request);
+        const intent = string(payload["intent"], "Intent");
+        if (intent !== "ask" && intent !== "investigate") throw new ProductServiceError("invalid_intent", "This endpoint supports Ask and Investigate only.", "Select an explicit read-only intent.");
+        send(response, 202, product.startRun(string(payload["projectId"], "Project"), intent, string(payload["query"], "Question"), analysisDepth(payload["depth"])));
+        return;
+      }
+      const runStatus = /^\/api\/runs\/([0-9a-f-]+)$/i.exec(url.pathname);
+      if (runStatus !== null && request.method === "GET") {
+        const runId = runStatus[1];
+        if (runId !== undefined) send(response, 200, product.runStatus(runId));
+        return;
+      }
+      if (runStatus !== null && request.method === "DELETE") {
+        const runId = runStatus[1];
+        if (runId !== undefined) send(response, 202, product.cancelRun(runId));
         return;
       }
       if (url.pathname === "/api/task" && request.method === "POST") {
         const payload = await body(request);
-        send(response, 200, await product.task(string(payload["projectId"], "Project"), string(payload["objective"], "Task objective"), boolean(payload["planOnly"]), permissions(payload["permissions"])));
+        send(response, 200, await product.task(string(payload["projectId"], "Project"), string(payload["objective"], "Task objective"), boolean(payload["planOnly"]), permissions(payload["permissions"]), analysisDepth(payload["depth"])));
+        return;
+      }
+      if (url.pathname === "/api/task/runs" && request.method === "POST") {
+        const payload = await body(request);
+        send(response, 202, product.startTask(
+          string(payload["projectId"], "Project"),
+          string(payload["objective"], "Task objective"),
+          boolean(payload["planOnly"]),
+          permissions(payload["permissions"]),
+          analysisDepth(payload["depth"]),
+        ));
         return;
       }
       if (url.pathname === "/api/graph" && request.method === "GET") {
@@ -138,8 +220,18 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
 
 const isEntry = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 if (isEntry) {
+  await loadLocalEnvironment();
   const port = Number(process.env["CONCLAVE_WEB_PORT"] ?? "4317");
-  createConclaveWebServer().listen(port, "127.0.0.1", () => {
+  const server = createConclaveWebServer();
+  server.once("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Conclave could not start: port ${String(port)} is already in use. Stop the existing Conclave server or run with CONCLAVE_WEB_PORT=${String(port + 1)}.`);
+    } else {
+      console.error(`Conclave could not start the local web server: ${error.message}`);
+    }
+    process.exitCode = 1;
+  });
+  server.listen(port, "127.0.0.1", () => {
     console.log(`Conclave web server listening on http://127.0.0.1:${String(port)}`);
   });
 }

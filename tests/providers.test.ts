@@ -133,6 +133,23 @@ describe("providers", () => {
     expect(JSON.stringify(provider)).not.toContain("do-not-leak-this-key");
   });
 
+  it("retries a transient network failure and preserves a safe cause when it persists", async () => {
+    const transient = Object.assign(new Error("socket reset"), { code: "ECONNRESET" });
+    const fetchImplementation = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: transient }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: transient }));
+    const provider = new OpenAiCompatibleProvider({
+      id: "openai",
+      baseUrl: "https://api.openai.test/v1",
+      fetchImplementation,
+    });
+
+    await expect(
+      provider.generate({ model: "model-a", messages: [{ role: "user", content: "Hello" }] }),
+    ).rejects.toThrow("Provider request failed: fetch failed [ECONNRESET]: socket reset");
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
+
   it("reports bounded Local Mode diagnostics without exposing credentials", async () => {
     const environment = { CONCLAVE_MODE: "local", CONCLAVE_PROVIDER: "ollama", CONCLAVE_MODEL: "coder" };
     const config = loadRuntimeConfig(environment);
