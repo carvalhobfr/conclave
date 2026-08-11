@@ -70,6 +70,30 @@ The home screen starts in **Validate**. Select a working tree, staged change, ba
 
 The browser calls the local server. The server runs the same deterministic Git collector and `SuperValidator` used by the CLI; no model call is required for validation.
 
+## Codex, Claude Code, and other agents
+
+Conclave ships one portable `conclave-validate` skill and byte-identical project adapters for Codex and Claude Code:
+
+```text
+skills/conclave-validate/          portable source
+.agents/skills/conclave-validate/ Codex project skill
+.claude/skills/conclave-validate/ Claude Code project skill
+```
+
+Install the skill into another project or user profile from a Conclave checkout:
+
+```bash
+node scripts/install-agent-skill.mjs --target both --scope project --project /path/to/project
+node scripts/install-agent-skill.mjs --target codex --scope user
+node scripts/install-agent-skill.mjs --target portable --destination /path/used/by/another-agent
+```
+
+The skill invokes `conclave review --json` through a bounded runner, verifies that verdict and process exit code agree, and refuses to reinterpret `BLOCK` or `INCONCLUSIVE` as approval. Set `CONCLAVE_CLI_PATH` when the compiled CLI is outside the repository being reviewed.
+
+Agents with MCP support can call `conclave_validate`. The MCP server fixes the repository root when it starts, rebuilds the current index for validation, executes only read-only Git collection and deterministic checks, and returns the same schema-v1 report with an explicit zero-model-call trust boundary.
+
+The public machine contract is [`schemas/validation-report.v1.schema.json`](schemas/validation-report.v1.schema.json).
+
 ## Validation contracts
 
 A contract turns the task description and the agent's completion claims into fetchable, comparable checks.
