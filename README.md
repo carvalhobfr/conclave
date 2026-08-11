@@ -262,7 +262,7 @@ Both expose the same validation result as the CLI.
 ## Contributing
 
 ```bash
-git clone https://github.com/carvalhobfr/conclave.git
+git clone https://github.com/carvalhobfr/conclave-ai.git
 cd conclave
 npm install
 npm run verify

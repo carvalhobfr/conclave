@@ -13,12 +13,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/carvalhobfr/conclave.git"
+    "url": "git+https://github.com/carvalhobfr/conclave-ai.git"
   },
   "bugs": {
-    "url": "https://github.com/carvalhobfr/conclave/issues"
+    "url": "https://github.com/carvalhobfr/conclave-ai/issues"
   },
-  "homepage": "https://github.com/carvalhobfr/conclave#readme",
+  "homepage": "https://github.com/carvalhobfr/conclave-ai#readme",
   "type": "module",
   "files": [
     "dist",
