@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { EmbeddingProvider } from "../domain/embedding.js";
+import type { ChangeSource, ValidationContract } from "../domain/validation.js";
 import type { ReasoningEngine } from "../reasoning/reasoning-engine.js";
 import { LocalHashEmbeddingProvider } from "../embeddings/local-hash-embedding.js";
 import { InMemoryCodeIndexStore } from "../indexing/in-memory-index-store.js";
@@ -10,6 +11,9 @@ import { RepositoryIndexer } from "../indexing/repository-indexer.js";
 import { LocalFolderRepository } from "../repositories/local-folder-repository.js";
 import { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
+import { createValidationContract, parseValidationContract } from "../validation/contract-parser.js";
+import { GitChangeSetService } from "../validation/git-change-set.js";
+import { SuperValidator } from "../validation/super-validator.js";
 
 export interface McpEvidenceView {
   readonly id: string;
@@ -31,7 +35,10 @@ export interface McpObservation {
 }
 
 export class McpInputError extends Error {
-  public constructor(message: string) { super(message); this.name = "McpInputError"; }
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "McpInputError";
+  }
 }
 
 function string(value: unknown, name: string, maximum = 600): string {
@@ -49,16 +56,57 @@ function evidenceView(evidence: Evidence): McpEvidenceView {
   return { id: evidence.id, path: evidence.path, startLine: evidence.startLine, endLine: evidence.endLine, ...(evidence.symbol === undefined ? {} : { symbol: evidence.symbol }), excerpt: evidence.excerpt.slice(0, 6_000), provenance: evidence.provenance.origin };
 }
 
+function validationSource(input: Readonly<Record<string, unknown>>): ChangeSource {
+  const source = input["source"] ?? "working";
+  switch (source) {
+    case "working":
+      return { kind: "working" };
+    case "staged":
+      return { kind: "staged" };
+    case "branch":
+      return { kind: "branch", base: string(input["ref"], "ref", 200) };
+    case "commit":
+      return { kind: "commit", commit: string(input["ref"], "ref", 200) };
+    default:
+      throw new McpInputError("source must be working, staged, branch, or commit");
+  }
+}
+
+function validationContract(
+  input: Readonly<Record<string, unknown>>,
+  objective: string,
+): ValidationContract {
+  if (input["contract"] === undefined) return createValidationContract(objective);
+  try {
+    return parseValidationContract(input["contract"], objective);
+  } catch (error) {
+    throw new McpInputError(
+      error instanceof Error ? error.message : "contract is not a valid validation contract",
+      { cause: error },
+    );
+  }
+}
+
 /** Thin read-only application facade. Every response treats repository text as untrusted evidence. */
 export class ConclaveMcpService {
   readonly #retrieval: CodeRetrievalService;
   readonly #repositoryId: string;
+  readonly #repositoryRoot: string;
+  readonly #embeddingProvider: EmbeddingProvider;
   readonly #reasoning: Pick<ReasoningEngine, "ask"> | undefined;
   readonly #observations: McpObservation[] = [];
 
-  private constructor(retrieval: CodeRetrievalService, repositoryId: string, reasoning?: Pick<ReasoningEngine, "ask">) {
+  private constructor(
+    retrieval: CodeRetrievalService,
+    repositoryId: string,
+    repositoryRoot: string,
+    embeddingProvider: EmbeddingProvider,
+    reasoning?: Pick<ReasoningEngine, "ask">,
+  ) {
     this.#retrieval = retrieval;
     this.#repositoryId = repositoryId;
+    this.#repositoryRoot = repositoryRoot;
+    this.#embeddingProvider = embeddingProvider;
     this.#reasoning = reasoning;
   }
 
@@ -69,7 +117,13 @@ export class ConclaveMcpService {
     const embedding = options.embeddingProvider ?? new LocalHashEmbeddingProvider();
     const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
     const retrieval = new CodeRetrievalService(indexed.index, embedding);
-    return new ConclaveMcpService(retrieval, indexed.index.repository.id, options.reasoning ?? options.createReasoning?.(retrieval));
+    return new ConclaveMcpService(
+      retrieval,
+      indexed.index.repository.id,
+      root,
+      embedding,
+      options.reasoning ?? options.createReasoning?.(retrieval),
+    );
   }
 
   public get observations(): readonly McpObservation[] { return [...this.#observations]; }
@@ -114,6 +168,43 @@ export class ConclaveMcpService {
         if (found === undefined) throw new McpInputError("Evidence ID was not found in this repository session");
         const evidence = evidenceView(found);
         evidenceCount = 1; operations = 1; value = { repositoryEvidenceUntrusted: true, evidence };
+        break;
+      }
+      case "conclave_validate": {
+        const objective = string(input["objective"], "objective", 2_000);
+        const source = validationSource(input);
+        const contract = validationContract(input, objective);
+        try {
+          const changeSet = await new GitChangeSetService().collect(this.#repositoryRoot, source);
+          const indexed = await new RepositoryIndexer({
+            repositorySource: new LocalFolderRepository(),
+            parser: new TypeScriptCodeParser(),
+            embeddingProvider: this.#embeddingProvider,
+            indexStore: new InMemoryCodeIndexStore(),
+          }).index(this.#repositoryRoot);
+          const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+          evidenceCount = report.findings.reduce(
+            (count, item) => count + item.evidence.length,
+            0,
+          );
+          operations = report.metrics.deterministicChecks;
+          value = {
+            repositoryEvidenceUntrusted: true,
+            report,
+            trustBoundary: {
+              deterministic: true,
+              reasoningModelCalls: 0,
+              repositoryScriptsExecuted: false,
+              verdictMustNotBeOverridden: true,
+            },
+          };
+        } catch (error) {
+          if (error instanceof McpInputError) throw error;
+          throw new McpInputError(
+            error instanceof Error ? error.message : "Conclave could not validate the selected change",
+            { cause: error },
+          );
+        }
         break;
       }
       case "conclave_ask":
