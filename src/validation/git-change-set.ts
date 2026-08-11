@@ -201,8 +201,8 @@ function sourceArguments(source: ChangeSource): {
   switch (source.kind) {
     case "working":
       return {
-        patch: ["diff", ...commonPatch, "--"],
-        names: ["diff", ...commonNames, "--"],
+        patch: ["diff", ...commonPatch, "HEAD", "--"],
+        names: ["diff", ...commonNames, "HEAD", "--"],
       };
     case "staged":
       return {
@@ -219,8 +219,8 @@ function sourceArguments(source: ChangeSource): {
     case "commit": {
       const commit = safeRef(source.commit, "Commit");
       return {
-        patch: ["show", "--format=", ...commonPatch.slice(1), commit, "--"],
-        names: ["show", "--format=", ...commonNames.slice(1), commit, "--"],
+        patch: ["show", "--format=", ...commonPatch, commit, "--"],
+        names: ["show", "--format=", ...commonNames, commit, "--"],
       };
     }
   }
@@ -229,6 +229,26 @@ function sourceArguments(source: ChangeSource): {
 export class GitChangeSetService {
   public async collect(repositoryRoot: string, source: ChangeSource): Promise<ChangeSet> {
     const root = resolve(repositoryRoot);
+    const statusEntries = (await runGit(root, ["status", "--porcelain=v1", "-z"]))
+      .stdout.split("\0").filter((entry) => entry !== "");
+    const untracked = statusEntries.filter((entry) => entry.startsWith("?? "));
+    if (untracked.length > 0) {
+      throw new Error(
+        "Untracked files are not silently excluded from validation; stage them or add them to ignore rules",
+      );
+    }
+    if (
+      source.kind === "staged" &&
+      statusEntries.some((entry) => (entry[1] ?? " ") !== " ")
+    ) {
+      throw new Error("--staged requires no unstaged changes so the index matches the staged snapshot");
+    }
+    if (
+      (source.kind === "branch" || source.kind === "commit") &&
+      statusEntries.length > 0
+    ) {
+      throw new Error("--branch and --commit require a clean working tree so graph evidence matches HEAD");
+    }
     const headSha = (await runGit(root, ["rev-parse", "HEAD"])).stdout.trim();
     if (source.kind === "commit") {
       const targetSha = (await runGit(root, ["rev-parse", safeRef(source.commit, "Commit")])).stdout.trim();
