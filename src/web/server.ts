@@ -4,6 +4,7 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ExecutionPermissions } from "../domain/task-execution.js";
+import type { ChangeSource } from "../domain/validation.js";
 import { ConclaveProductService, ProductServiceError } from "./product-service.js";
 
 const BODY_LIMIT_BYTES = 64_000;
@@ -47,6 +48,26 @@ function string(value: unknown, label: string): string {
 
 function boolean(value: unknown): boolean {
   return value === true;
+}
+
+function changeSource(value: unknown): ChangeSource {
+  const parsed = isRecord(value) ? value : {};
+  const kind = string(parsed["kind"], "Change source");
+  switch (kind) {
+    case "working":
+    case "staged":
+      return { kind };
+    case "branch":
+      return { kind, base: string(parsed["base"], "Base branch") };
+    case "commit":
+      return { kind, commit: string(parsed["commit"], "Commit") };
+    default:
+      throw new ProductServiceError(
+        "invalid_change_source",
+        "Change source must be working, staged, branch, or commit.",
+        "Select a supported Git comparison.",
+      );
+  }
 }
 
 function send(response: ServerResponse, status: number, value: unknown): void {
@@ -94,6 +115,16 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
       if (url.pathname === "/api/projects/open" && request.method === "POST") {
         const payload = await body(request);
         send(response, 200, await product.openLocal(string(payload["path"], "Repository path")));
+        return;
+      }
+      if (url.pathname === "/api/validate" && request.method === "POST") {
+        const payload = await body(request);
+        send(response, 200, await product.validate(
+          string(payload["projectId"], "Project"),
+          changeSource(payload["source"]),
+          string(payload["objective"], "Objective"),
+          payload["contract"],
+        ));
         return;
       }
       if (url.pathname === "/api/run" && request.method === "POST") {
