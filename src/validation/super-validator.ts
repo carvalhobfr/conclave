@@ -8,7 +8,7 @@ import type {
 } from "../domain/code-index.js";
 import type {
   ChangeSet,
-  ChangedFile,
+  ValidationChangedFile,
   ValidationClaim,
   ValidationClaimResult,
   ValidationContract,
@@ -41,7 +41,7 @@ function pathMatchesPrefix(path: string, prefix: string): boolean {
   return path === normalized || path.startsWith(normalized + "/");
 }
 
-function intersectsChangedLines(unit: IndexedCodeUnit, file: ChangedFile): boolean {
+function intersectsChangedLines(unit: IndexedCodeUnit, file: ValidationChangedFile): boolean {
   if (file.status === "added" || file.hunks.length === 0) return file.status !== "deleted";
   return file.hunks.some((hunk) => {
     if (hunk.newCount === 0) return false;
@@ -183,7 +183,8 @@ function claimResult(
       };
     }
     case "text": {
-      const matches = Object.values(index.files).filter((file) => file.sourceText.includes(claim.check.text));
+      const text = claim.check.text;
+      const matches = Object.values(index.files).filter((file) => file.sourceText.includes(text));
       const present = matches.length > 0;
       return {
         claim,
@@ -192,7 +193,7 @@ function claimResult(
           ? "The exact text exists in indexed source."
           : "The exact text does not exist in indexed source.",
         evidence: matches.slice(0, 10).map((file) => {
-          const line = lineForText(file.sourceText, claim.check.text);
+          const line = lineForText(file.sourceText, text);
           return {
             path: file.path,
             startLine: line,
