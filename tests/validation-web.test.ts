@@ -1,0 +1,67 @@
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+import { describe, expect, it } from "vitest";
+
+import { ConclaveProductService } from "../src/web/product-service.js";
+
+const execFileAsync = promisify(execFile);
+
+async function git(root: string, args: readonly string[]): Promise<void> {
+  await execFileAsync("git", [...args], {
+    cwd: root,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Conclave Test",
+      GIT_AUTHOR_EMAIL: "conclave@example.invalid",
+      GIT_COMMITTER_NAME: "Conclave Test",
+      GIT_COMMITTER_EMAIL: "conclave@example.invalid",
+    },
+  });
+}
+
+describe("web validation workflow", () => {
+  it("returns a product summary backed by the real super-validator report", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "conclave-web-validation-"));
+    const root = join(parent, "repository");
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "session.ts"), "export function restoreSession() { return false; }\n");
+    await git(root, ["init", "-b", "master"]);
+    await git(root, ["add", "--", "src/session.ts"]);
+    await git(root, ["commit", "-m", "baseline"]);
+    await writeFile(join(root, "src", "session.ts"), "export function restoreSession() { return true; }\n");
+
+    try {
+      const product = new ConclaveProductService({ allowedRoot: parent });
+      const project = await product.openLocal(root);
+      const result = await product.validate(
+        project.id,
+        { kind: "working" },
+        "Restore the session using the existing public API.",
+        {
+          allowedPathPrefixes: ["src"],
+          claims: [{
+            id: "restore-exists",
+            statement: "restoreSession remains available.",
+            check: { kind: "symbol-exists", symbol: "restoreSession", expectation: "present" },
+          }],
+        },
+      );
+
+      expect(result.intent).toBe("validate");
+      expect(result.report.changeSet.files).toEqual([
+        expect.objectContaining({ path: "src/session.ts", status: "modified" }),
+      ]);
+      expect(result.report.claims[0]?.outcome).toBe("supported");
+      expect(result.headline).toBe("Change needs review before approval");
+      expect(result.largestRisk?.title).toBe("Exported behavior changed without a test change");
+      expect(result.report.metrics.graphEdgesInspected).toBeGreaterThan(0);
+      expect(result.demo).toBe(false);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+});
