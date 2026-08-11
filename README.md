@@ -50,6 +50,26 @@ Exit codes:
 | `BLOCK` | 1 | A deterministic contradiction, parser error, or scope violation exists |
 | `INCONCLUSIVE` | 2 | Conclave cannot honestly prove the resolution with available evidence |
 
+## Web validation
+
+```bash
+npm run build
+npm run start:web
+# open http://127.0.0.1:4317
+```
+
+The home screen starts in **Validate**. Select a working tree, staged change, base branch, or checked-out commit; describe the objective; and optionally paste a validation contract. The first result is a product decision—not raw JSON—with:
+
+- a plain-language `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` headline;
+- the largest remaining risk and recommended next action;
+- blocking and warning counts;
+- proved or contradicted completion claims;
+- changed and graph-impacted files and symbols;
+- evidence paths and lines;
+- the exact machine-readable report under **Raw report**.
+
+The browser calls the local server. The server runs the same deterministic Git collector and `SuperValidator` used by the CLI; no model call is required for validation.
+
 ## Validation contracts
 
 A contract turns the task description and the agent's completion claims into fetchable, comparable checks.
