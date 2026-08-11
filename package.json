@@ -1,6 +1,6 @@
 {
   "name": "conclave-ai",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Graph-aware independent validator for code changes and agent claims",
   "keywords": [
     "ai",
@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "bin": {
-    "conclave": "./dist/cli.js"
+    "conclave": "dist/cli.js"
   },
   "engines": {
     "node": ">=20.0.0"
