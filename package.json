@@ -1,8 +1,24 @@
 {
-  "name": "conclave",
+  "name": "conclave-ai",
   "version": "0.2.0",
-  "private": true,
   "description": "Graph-aware independent validator for code changes and agent claims",
+  "keywords": [
+    "ai",
+    "agent",
+    "code-review",
+    "validation",
+    "developer-tools",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/carvalhobfr/conclave.git"
+  },
+  "bugs": {
+    "url": "https://github.com/carvalhobfr/conclave/issues"
+  },
+  "homepage": "https://github.com/carvalhobfr/conclave#readme",
   "type": "module",
   "files": [
     "dist",
