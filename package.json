@@ -1,8 +1,8 @@
 {
   "name": "conclave",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Evidence-driven multi-agent Code RAG foundation",
+  "description": "Graph-aware independent validator for code changes and agent claims",
   "type": "module",
   "bin": {
     "conclave": "./dist/cli.js"
@@ -30,7 +30,8 @@
     "test:web": "vitest run --config vitest.web.config.ts --maxWorkers=1",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
-    "verify": "npm test && npm run test:web && npm run typecheck && npm run lint && npm run build && npm run eval && npm run eval:graph && npm run eval:release && npm run eval:reasoning && npm run eval:task && npm run audit"
+    "verify": "npm test && npm run test:web && npm run typecheck && npm run lint && npm run build && npm run eval && npm run eval:graph && npm run eval:release && npm run eval:reasoning && npm run eval:task && npm run eval:validation && npm run audit",
+    "eval:validation": "vitest run tests/git-change-set.test.ts tests/super-validator.test.ts --maxWorkers=1"
   },
   "dependencies": {
     "ignore": "7.0.6",
