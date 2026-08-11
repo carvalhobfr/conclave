@@ -107,7 +107,7 @@ export interface ValidationRunView {
   readonly largestRisk?: {
     readonly title: string;
     readonly detail: string;
-    readonly severity: "blocking" | "warning";
+    readonly severity: ValidationReport["findings"][number]["severity"];
   };
   readonly counts: {
     readonly blocking: number;
