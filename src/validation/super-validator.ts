@@ -50,6 +50,12 @@ function intersectsChangedLines(unit: IndexedCodeUnit, file: ValidationChangedFi
   });
 }
 
+function isDeletionOnly(file: ValidationChangedFile): boolean {
+  return file.status === "deleted" || (
+    file.hunks.length > 0 && file.hunks.every((hunk) => hunk.newCount === 0)
+  );
+}
+
 function evidenceForUnit(unit: IndexedCodeUnit, reason: string): ValidationEvidence {
   return {
     path: unit.path,
@@ -329,7 +335,7 @@ export class SuperValidator {
       }
       if (
         isSourceFile(changed.path) &&
-        (changed.status === "deleted" || changed.hunks.some((hunk) => hunk.newCount === 0))
+        isDeletionOnly(changed)
       ) {
         findings.push(finding(
           "head-only-deletion",

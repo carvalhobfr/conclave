@@ -144,6 +144,26 @@ describe("SuperValidator", () => {
     ]);
   });
 
+  it("does not treat a mixed source edit as a deletion-only change", async () => {
+    const report = new SuperValidator().validate(
+      await validationFixture(),
+      {
+        ...changeSet(),
+        files: [{
+          path: "src/storage.ts",
+          status: "modified",
+          hunks: [
+            { oldStart: 1, oldCount: 1, newStart: 1, newCount: 0 },
+            { oldStart: 2, oldCount: 1, newStart: 2, newCount: 1 },
+          ],
+        }],
+      },
+      contract(),
+    );
+
+    expect(report.findings.some((item) => item.kind === "head-only-deletion")).toBe(false);
+  });
+
   it("keeps callers claims inconclusive when a symbol name resolves to multiple declarations", async () => {
     const report = new SuperValidator({ impactDepth: 3 }).validate(
       await ambiguousSymbolFixture(),
