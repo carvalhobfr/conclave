@@ -41,7 +41,7 @@ interface ValidationContract {
 }
 ```
 
-Claims use typed checks instead of free-form model agreement. A contradicted claim blocks. A claim whose target cannot be resolved is inconclusive.
+Claims use typed checks instead of free-form model agreement. A contradicted claim blocks. A claim whose target cannot be resolved is inconclusive. Text claims search the supported TypeScript/JavaScript source index; non-source artifacts should be asserted with file-level checks.
 
 ## Challenge order
 
