@@ -63,3 +63,8 @@ export * from "./security/repository-context.js";
 export * from "./storage/environment-credential-source.js";
 export * from "./storage/in-memory-store.js";
 export * from "./storage/json-file-store.js";
+export * from "./domain/validation.js";
+export * from "./validation/contract-parser.js";
+export * from "./validation/git-change-set.js";
+export * from "./validation/deterministic-index.js";
+export * from "./validation/super-validator.js";

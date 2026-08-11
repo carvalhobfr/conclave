@@ -2,6 +2,7 @@ import type { RuntimeConfig } from "../domain/execution-mode.js";
 import type { CredentialSource } from "../domain/storage.js";
 import type { LlmProvider } from "../domain/provider.js";
 import { ConfigurationError } from "../config/runtime-config.js";
+import { AnthropicProvider } from "./anthropic-provider.js";
 import { OpenAiCompatibleProvider, type FetchLike } from "./openai-compatible-provider.js";
 
 export interface ProviderFactoryOptions {
@@ -14,7 +15,7 @@ export function createProvider(
   options: ProviderFactoryOptions = {},
 ): LlmProvider {
   const selection = config.providerSelection;
-  if (selection.provider === "anthropic" || selection.provider === "gemini") {
+  if (selection.provider === "gemini") {
     throw new ConfigurationError(
       `${selection.provider} uses a provider-specific protocol; its adapter is not implemented in Phase 1`,
     );
@@ -31,6 +32,17 @@ export function createProvider(
     throw new ConfigurationError(
       `${config.credentialEnvironmentVariable} is required for ${config.mode} mode`,
     );
+  }
+
+  if (selection.provider === "anthropic") {
+    if (apiKey === undefined) {
+      throw new ConfigurationError("An API credential is required for Anthropic");
+    }
+    return new AnthropicProvider({
+      baseUrl: selection.baseUrl,
+      apiKey,
+      ...(options.fetchImplementation === undefined ? {} : { fetchImplementation: options.fetchImplementation }),
+    });
   }
 
   return new OpenAiCompatibleProvider({

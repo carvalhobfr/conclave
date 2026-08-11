@@ -1,4 +1,6 @@
-export type ProductIntent = "ask" | "investigate" | "task";
+import type { ChangeSource, ValidationReport } from "../domain/validation.js";
+
+export type ProductIntent = "validate" | "ask" | "investigate" | "task";
 export type ProductRunStatus = "completed" | "completed-with-uncertainty" | "failed" | "blocked" | "planned" | "error";
 
 export interface ProjectView {
@@ -75,7 +77,7 @@ export interface TaskView {
 }
 
 export interface ProductRunView {
-  readonly intent: ProductIntent;
+  readonly intent: Exclude<ProductIntent, "validate">;
   readonly status: ProductRunStatus;
   readonly title: string;
   readonly answer: string;
@@ -87,6 +89,34 @@ export interface ProductRunView {
   readonly graph: GraphView;
   readonly task?: TaskView;
   readonly error?: { readonly code: string; readonly message: string; readonly action: string };
+}
+
+export interface ValidationRequestView {
+  readonly projectId: string;
+  readonly source: ChangeSource;
+  readonly objective: string;
+  readonly contract?: unknown;
+}
+
+export interface ValidationRunView {
+  readonly intent: "validate";
+  readonly verdict: ValidationReport["verdict"];
+  readonly headline: string;
+  readonly explanation: string;
+  readonly recommendation: string;
+  readonly largestRisk?: {
+    readonly title: string;
+    readonly detail: string;
+    readonly severity: ValidationReport["findings"][number]["severity"];
+  };
+  readonly counts: {
+    readonly blocking: number;
+    readonly warning: number;
+    readonly supportedClaims: number;
+    readonly totalClaims: number;
+  };
+  readonly report: ValidationReport;
+  readonly demo: boolean;
 }
 
 export interface RuntimeModeView {
