@@ -18,6 +18,15 @@ import {
   type GuidedProviderId,
 } from "./config/provider-profiles.js";
 import { createSetupConfiguration } from "./config/setup.js";
+import {
+  providerSetupGuide,
+  renderProviderGuide,
+  renderSetupBanner,
+  renderSetupChoice,
+  renderSetupStep,
+  renderSetupSuccess,
+  terminalColorEnabled,
+} from "./cli-setup-presentation.js";
 import { createEmbeddingProvider } from "./embeddings/embedding-factory.js";
 import type { EmbeddingProvider } from "./domain/embedding.js";
 import {
@@ -950,10 +959,11 @@ async function promptLine(label: string, fallback?: string): Promise<string> {
 async function promptChoice<T extends { readonly id: string; readonly label: string; readonly description: string }>(
   label: string,
   choices: readonly T[],
+  color = false,
 ): Promise<T> {
   console.log(label);
   for (const [index, choice] of choices.entries()) {
-    console.log(`  ${String(index + 1)}. ${choice.label} (${choice.id}) — ${choice.description}`);
+    console.log(renderSetupChoice(index + 1, choice, color));
   }
   const answer = await promptLine("Choose", "1");
   const numeric = Number(answer);
@@ -1021,21 +1031,39 @@ async function readApiKeyFromStandardInput(): Promise<string> {
 async function initializeConclave(args: readonly string[]): Promise<void> {
   const parsed = parseInitArguments(args);
   const interactive = process.stdin.isTTY && process.stdout.isTTY;
+  const color = terminalColorEnabled();
+  const providerChoices = (["openai", "openrouter", "anthropic"] as const).map((id) => {
+    const guide = providerSetupGuide(id);
+    return { id, label: guide.label, description: guide.summary };
+  });
+  if (interactive && !parsed.json) console.log(renderSetupBanner(color));
   const provider = parsed.provider ?? (await promptChoice(
-    "Select an API provider. This enables Ask and Task Mode; `conclave review` remains deterministic and does not use the key.",
-    [
-      { id: "openai", label: "OpenAI", description: "Direct OpenAI API" },
-      { id: "openrouter", label: "OpenRouter", description: "One OpenAI-compatible API for multiple model families" },
-      { id: "anthropic", label: "Anthropic", description: "Direct Claude Messages API" },
-    ] as const,
+    renderSetupStep(1, 4, "Provider", "Choose who should power optional Ask and Task reasoning. Review never uses this key.", color),
+    providerChoices,
+    color,
   )).id;
+  if (interactive && parsed.provider !== undefined && !parsed.json) {
+    console.log(renderSetupStep(1, 4, "Provider", `${providerSetupGuide(provider).label} selected from --provider.`, color));
+  }
   const selectedProfile = interactive && parsed.profile === undefined && parsed.model === undefined
-    ? await promptChoice("Select a model profile.", providerProfiles(provider))
+    ? await promptChoice(
+      renderSetupStep(2, 4, "Model profile", "Start from a maintained profile or pass --model for an exact provider model ID.", color),
+      providerProfiles(provider),
+      color,
+    )
     : undefined;
   const selectedStyle = interactive && parsed.reasoning === undefined
-    ? await promptChoice("Select how Ask reasons over repository evidence.", REASONING_STYLES)
+    ? await promptChoice(
+      renderSetupStep(3, 4, "Reasoning", "Choose the depth used by optional API-backed repository reasoning.", color),
+      REASONING_STYLES,
+      color,
+    )
     : undefined;
   let apiKey: string | undefined;
+  if (interactive && !parsed.json) {
+    console.log(renderSetupStep(4, 4, "Credentials", "The value is hidden and saved only in the local configuration file.", color));
+    console.log(renderProviderGuide(provider, color));
+  }
   if (!parsed.noKey) {
     apiKey = parsed.apiKeyStdin
       ? await readApiKeyFromStandardInput()
@@ -1065,11 +1093,7 @@ async function initializeConclave(args: readonly string[]): Promise<void> {
     print(report, true);
     return;
   }
-  console.log(`Saved Conclave configuration: ${report.configFile}`);
-  console.log(`Provider: ${report.provider}; model: ${report.model}; reasoning: ${report.reasoningPreset}`);
-  console.log(setup.credentialSaved ? "API key saved in the Git-ignored .env file." : "No API key saved.");
-  console.log("Validation remains local and deterministic. API-backed reasoning is used only by Ask and Task Mode.");
-  console.log(report.next);
+  console.log(renderSetupSuccess(report, color));
 }
 
 function showModels(args: readonly string[]): void {
