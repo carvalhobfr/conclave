@@ -702,7 +702,7 @@ async function loadValidationContract(parsed: ParsedArguments): Promise<Validati
     value = JSON.parse(await readFile(resolve(parsed.contractPath), "utf8"));
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown contract error";
-    throw new Error("Could not load validation contract: " + message);
+    throw new Error("Could not load validation contract: " + message, { cause: error });
   }
   return parseValidationContract(value, parsed.objective);
 }
