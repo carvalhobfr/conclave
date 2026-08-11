@@ -145,6 +145,17 @@ function validateReport(value) {
   if (typeof value.changeSet !== "object" || value.changeSet === null) throw new Error("Conclave report is missing changeSet");
   if (typeof value.impact !== "object" || value.impact === null) throw new Error("Conclave report is missing impact");
   if (typeof value.metrics !== "object" || value.metrics === null) throw new Error("Conclave report is missing metrics");
+  if (typeof value.trustBoundary !== "object" || value.trustBoundary === null || Array.isArray(value.trustBoundary)) {
+    throw new Error("Conclave report is missing trustBoundary");
+  }
+  const trustBoundary = value.trustBoundary;
+  if (
+    trustBoundary.deterministic !== true ||
+    trustBoundary.reasoningModelCalls !== 0 ||
+    trustBoundary.repositoryScriptsExecuted !== false
+  ) {
+    throw new Error("Conclave report violates the deterministic validation trust boundary");
+  }
   return value;
 }
 

@@ -71,6 +71,7 @@ function ValidationTabs({ tab, onSelect }: { readonly tab: WorkspaceTab; readonl
 
 function ValidationSummary({ result }: { readonly result: ValidationRunView }) {
   const report = result.report;
+  const trust = report.trustBoundary;
   const claimCopy = result.counts.totalClaims === 0
     ? "No explicit claims"
     : `${String(result.counts.supportedClaims)}/${String(result.counts.totalClaims)} claims proved`;
@@ -88,7 +89,11 @@ function ValidationSummary({ result }: { readonly result: ValidationRunView }) {
       <p>{result.largestRisk?.detail ?? "The graph and contract checks found no unresolved contradiction in the collected change."}</p>
     </section>
     <div className="recommendation"><strong>Recommendation</strong><p>{result.recommendation}</p></div>
-    <footer className="validation-footnote">Objective: {report.objective}</footer>
+    <footer className="validation-footnote">
+      <p>Objective: {report.objective}</p>
+      <p>Knowledge: {trust.knowledge.parser} parser, {trust.knowledge.graph} graph, {trust.knowledge.embedding.kind} embeddings. Reasoning model calls: {trust.reasoningModelCalls}; remote embedding calls: {trust.knowledge.embedding.remoteCalls}; repository scripts: {trust.repositoryScriptsExecuted ? "executed" : "not executed"}.</p>
+      <p>Guarantee: this is deterministic structural evidence, not proof of arbitrary runtime behavior.</p>
+    </footer>
   </section>;
 }
 

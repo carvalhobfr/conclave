@@ -55,6 +55,8 @@ Claims use typed checks instead of free-form model agreement. A contradicted cla
 
 Deterministic findings must be preserved if a later semantic pass fails or times out.
 
+The schema-v1 `trustBoundary` records the work actually used to reach a validation verdict: the syntax-aware parser and graph, deterministic local feature-hash embeddings, zero reasoning-model calls, zero remote embedding calls, and no repository-script execution. Configured remote embeddings remain outside this validation gate.
+
 ## Verdict semantics
 
 - `PASS`: all available required checks support the resolution.

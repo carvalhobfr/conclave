@@ -12,6 +12,7 @@ import { LocalFolderRepository } from "../repositories/local-folder-repository.j
 import { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
 import { createValidationContract, parseValidationContract } from "../validation/contract-parser.js";
+import { createDeterministicValidationIndex } from "../validation/deterministic-index.js";
 import { GitChangeSetService } from "../validation/git-change-set.js";
 import { SuperValidator } from "../validation/super-validator.js";
 
@@ -176,12 +177,7 @@ export class ConclaveMcpService {
         const contract = validationContract(input, objective);
         try {
           const changeSet = await new GitChangeSetService().collect(this.#repositoryRoot, source);
-          const indexed = await new RepositoryIndexer({
-            repositorySource: new LocalFolderRepository(),
-            parser: new TypeScriptCodeParser(),
-            embeddingProvider: this.#embeddingProvider,
-            indexStore: new InMemoryCodeIndexStore(),
-          }).index(this.#repositoryRoot);
+          const indexed = await createDeterministicValidationIndex(this.#repositoryRoot);
           const report = new SuperValidator().validate(indexed.index, changeSet, contract);
           evidenceCount = report.findings.reduce(
             (count, item) => count + item.evidence.length,
@@ -192,9 +188,7 @@ export class ConclaveMcpService {
             repositoryEvidenceUntrusted: true,
             report,
             trustBoundary: {
-              deterministic: true,
-              reasoningModelCalls: 0,
-              repositoryScriptsExecuted: false,
+              ...report.trustBoundary,
               verdictMustNotBeOverridden: true,
             },
           };

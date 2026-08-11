@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -26,6 +26,7 @@ import { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
 import { EnvironmentCredentialSource } from "../storage/environment-credential-source.js";
 import { createValidationContract, parseValidationContract } from "../validation/contract-parser.js";
+import { createDeterministicValidationIndex } from "../validation/deterministic-index.js";
 import { GitChangeSetService } from "../validation/git-change-set.js";
 import { SuperValidator } from "../validation/super-validator.js";
 import { createDemoReasoningEngine, createDemoTaskEngine } from "./demo-runtime.js";
@@ -323,10 +324,12 @@ export class ConclaveProductService {
 
   public async openLocal(path: string): Promise<ProjectView> {
     const root = await resolveRepositoryRoot(path).catch(() => undefined);
-    if (root === undefined || !isPathInside(this.#allowedRoot, root)) {
+    const canonicalRoot = root === undefined ? undefined : await realpath(root).catch(() => root);
+    const canonicalAllowedRoot = await realpath(this.#allowedRoot).catch(() => this.#allowedRoot);
+    if (canonicalRoot === undefined || !isPathInside(canonicalAllowedRoot, canonicalRoot)) {
       throw new ProductServiceError("repository_denied", "This local server only opens folders beneath its configured allowed root.", "Set CONCLAVE_WEB_ALLOWED_ROOT, then choose a repository inside it.");
     }
-    return this.#open(root, "local");
+    return this.#open(canonicalRoot, "local");
   }
 
   public project(id: string): ProjectView {
@@ -363,7 +366,8 @@ export class ConclaveProductService {
       const changeSet = session.source === "demo"
         ? demoChangeSet(session.index, source)
         : await new GitChangeSetService().collect(session.root, source);
-      return validationView(new SuperValidator().validate(session.index, changeSet, contract), session.source === "demo");
+      const indexed = await createDeterministicValidationIndex(session.root);
+      return validationView(new SuperValidator().validate(indexed.index, changeSet, contract), session.source === "demo");
     } catch (error) {
       throw new ProductServiceError(
         "validation_unavailable",

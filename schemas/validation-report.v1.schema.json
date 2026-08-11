@@ -4,7 +4,7 @@
   "title": "Conclave Validation Report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "verdict", "summary", "objective", "changeSet", "findings", "claims", "impact", "metrics"],
+  "required": ["schemaVersion", "verdict", "summary", "objective", "changeSet", "findings", "claims", "impact", "metrics", "trustBoundary"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "verdict": { "enum": ["pass", "warn", "block", "inconclusive"] },
@@ -36,7 +36,8 @@
         "deterministicChecks": { "$ref": "#/$defs/nonNegativeNumber" },
         "durationMs": { "$ref": "#/$defs/nonNegativeNumber" }
       }
-    }
+    },
+    "trustBoundary": { "$ref": "#/$defs/trustBoundary" }
   },
   "$defs": {
     "nonNegativeNumber": { "type": "number", "minimum": 0 },
@@ -140,6 +141,35 @@
         "outcome": { "enum": ["supported", "rejected", "inconclusive"] },
         "explanation": { "type": "string" },
         "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+      }
+    },
+    "trustBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deterministic", "reasoningModelCalls", "repositoryScriptsExecuted", "knowledge"],
+      "properties": {
+        "deterministic": { "const": true },
+        "reasoningModelCalls": { "const": 0 },
+        "repositoryScriptsExecuted": { "const": false },
+        "knowledge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["parser", "graph", "embedding"],
+          "properties": {
+            "parser": { "type": "string" },
+            "graph": { "const": "syntax-aware" },
+            "embedding": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "kind", "remoteCalls"],
+              "properties": {
+                "id": { "type": "string" },
+                "kind": { "const": "deterministic-feature-hash" },
+                "remoteCalls": { "const": 0 }
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -49,6 +49,16 @@ const validation: ValidationRunView = {
       deterministicChecks: 1,
       durationMs: 2,
     },
+    trustBoundary: {
+      deterministic: true,
+      reasoningModelCalls: 0,
+      repositoryScriptsExecuted: false,
+      knowledge: {
+        parser: "typescript",
+        graph: "syntax-aware",
+        embedding: { id: "local-hash", kind: "deterministic-feature-hash", remoteCalls: 0 },
+      },
+    },
   },
   demo: true,
 };
@@ -85,6 +95,7 @@ describe("Conclave product UI", () => {
 
     expect(await screen.findByRole("region", { name: "Validation summary" })).toBeTruthy();
     expect(screen.getByText("Change is consistent with the objective")).toBeTruthy();
+    expect(screen.getByText(/Reasoning model calls: 0/i)).toBeTruthy();
     expect(screen.getByText("0", { selector: ".decision-metrics strong" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Raw validation report" })).toBeNull();
 

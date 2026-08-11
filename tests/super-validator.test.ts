@@ -49,6 +49,26 @@ async function validationFixture() {
   return indexed.index;
 }
 
+async function ambiguousSymbolFixture() {
+  const root = await mkdtemp(join(tmpdir(), "conclave-validation-ambiguous-"));
+  await mkdir(join(root, "src"), { recursive: true });
+  await Promise.all([
+    writeFile(join(root, "src", "left.ts"), "export function duplicate() { return \"left\"; }\n"),
+    writeFile(join(root, "src", "right.ts"), "export function duplicate() { return \"right\"; }\n"),
+    writeFile(
+      join(root, "src", "consumer.ts"),
+      'import { duplicate } from "./left";\nexport function consume() { return duplicate(); }\n',
+    ),
+  ]);
+  const indexed = await new RepositoryIndexer({
+    repositorySource: new LocalFolderRepository(),
+    parser: new TypeScriptCodeParser(),
+    embeddingProvider: new LocalHashEmbeddingProvider(),
+    indexStore: new InMemoryCodeIndexStore(),
+  }).index(root);
+  return indexed.index;
+}
+
 function changeSet(paths: readonly string[] = ["src/storage.ts"]): ChangeSet {
   return {
     source: { kind: "working" },
@@ -121,5 +141,38 @@ describe("SuperValidator", () => {
     expect(report.findings.find((item) => item.kind === "scope-expansion")?.evidence).toEqual([
       expect.objectContaining({ path: "src/flow.ts" }),
     ]);
+  });
+
+  it("keeps callers claims inconclusive when a symbol name resolves to multiple declarations", async () => {
+    const report = new SuperValidator({ impactDepth: 3 }).validate(
+      await ambiguousSymbolFixture(),
+      changeSet(["src/left.ts"]),
+      contract({
+        claims: [{
+          id: "duplicate-callers",
+          statement: "duplicate has callers.",
+          check: { kind: "callers", symbol: "duplicate", expectation: "present" },
+        }],
+      }),
+    );
+
+    expect(report.verdict).toBe("inconclusive");
+    expect(report.claims[0]?.outcome).toBe("inconclusive");
+    expect(report.claims[0]?.evidence.map((item) => item.path)).toEqual([
+      "src/left.ts",
+      "src/right.ts",
+    ]);
+  });
+
+  it("refuses a non-deterministic embedding index instead of misreporting the trust boundary", async () => {
+    const index = await validationFixture();
+    const nonDeterministic = {
+      ...index,
+      embedding: { ...index.embedding, kind: "learned-semantic" as const },
+    };
+
+    expect(() => new SuperValidator().validate(nonDeterministic, changeSet(), contract())).toThrow(
+      "requires deterministic local embeddings",
+    );
   });
 });

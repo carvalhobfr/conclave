@@ -15,5 +15,15 @@ process.stdout.write(JSON.stringify({
   claims: [{ claim: { id: "claim", statement: "Claim", check: { kind: "symbol-exists", symbol: "value", expectation: "present" } }, outcome, explanation: outcome, evidence: [] }],
   impact: { changedSymbols: [], impactedFiles: [], impactedSymbols: [] },
   metrics: { filesChanged: 0, symbolsChanged: 0, impactedFiles: 0, impactedSymbols: 0, graphEdgesInspected: 0, deterministicChecks: 1, durationMs: 1 },
+  trustBoundary: {
+    deterministic: true,
+    reasoningModelCalls: 0,
+    repositoryScriptsExecuted: false,
+    knowledge: {
+      parser: "typescript",
+      graph: "syntax-aware",
+      embedding: { id: "local-hash", kind: "deterministic-feature-hash", remoteCalls: 0 },
+    },
+  },
 }));
 process.exitCode = exit;

@@ -24,6 +24,48 @@ async function git(root: string, args: readonly string[]): Promise<void> {
 }
 
 describe("web validation workflow", () => {
+  it("rebuilds deterministic validation knowledge after a project was opened", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "conclave-web-validation-refresh-"));
+    const root = join(parent, "repository");
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "session.ts"), "export function restoreSession() { return false; }\n");
+    await git(root, ["init", "-b", "master"]);
+    await git(root, ["add", "--", "src/session.ts"]);
+    await git(root, ["commit", "-m", "baseline"]);
+
+    try {
+      const product = new ConclaveProductService({ allowedRoot: parent });
+      const project = await product.openLocal(root);
+      await writeFile(
+        join(root, "src", "session.ts"),
+        "export function restoreSession() { return true; }\nexport function restoredAfterOpen() { return true; }\n",
+      );
+
+      const result = await product.validate(
+        project.id,
+        { kind: "working" },
+        "Restore the session after the project was opened.",
+        {
+          claims: [{
+            id: "fresh-symbol",
+            statement: "restoredAfterOpen exists in the change being validated.",
+            check: { kind: "symbol-exists", symbol: "restoredAfterOpen", expectation: "present" },
+          }],
+        },
+      );
+
+      expect(result.report.claims[0]?.outcome).toBe("supported");
+      expect(result.report.trustBoundary).toMatchObject({
+        deterministic: true,
+        reasoningModelCalls: 0,
+        repositoryScriptsExecuted: false,
+        knowledge: { embedding: { kind: "deterministic-feature-hash", remoteCalls: 0 } },
+      });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
   it("returns a product summary backed by the real super-validator report", async () => {
     const parent = await mkdtemp(join(tmpdir(), "conclave-web-validation-"));
     const root = join(parent, "repository");

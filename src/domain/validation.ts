@@ -121,6 +121,21 @@ export interface ValidationMetrics {
   readonly durationMs: number;
 }
 
+export interface ValidationTrustBoundary {
+  readonly deterministic: true;
+  readonly reasoningModelCalls: 0;
+  readonly repositoryScriptsExecuted: false;
+  readonly knowledge: {
+    readonly parser: string;
+    readonly graph: "syntax-aware";
+    readonly embedding: {
+      readonly id: string;
+      readonly kind: "deterministic-feature-hash";
+      readonly remoteCalls: 0;
+    };
+  };
+}
+
 export interface ValidationReport {
   readonly schemaVersion: 1;
   readonly verdict: ValidationVerdict;
@@ -135,4 +150,5 @@ export interface ValidationReport {
     readonly impactedSymbols: readonly string[];
   };
   readonly metrics: ValidationMetrics;
+  readonly trustBoundary: ValidationTrustBoundary;
 }

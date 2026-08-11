@@ -117,6 +117,7 @@ describe("Conclave MCP", () => {
 
       expect(pass).toHaveProperty("report.verdict", "pass");
       expect(pass).toHaveProperty("trustBoundary.reasoningModelCalls", 0);
+      expect(pass).toHaveProperty("trustBoundary.knowledge.embedding.remoteCalls", 0);
       expect(blocked).toHaveProperty("report.verdict", "block");
       expect(inconclusive).toHaveProperty("report.verdict", "inconclusive");
     } finally {

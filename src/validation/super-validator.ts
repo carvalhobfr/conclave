@@ -157,20 +157,30 @@ function claimResult(
     case "callers":
     case "references": {
       const units = symbolUnits(index, claim.check.symbol);
-      if (units.length === 0) {
+      if (units.length !== 1) {
         return {
           claim,
           outcome: "inconclusive",
-          explanation: "The target symbol is not uniquely available in the current project index.",
-          evidence: [],
+          explanation: units.length === 0
+            ? "The target symbol is not available in the current project index."
+            : "The target symbol resolves to multiple declarations in the current project index.",
+          evidence: units.slice(0, 10).map((unit) =>
+            evidenceForUnit(unit, "Ambiguous target symbol declaration"),
+          ),
         };
       }
-      const ids = new Set(units.map((unit) => unit.id));
+      const target = units[0];
+      if (target === undefined) {
+        throw new Error("Expected a unique target symbol after validation");
+      }
       const relations = claim.check.kind === "callers"
         ? new Set(["calls-symbol"])
         : new Set(["references-symbol", "calls-symbol"]);
       const edges = index.graphEdges.filter(
-        (edge) => relations.has(edge.relation) && edge.to.kind === "symbol" && ids.has(edge.to.id),
+        (edge) =>
+          relations.has(edge.relation) &&
+          edge.to.kind === "symbol" &&
+          edge.to.id === target.id,
       );
       const present = edges.length > 0;
       return {
@@ -250,6 +260,9 @@ export class SuperValidator {
     changeSet: ChangeSet,
     contract: ValidationContract,
   ): ValidationReport {
+    if (index.embedding.kind !== "deterministic-feature-hash") {
+      throw new Error("SuperValidator requires deterministic local embeddings for evidence-backed review");
+    }
     const started = performance.now();
     const findings: ValidationFinding[] = [];
     const changedPaths = new Set(changeSet.files.map((file) => file.path));
@@ -464,6 +477,20 @@ export class SuperValidator {
             item.kind === "impact-outside-diff"
           ).length,
         durationMs: Math.max(0, performance.now() - started),
+      },
+      trustBoundary: {
+        deterministic: true,
+        reasoningModelCalls: 0,
+        repositoryScriptsExecuted: false,
+        knowledge: {
+          parser: index.parserId,
+          graph: "syntax-aware",
+          embedding: {
+            id: index.embedding.id,
+            kind: "deterministic-feature-hash",
+            remoteCalls: 0,
+          },
+        },
       },
     };
   }

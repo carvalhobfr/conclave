@@ -39,6 +39,7 @@ import { EnvironmentCredentialSource } from "./storage/environment-credential-so
 import type { ChangeSource, ValidationContract } from "./domain/validation.js";
 import { createValidationContract, parseValidationContract } from "./validation/contract-parser.js";
 import { GitChangeSetService } from "./validation/git-change-set.js";
+import { createDeterministicValidationIndex } from "./validation/deterministic-index.js";
 import { SuperValidator } from "./validation/super-validator.js";
 
 const HELP = `Conclave Code Intelligence CLI
@@ -719,7 +720,7 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
     repositoryRoot,
     selectedChangeSource(parsed),
   );
-  const indexed = await createEphemeralIndex(repositoryRoot);
+  const indexed = await createDeterministicValidationIndex(repositoryRoot);
   const report = new SuperValidator().validate(indexed.index, changeSet, contract);
 
   if (parsed.json) {

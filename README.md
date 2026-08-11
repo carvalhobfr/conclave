@@ -70,6 +70,8 @@ The home screen starts in **Validate**. Select a working tree, staged change, ba
 
 The browser calls the local server. The server runs the same deterministic Git collector and `SuperValidator` used by the CLI; no model call is required for validation.
 
+Every schema-v1 validation report also includes a `trustBoundary`: validation rebuilds its knowledge with the TypeScript syntax parser, a syntax-aware graph, and local deterministic feature-hash embeddings. It records `reasoningModelCalls: 0`, `remoteCalls: 0`, and `repositoryScriptsExecuted: false`; configured remote embeddings are never used for the validation gate.
+
 ## Codex, Claude Code, and other agents
 
 Conclave ships one portable `conclave-validate` skill and byte-identical project adapters for Codex and Claude Code:
