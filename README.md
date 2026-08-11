@@ -81,7 +81,7 @@ A contract turns the task description and the agent's completion claims into fet
 }
 ```
 
-Supported deterministic claim checks are `symbol-exists`, `callers`, `references`, `text`, and `file-changed`.
+Supported deterministic claim checks are `symbol-exists`, `callers`, `references`, `text`, and `file-changed`. A `text` check searches indexed TypeScript/JavaScript source; use `file-changed` for documentation and configuration files.
 
 ## Architecture
 
