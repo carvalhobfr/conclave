@@ -57,7 +57,7 @@ function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOut
       } catch (error) {
         if (!settled) {
           settled = true;
-          reject(error);
+          reject(error instanceof Error ? error : new Error("Git output capture failed", { cause: error }));
         }
       }
     });
@@ -67,7 +67,7 @@ function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOut
       } catch (error) {
         if (!settled) {
           settled = true;
-          reject(error);
+          reject(error instanceof Error ? error : new Error("Git output capture failed", { cause: error }));
         }
       }
     });
