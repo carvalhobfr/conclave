@@ -1,0 +1,33 @@
+{
+  "objective": "Turn Conclave into an independent graph-aware validator for code changes and agent claims",
+  "allowedPathPrefixes": [],
+  "claims": [
+    {
+      "id": "validator-exists",
+      "statement": "The resulting project exports a SuperValidator.",
+      "check": {
+        "kind": "symbol-exists",
+        "symbol": "SuperValidator",
+        "expectation": "present"
+      }
+    },
+    {
+      "id": "review-cli-changed",
+      "statement": "The CLI is part of this resolution.",
+      "check": {
+        "kind": "file-changed",
+        "path": "src/cli.ts",
+        "expectation": "present"
+      }
+    },
+    {
+      "id": "positioning-present",
+      "statement": "The product states that AI writes and Conclave verifies.",
+      "check": {
+        "kind": "text",
+        "text": "AI writes. Conclave verifies.",
+        "expectation": "present"
+      }
+    }
+  ]
+}
