@@ -6,7 +6,7 @@ export type ChangeSource =
   | { readonly kind: "branch"; readonly base: string }
   | { readonly kind: "commit"; readonly commit: string };
 
-export type ChangedFileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "unknown";
+export type ValidationChangedFileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "unknown";
 
 export interface ChangedLineRange {
   readonly oldStart: number;
@@ -15,17 +15,17 @@ export interface ChangedLineRange {
   readonly newCount: number;
 }
 
-export interface ChangedFile {
+export interface ValidationChangedFile {
   readonly path: string;
   readonly previousPath?: string;
-  readonly status: ChangedFileStatus;
+  readonly status: ValidationChangedFileStatus;
   readonly hunks: readonly ChangedLineRange[];
 }
 
 export interface ChangeSet {
   readonly source: ChangeSource;
   readonly headSha: string;
-  readonly files: readonly ChangedFile[];
+  readonly files: readonly ValidationChangedFile[];
   readonly patch: string;
   readonly collectedAt: string;
 }
