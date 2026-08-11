@@ -4,8 +4,8 @@ import { posix, resolve } from "node:path";
 import type {
   ChangeSet,
   ChangeSource,
-  ChangedFile,
-  ChangedFileStatus,
+  ValidationChangedFile,
+  ValidationChangedFileStatus,
   ChangedLineRange,
 } from "../domain/validation.js";
 
@@ -38,19 +38,22 @@ function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOut
         LC_ALL: "C",
       },
     });
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let outputBytes = 0;
     let settled = false;
-    const append = (current: Buffer, chunk: Buffer): Buffer => {
-      if (current.length + chunk.length > MAX_GIT_OUTPUT_BYTES) {
+    const append = (target: "stdout" | "stderr", chunk: Buffer): void => {
+      if (outputBytes + chunk.length > MAX_GIT_OUTPUT_BYTES) {
         child.kill("SIGKILL");
         throw new Error("Git output exceeded the validation limit");
       }
-      return Buffer.concat([current, chunk]);
+      outputBytes += chunk.length;
+      if (target === "stdout") stdoutChunks.push(chunk);
+      else stderrChunks.push(chunk);
     };
     child.stdout.on("data", (chunk: Buffer) => {
       try {
-        stdout = append(stdout, chunk);
+        append("stdout", chunk);
       } catch (error) {
         if (!settled) {
           settled = true;
@@ -60,7 +63,7 @@ function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOut
     });
     child.stderr.on("data", (chunk: Buffer) => {
       try {
-        stderr = append(stderr, chunk);
+        append("stderr", chunk);
       } catch (error) {
         if (!settled) {
           settled = true;
@@ -87,8 +90,8 @@ function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOut
       if (settled) return;
       settled = true;
       const output = {
-        stdout: stdout.toString("utf8"),
-        stderr: stderr.toString("utf8"),
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
       };
       if (code !== 0) {
         reject(new Error("Git command failed: " + output.stderr.trim()));
@@ -116,7 +119,7 @@ function normalizedPath(raw: string): string | undefined {
   return normalized;
 }
 
-function statusFromCode(code: string): ChangedFileStatus {
+function statusFromCode(code: string): ValidationChangedFileStatus {
   switch (code[0]) {
     case "A":
       return "added";
@@ -133,9 +136,9 @@ function statusFromCode(code: string): ChangedFileStatus {
   }
 }
 
-export function parseNameStatus(output: string): readonly ChangedFile[] {
+export function parseNameStatus(output: string): readonly ValidationValidationChangedFile[] {
   const values = output.split("\0").filter((value) => value !== "");
-  const files: ChangedFile[] = [];
+  const files: ValidationChangedFile[] = [];
   for (let index = 0; index < values.length;) {
     const code = values[index];
     if (code === undefined) break;
@@ -158,8 +161,8 @@ export function parseNameStatus(output: string): readonly ChangedFile[] {
 
 export function parseUnifiedDiff(
   patch: string,
-  nameStatus: readonly ChangedFile[],
-): readonly ChangedFile[] {
+  nameStatus: readonly ValidationValidationChangedFile[],
+): readonly ValidationValidationChangedFile[] {
   const files = new Map(nameStatus.map((file) => [file.path, { ...file, hunks: [...file.hunks] }]));
   let oldPath: string | undefined;
   let currentPath: string | undefined;
