@@ -28,14 +28,36 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - name: Resolve validation base
+        id: validation-base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            validation_base="origin/$BASE_REF"
+          elif [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            validation_base="$BEFORE_SHA"
+          else
+            validation_base="$(git merge-base HEAD origin/master)"
+          fi
+
+          git rev-parse --verify "${validation_base}^{commit}"
+          echo "ref=$validation_base" >> "$GITHUB_OUTPUT"
       - name: Dogfood Conclave against this change
+        env:
+          CONCLAVE_BASE: ${{ steps.validation-base.outputs.ref }}
         run: >-
-          node dist/cli.js review . --branch origin/master
+          node dist/cli.js review . --branch "$CONCLAVE_BASE"
           --contract examples/self-validation-contract.json --json
       - name: Dogfood portable agent skill
+        env:
+          CONCLAVE_BASE: ${{ steps.validation-base.outputs.ref }}
         run: >-
           node skills/conclave-validate/scripts/run-validation.mjs
-          --repository . --source branch --ref origin/master
+          --repository . --source branch --ref "$CONCLAVE_BASE"
           --objective "Ship a portable, verdict-preserving agent integration"
           --contract examples/self-validation-contract.json
           --output /tmp/conclave-agent-skill-report.json
