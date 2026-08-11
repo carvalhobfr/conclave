@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
+import type { RepositoryCodeIndex } from "../domain/code-index.js";
 import { loadReasoningConfiguration } from "../config/reasoning-config.js";
 import { loadRuntimeConfig } from "../config/runtime-config.js";
 import { loadTaskConfiguration } from "../config/task-config.js";
@@ -10,6 +11,7 @@ import type { Evidence } from "../domain/evidence.js";
 import { DEFAULT_REASONING_LIMITS, type ReasoningResult } from "../domain/reasoning.js";
 import type { ExecutionPermissions, TaskExecutionResult } from "../domain/task-execution.js";
 import { DEFAULT_TASK_EXECUTION_LIMITS } from "../domain/task-execution.js";
+import type { ChangeSet, ChangeSource, ValidationReport } from "../domain/validation.js";
 import { createEmbeddingProvider } from "../embeddings/embedding-factory.js";
 import { LocalHashEmbeddingProvider } from "../embeddings/local-hash-embedding.js";
 import { TaskExecutionEngine } from "../execution/task-execution-engine.js";
@@ -23,6 +25,9 @@ import { ReasoningEngine, type ReasoningMode } from "../reasoning/reasoning-engi
 import { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
 import { EnvironmentCredentialSource } from "../storage/environment-credential-source.js";
+import { createValidationContract, parseValidationContract } from "../validation/contract-parser.js";
+import { GitChangeSetService } from "../validation/git-change-set.js";
+import { SuperValidator } from "../validation/super-validator.js";
 import { createDemoReasoningEngine, createDemoTaskEngine } from "./demo-runtime.js";
 import type {
   ClaimView,
@@ -34,6 +39,7 @@ import type {
   RuntimeModeView,
   TaskView,
   TraceView,
+  ValidationRunView,
 } from "./contracts.js";
 
 interface ProjectSession {
@@ -41,6 +47,7 @@ interface ProjectSession {
   readonly root: string;
   readonly source: "demo" | "local";
   readonly project: ProjectView;
+  readonly index: RepositoryCodeIndex;
   readonly retrieval: CodeRetrievalService;
   readonly reasoning?: ReasoningEngine;
 }
@@ -127,7 +134,7 @@ function graph(retrieval: CodeRetrievalService, query: string): GraphView {
   };
 }
 
-function reasoningView(intent: Exclude<ProductIntent, "task">, result: ReasoningResult, retrieval: CodeRetrievalService): ProductRunView {
+function reasoningView(intent: "ask" | "investigate", result: ReasoningResult, retrieval: CodeRetrievalService): ProductRunView {
   const sourceBytes = result.state.initialContext.stats.sourceBytes;
   return {
     intent,
@@ -220,6 +227,86 @@ function taskRun(result: TaskExecutionResult, permissions: ExecutionPermissions,
   };
 }
 
+
+function demoChangeSet(index: RepositoryCodeIndex, requestedSource: ChangeSource): ChangeSet {
+  const file = Object.values(index.files).find((item) => item.path.endsWith("AuthProvider.ts"))
+    ?? Object.values(index.files)[0];
+  if (file === undefined) {
+    return {
+      source: requestedSource,
+      headSha: "demo-fixture",
+      files: [],
+      patch: "",
+      collectedAt: new Date().toISOString(),
+    };
+  }
+  const unit = file.symbolIds
+    .map((id) => index.units[id])
+    .find((item) => item !== undefined);
+  const line = unit?.startLine ?? 1;
+  return {
+    source: requestedSource,
+    headSha: "demo-fixture",
+    files: [{
+      path: file.path,
+      status: "modified",
+      hunks: [{ oldStart: line, oldCount: 1, newStart: line, newCount: 1 }],
+    }],
+    patch: "Deterministic demo change fixture",
+    collectedAt: new Date().toISOString(),
+  };
+}
+
+function validationView(report: ValidationReport, demo: boolean): ValidationRunView {
+  const blocking = report.findings.filter((item) => item.severity === "blocking").length;
+  const warning = report.findings.filter((item) => item.severity === "warning").length;
+  const supportedClaims = report.claims.filter((item) => item.outcome === "supported").length;
+  const largestRisk = report.findings.find((item) => item.severity === "blocking")
+    ?? report.findings.find((item) => item.severity === "warning");
+  const copy = {
+    pass: {
+      headline: "Change is consistent with the objective",
+      explanation: "Conclave found no deterministic contradiction, scope violation, or unresolved graph risk.",
+      recommendation: "The change can proceed to human review with the evidence below.",
+    },
+    warn: {
+      headline: "Change needs review before approval",
+      explanation: "No blocking contradiction was found, but Conclave identified risk that deserves attention.",
+      recommendation: "Review the highest-risk finding and its affected code before approving.",
+    },
+    block: {
+      headline: "Do not approve this change",
+      explanation: "Deterministic evidence contradicts the resolution, its claims, or its allowed scope.",
+      recommendation: "Correct the blocking findings, then run validation again.",
+    },
+    inconclusive: {
+      headline: "Conclave needs more evidence",
+      explanation: "The available index cannot honestly prove whether this resolution is safe and complete.",
+      recommendation: "Provide the missing baseline or more precise evidence, then revalidate.",
+    },
+  }[report.verdict];
+  return {
+    intent: "validate",
+    verdict: report.verdict,
+    ...copy,
+    ...(largestRisk === undefined ? {} : {
+      largestRisk: {
+        title: largestRisk.title,
+        detail: largestRisk.detail,
+        severity: largestRisk.severity,
+      },
+    }),
+    counts: {
+      blocking,
+      warning,
+      supportedClaims,
+      totalClaims: report.claims.length,
+    },
+    report,
+    demo,
+  };
+}
+
 export class ConclaveProductService {
   readonly #sessions = new Map<string, ProjectSession>();
   readonly #demoRoot: string;
@@ -246,7 +333,47 @@ export class ConclaveProductService {
     return this.#session(id).project;
   }
 
-  public async run(id: string, intent: Exclude<ProductIntent, "task">, question: string): Promise<ProductRunView> {
+  public async validate(
+    id: string,
+    source: ChangeSource,
+    objective: string,
+    contractValue?: unknown,
+  ): Promise<ValidationRunView> {
+    if (objective.trim() === "") {
+      throw new ProductServiceError(
+        "empty_objective",
+        "Describe what this change is supposed to resolve.",
+        "Provide a concrete validation objective.",
+      );
+    }
+    const session = this.#session(id);
+    let contract;
+    try {
+      contract = contractValue === undefined
+        ? createValidationContract(objective)
+        : parseValidationContract(contractValue, objective);
+    } catch (error) {
+      throw new ProductServiceError(
+        "invalid_contract",
+        error instanceof Error ? error.message : "Validation contract is invalid.",
+        "Correct the optional contract JSON and retry.",
+      );
+    }
+    try {
+      const changeSet = session.source === "demo"
+        ? demoChangeSet(session.index, source)
+        : await new GitChangeSetService().collect(session.root, source);
+      return validationView(new SuperValidator().validate(session.index, changeSet, contract), session.source === "demo");
+    } catch (error) {
+      throw new ProductServiceError(
+        "validation_unavailable",
+        error instanceof Error ? error.message : "The change could not be validated.",
+        "Check the selected Git source and repository state, then retry.",
+      );
+    }
+  }
+
+  public async run(id: string, intent: "ask" | "investigate", question: string): Promise<ProductRunView> {
     if (question.trim() === "") throw new ProductServiceError("empty_query", "Enter a repository question before running Conclave.", "Write a specific code question.");
     const session = this.#session(id);
     try {
@@ -314,7 +441,7 @@ export class ConclaveProductService {
       graphEdges: indexed.index.graphEdges.length,
       updatedAt: indexed.index.updatedAt,
     };
-    this.#sessions.set(id, { id, root, source, project, retrieval: new CodeRetrievalService(indexed.index, embedding) });
+    this.#sessions.set(id, { id, root, source, project, index: indexed.index, retrieval: new CodeRetrievalService(indexed.index, embedding) });
     return project;
   }
 
@@ -357,7 +484,7 @@ export class ConclaveProductService {
     }
   }
 
-  #error(intent: ProductIntent, error: unknown, action: string, retrieval: CodeRetrievalService): ProductRunView {
+  #error(intent: Exclude<ProductIntent, "validate">, error: unknown, action: string, retrieval: CodeRetrievalService): ProductRunView {
     const message = error instanceof ProductServiceError ? error.message : error instanceof Error ? "Conclave could not complete this bounded run." : "Conclave could not complete this bounded run.";
     return {
       intent,
