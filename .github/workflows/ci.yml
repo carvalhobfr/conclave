@@ -32,3 +32,10 @@ jobs:
         run: >-
           node dist/cli.js review . --branch origin/master
           --contract examples/self-validation-contract.json --json
+      - name: Dogfood portable agent skill
+        run: >-
+          node skills/conclave-validate/scripts/run-validation.mjs
+          --repository . --source branch --ref origin/master
+          --objective "Ship a portable, verdict-preserving agent integration"
+          --contract examples/self-validation-contract.json
+          --output /tmp/conclave-agent-skill-report.json
