@@ -93,7 +93,6 @@ export class ConclaveMcpService {
   readonly #retrieval: CodeRetrievalService;
   readonly #repositoryId: string;
   readonly #repositoryRoot: string;
-  readonly #embeddingProvider: EmbeddingProvider;
   readonly #reasoning: Pick<ReasoningEngine, "ask"> | undefined;
   readonly #observations: McpObservation[] = [];
 
@@ -101,13 +100,11 @@ export class ConclaveMcpService {
     retrieval: CodeRetrievalService,
     repositoryId: string,
     repositoryRoot: string,
-    embeddingProvider: EmbeddingProvider,
     reasoning?: Pick<ReasoningEngine, "ask">,
   ) {
     this.#retrieval = retrieval;
     this.#repositoryId = repositoryId;
     this.#repositoryRoot = repositoryRoot;
-    this.#embeddingProvider = embeddingProvider;
     this.#reasoning = reasoning;
   }
 
@@ -122,7 +119,6 @@ export class ConclaveMcpService {
       retrieval,
       indexed.index.repository.id,
       root,
-      embedding,
       options.reasoning ?? options.createReasoning?.(retrieval),
     );
   }

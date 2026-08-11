@@ -270,6 +270,7 @@ export class SuperValidator {
       const file = changeSet.files.find((item) => item.path === unit.path);
       return file !== undefined && intersectsChangedLines(unit, file);
     });
+    const changedSymbols = new Set(changedUnits.map((unit) => unit.symbol));
 
     if (changeSet.files.length === 0) {
       findings.push(finding(
@@ -459,13 +460,13 @@ export class SuperValidator {
       findings,
       claims,
       impact: {
-        changedSymbols: [...new Set(changedUnits.map((unit) => unit.symbol))].sort(),
+        changedSymbols: [...changedSymbols].sort(),
         impactedFiles: [...impactedFiles].sort(),
         impactedSymbols: [...impactedSymbols].sort(),
       },
       metrics: {
         filesChanged: changeSet.files.length,
-        symbolsChanged: changedUnits.length,
+        symbolsChanged: changedSymbols.size,
         impactedFiles: impactedFiles.size,
         impactedSymbols: impactedSymbols.size,
         graphEdgesInspected: impact.edges.length,

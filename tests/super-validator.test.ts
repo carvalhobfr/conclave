@@ -106,6 +106,7 @@ describe("SuperValidator", () => {
     );
     expect(report.impact.impactedFiles).toContain("src/flow.ts");
     expect(report.impact.changedSymbols).toContain("persistToken");
+    expect(report.metrics.symbolsChanged).toBe(report.impact.changedSymbols.length);
   });
 
   it("blocks a completion claim contradicted by deterministic graph evidence", async () => {
