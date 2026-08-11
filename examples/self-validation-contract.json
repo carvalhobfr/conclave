@@ -21,11 +21,11 @@
       }
     },
     {
-      "id": "positioning-present",
-      "statement": "The product states that AI writes and Conclave verifies.",
+      "id": "cli-verdict-present",
+      "statement": "The CLI exposes an explicit validation verdict.",
       "check": {
         "kind": "text",
-        "text": "AI writes. Conclave verifies.",
+        "text": "Validation verdict: ",
         "expectation": "present"
       }
     }
