@@ -869,20 +869,26 @@ async function startMcp(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
   if (requestedPath === undefined) throw new Error("mcp requires one repository path; clients cannot select arbitrary host paths");
-  const runtimeConfig = loadRuntimeConfig();
-  const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
   const taskRequested = args.includes("--allow-task-mode");
   if (taskRequested) throw new Error("MCP Task Mode is not exposed in this release; the MCP server is read-only");
-  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+  const createReasoning = (() => {
+    try {
+      const runtimeConfig = loadRuntimeConfig();
+      const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
+      const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
+      return (retrieval: CodeRetrievalService) => new ReasoningEngine({
+        retrieval,
+        runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoningConfig.assignments, DEFAULT_REASONING_LIMITS),
+        preset: reasoningConfig.preset,
+      });
+    } catch {
+      return undefined;
+    }
+  })();
   const service = await ConclaveMcpService.open({
     repositoryRoot: requestedPath,
     allowedRoot: process.env["CONCLAVE_MCP_ALLOWED_ROOT"] ?? requestedPath,
-    embeddingProvider: createEmbeddingProvider(process.env, new EnvironmentCredentialSource()),
-    createReasoning: (retrieval) => new ReasoningEngine({
-      retrieval,
-      runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoningConfig.assignments, DEFAULT_REASONING_LIMITS),
-      preset: reasoningConfig.preset,
-    }),
+    ...(createReasoning === undefined ? {} : { createReasoning }),
   });
   await runMcpStdio(service);
 }
