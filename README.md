@@ -39,7 +39,7 @@ node dist/cli.js review . --commit HEAD \
   --json
 ```
 
-Review defaults to `--working` when no change source is supplied.
+Review defaults to `--working` when no change source is supplied. Working review compares all tracked changes against `HEAD`. Untracked files must be staged or ignored; staged review rejects unstaged contamination, and branch/commit review requires a clean working tree so the graph and diff describe the same snapshot.
 
 Exit codes:
 
