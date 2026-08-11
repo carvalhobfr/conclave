@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
@@ -35,6 +36,10 @@ import { DEFAULT_TASK_EXECUTION_LIMITS } from "./domain/task-execution.js";
 import { StructuredTaskAgentRuntime } from "./execution/task-agent-runtime.js";
 import { TaskExecutionEngine } from "./execution/task-execution-engine.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
+import type { ChangeSource, ValidationContract } from "./domain/validation.js";
+import { createValidationContract, parseValidationContract } from "./validation/contract-parser.js";
+import { GitChangeSetService } from "./validation/git-change-set.js";
+import { SuperValidator } from "./validation/super-validator.js";
 
 const HELP = `Conclave Code Intelligence CLI
 
@@ -48,6 +53,7 @@ Usage:
   conclave graph <path> <symbol-or-file> [--operation neighbors|callers|callees|imports|exports|references|containing|contained|related] [--depth N] [--limit N] [--json]
   conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
   conclave ask <path> <question> [--json] [--debug]
+  conclave review <path> [--working|--staged|--branch <base>|--commit <sha>] --objective <goal> [--contract <file.json>] [--json]
   conclave task <path> <objective> [--plan-only] [--allow-edits] [--allow-checks] [--allow-repository-scripts] [--allow-network] [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
@@ -86,6 +92,12 @@ interface ParsedArguments {
   readonly allowChecks: boolean;
   readonly allowRepositoryScripts: boolean;
   readonly allowNetwork: boolean;
+  readonly working: boolean;
+  readonly staged: boolean;
+  readonly branch: string | undefined;
+  readonly commit: string | undefined;
+  readonly objective: string | undefined;
+  readonly contractPath: string | undefined;
 }
 
 function parseArguments(args: readonly string[]): ParsedArguments {
@@ -103,6 +115,12 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let allowChecks = false;
   let allowRepositoryScripts = false;
   let allowNetwork = false;
+  let working = false;
+  let staged = false;
+  let branch: string | undefined;
+  let commit: string | undefined;
+  let objective: string | undefined;
+  let contractPath: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
@@ -131,6 +149,26 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     }
     if (argument === "--allow-network") {
       allowNetwork = true;
+      continue;
+    }
+    if (argument === "--working") {
+      working = true;
+      continue;
+    }
+    if (argument === "--staged") {
+      staged = true;
+      continue;
+    }
+    if (argument === "--branch" || argument === "--commit" || argument === "--objective" || argument === "--contract") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error(argument + " requires a value");
+      }
+      if (argument === "--branch") branch = value;
+      else if (argument === "--commit") commit = value;
+      else if (argument === "--objective") objective = value;
+      else contractPath = value;
+      index += 1;
       continue;
     }
     if (argument === "--strategy") {
@@ -212,6 +250,12 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     allowChecks,
     allowRepositoryScripts,
     allowNetwork,
+    working,
+    staged,
+    branch,
+    commit,
+    objective,
+    contractPath,
   };
 }
 
@@ -637,6 +681,85 @@ async function evaluateReasoning(args: readonly string[]): Promise<void> {
   print(report, parsed.json);
 }
 
+function selectedChangeSource(parsed: ParsedArguments): ChangeSource {
+  const selected: ChangeSource[] = [];
+  if (parsed.working) selected.push({ kind: "working" });
+  if (parsed.staged) selected.push({ kind: "staged" });
+  if (parsed.branch !== undefined) selected.push({ kind: "branch", base: parsed.branch });
+  if (parsed.commit !== undefined) selected.push({ kind: "commit", commit: parsed.commit });
+  if (selected.length > 1) {
+    throw new Error("review accepts exactly one of --working, --staged, --branch, or --commit");
+  }
+  return selected[0] ?? { kind: "working" };
+}
+
+async function loadValidationContract(parsed: ParsedArguments): Promise<ValidationContract> {
+  if (parsed.contractPath === undefined) {
+    return createValidationContract(parsed.objective ?? "");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(resolve(parsed.contractPath), "utf8"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown contract error";
+    throw new Error("Could not load validation contract: " + message);
+  }
+  return parseValidationContract(value, parsed.objective);
+}
+
+async function reviewChanges(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  if (requestedPath === undefined || parsed.positionals.length !== 1) {
+    throw new Error("review requires exactly one repository path; use --objective for the goal");
+  }
+  const repositoryRoot = resolve(requestedPath);
+  const contract = await loadValidationContract(parsed);
+  const changeSet = await new GitChangeSetService().collect(
+    repositoryRoot,
+    selectedChangeSource(parsed),
+  );
+  const indexed = await createEphemeralIndex(repositoryRoot);
+  const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+
+  if (parsed.json) {
+    print(report, true);
+  } else {
+    console.log("Validation verdict: " + report.verdict.toUpperCase());
+    console.log(report.summary);
+    console.log("Objective: " + (report.objective === "" ? "<missing>" : report.objective));
+    console.log(
+      "Changed: " + String(report.metrics.filesChanged) + " files / " +
+      String(report.metrics.symbolsChanged) + " symbols",
+    );
+    console.log(
+      "Impact: " + String(report.metrics.impactedFiles) + " files / " +
+      String(report.metrics.impactedSymbols) + " symbols",
+    );
+    for (const item of report.findings) {
+      console.log("");
+      console.log(item.severity.toUpperCase() + " " + item.kind + ": " + item.title);
+      console.log(item.detail);
+      for (const evidence of item.evidence) {
+        const range = evidence.startLine === undefined
+          ? ""
+          : ":" + String(evidence.startLine) +
+            (evidence.endLine === undefined ? "" : "-" + String(evidence.endLine));
+        console.log("- " + evidence.path + range + " — " + evidence.reason);
+      }
+      console.log("Next: " + item.remediation);
+    }
+    for (const result of report.claims) {
+      console.log("");
+      console.log("CLAIM " + result.outcome.toUpperCase() + ": " + result.claim.statement);
+      console.log(result.explanation);
+    }
+  }
+
+  if (report.verdict === "block") process.exitCode = 1;
+  else if (report.verdict === "inconclusive") process.exitCode = 2;
+}
+
 async function executeTask(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
@@ -801,6 +924,9 @@ async function main(): Promise<void> {
       return;
     case "ask":
       await askRepository(args);
+      return;
+    case "review":
+      await reviewChanges(args);
       return;
     case "task":
       await executeTask(args);
