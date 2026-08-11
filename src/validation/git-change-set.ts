@@ -136,7 +136,7 @@ function statusFromCode(code: string): ValidationChangedFileStatus {
   }
 }
 
-export function parseNameStatus(output: string): readonly ValidationValidationChangedFile[] {
+export function parseNameStatus(output: string): readonly ValidationChangedFile[] {
   const values = output.split("\0").filter((value) => value !== "");
   const files: ValidationChangedFile[] = [];
   for (let index = 0; index < values.length;) {
@@ -161,8 +161,8 @@ export function parseNameStatus(output: string): readonly ValidationValidationCh
 
 export function parseUnifiedDiff(
   patch: string,
-  nameStatus: readonly ValidationValidationChangedFile[],
-): readonly ValidationValidationChangedFile[] {
+  nameStatus: readonly ValidationChangedFile[],
+): readonly ValidationChangedFile[] {
   const files = new Map(nameStatus.map((file) => [file.path, { ...file, hunks: [...file.hunks] }]));
   let oldPath: string | undefined;
   let currentPath: string | undefined;
