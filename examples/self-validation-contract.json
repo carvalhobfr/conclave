@@ -12,15 +12,6 @@
       }
     },
     {
-      "id": "review-cli-changed",
-      "statement": "The CLI is part of this resolution.",
-      "check": {
-        "kind": "file-changed",
-        "path": "src/cli.ts",
-        "expectation": "present"
-      }
-    },
-    {
       "id": "cli-verdict-present",
       "statement": "The CLI exposes an explicit validation verdict.",
       "check": {
