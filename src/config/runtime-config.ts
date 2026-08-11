@@ -79,6 +79,7 @@ function defaultBaseUrl(provider: Exclude<ProviderId, "fake">): string | undefin
     case "lm-studio":
       return "http://127.0.0.1:1234/v1";
     case "anthropic":
+      return "https://api.anthropic.com";
     case "gemini":
     case "opencode-zen":
     case "openai-compatible":

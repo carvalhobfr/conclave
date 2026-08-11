@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadConclaveEnvironment } from "../config/environment-file.js";
 import type { ExecutionPermissions } from "../domain/task-execution.js";
 import type { ChangeSource } from "../domain/validation.js";
 import { ConclaveProductService, ProductServiceError } from "./product-service.js";
@@ -169,6 +170,7 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
 
 const isEntry = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 if (isEntry) {
+  loadConclaveEnvironment();
   const port = Number(process.env["CONCLAVE_WEB_PORT"] ?? "4317");
   createConclaveWebServer().listen(port, "127.0.0.1", () => {
     console.log(`Conclave web server listening on http://127.0.0.1:${String(port)}`);

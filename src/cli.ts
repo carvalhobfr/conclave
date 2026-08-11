@@ -1,12 +1,23 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
 import { loadReasoningConfiguration } from "./config/reasoning-config.js";
 import { loadTaskConfiguration } from "./config/task-config.js";
+import { loadConclaveEnvironment, writeConclaveEnvironment } from "./config/environment-file.js";
+import {
+  isGuidedProviderId,
+  providerProfiles,
+  REASONING_STYLES,
+  type GuidedProviderId,
+} from "./config/provider-profiles.js";
+import { createSetupConfiguration } from "./config/setup.js";
 import { createEmbeddingProvider } from "./embeddings/embedding-factory.js";
 import type { EmbeddingProvider } from "./domain/embedding.js";
 import {
@@ -60,12 +71,17 @@ Usage:
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
   conclave eval-reasoning <path> <reasoning-cases.json> [--json]
   conclave config [--json]
+  conclave models [--provider openai|openrouter|anthropic] [--json]
+  conclave init [--provider openai|openrouter|anthropic] [--profile id] [--model id] [--reasoning full|fast] [--api-key-stdin|--no-key] [--config-file path] [--json]
+  conclave skill install [--target codex|claude|both|portable] [--scope project|user] [--project path] [--destination path] [--force] [--dry-run]
   conclave provider-check
   conclave demo
   conclave mcp <path>
   conclave help
 
 Retrieval returns repository Evidence and deterministic graph context only. It does not generate an answer or run agents.`;
+
+loadConclaveEnvironment();
 
 type GraphOperation =
   | "neighbors"
@@ -859,6 +875,237 @@ function showConfig(args: readonly string[]): void {
   print(report, args.includes("--json"));
 }
 
+interface InitArguments {
+  readonly provider: GuidedProviderId | undefined;
+  readonly profile: string | undefined;
+  readonly model: string | undefined;
+  readonly reasoning: "full" | "fast" | undefined;
+  readonly apiKeyStdin: boolean;
+  readonly noKey: boolean;
+  readonly envFile: string;
+  readonly json: boolean;
+}
+
+function parseInitArguments(args: readonly string[]): InitArguments {
+  let provider: GuidedProviderId | undefined;
+  let profile: string | undefined;
+  let model: string | undefined;
+  let reasoning: "full" | "fast" | undefined;
+  let apiKeyStdin = false;
+  let noKey = false;
+  let envFile = resolve(".env");
+  let json = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--api-key-stdin") {
+      apiKeyStdin = true;
+      continue;
+    }
+    if (argument === "--no-key") {
+      noKey = true;
+      continue;
+    }
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
+    if (argument !== "--provider" && argument !== "--profile" && argument !== "--model" && argument !== "--reasoning" && argument !== "--config-file") {
+      throw new Error(`Unknown init option: ${argument ?? ""}`);
+    }
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) throw new Error(`${argument} requires a value`);
+    if (argument === "--provider") {
+      if (!isGuidedProviderId(value)) throw new Error("--provider must be openai, openrouter, or anthropic");
+      provider = value;
+    } else if (argument === "--profile") {
+      profile = value;
+    } else if (argument === "--model") {
+      model = value;
+    } else if (argument === "--reasoning") {
+      if (value !== "full" && value !== "fast") throw new Error("--reasoning must be full or fast");
+      reasoning = value;
+    } else {
+      envFile = resolve(value);
+    }
+    index += 1;
+  }
+  if (apiKeyStdin && noKey) throw new Error("--api-key-stdin and --no-key cannot be used together");
+  return { provider, profile, model, reasoning, apiKeyStdin, noKey, envFile, json };
+}
+
+async function promptLine(label: string, fallback?: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("init needs --provider and --api-key-stdin/--no-key when stdin is not a TTY");
+  }
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await readline.question(fallback === undefined ? `${label}: ` : `${label} [${fallback}]: `);
+    const value = answer.trim();
+    return value === "" && fallback !== undefined ? fallback : value;
+  } finally {
+    readline.close();
+  }
+}
+
+async function promptChoice<T extends { readonly id: string; readonly label: string; readonly description: string }>(
+  label: string,
+  choices: readonly T[],
+): Promise<T> {
+  console.log(label);
+  for (const [index, choice] of choices.entries()) {
+    console.log(`  ${String(index + 1)}. ${choice.label} (${choice.id}) — ${choice.description}`);
+  }
+  const answer = await promptLine("Choose", "1");
+  const numeric = Number(answer);
+  const selected = Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length
+    ? choices[numeric - 1]
+    : choices.find((choice) => choice.id === answer);
+  if (selected === undefined) throw new Error(`Unknown selection: ${answer}`);
+  return selected;
+}
+
+async function promptSecret(label: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") {
+    throw new Error("Use --api-key-stdin to provide a key in a non-interactive environment");
+  }
+  process.stdout.write(`${label}: `);
+  return new Promise((resolvePromise, reject) => {
+    let value = "";
+    const input = process.stdin;
+    const finish = (): void => {
+      input.setRawMode(false);
+      input.pause();
+      input.removeListener("data", onData);
+      process.stdout.write("\n");
+    };
+    const onData = (chunk: string): void => {
+      for (const character of chunk) {
+        if (character === "\u0003") {
+          finish();
+          reject(new Error("Setup cancelled"));
+          return;
+        }
+        if (character === "\r" || character === "\n") {
+          finish();
+          resolvePromise(value);
+          return;
+        }
+        if (character === "\u007f") {
+          value = value.slice(0, -1);
+          continue;
+        }
+        if (character >= " ") value += character;
+      }
+    };
+    input.setEncoding("utf8");
+    input.setRawMode(true);
+    input.resume();
+    input.on("data", onData);
+  });
+}
+
+async function readApiKeyFromStandardInput(): Promise<string> {
+  let value = "";
+  for await (const chunk of process.stdin) {
+    if (typeof chunk === "string") {
+      value += chunk;
+    } else if (chunk instanceof Uint8Array) {
+      value += new TextDecoder().decode(chunk);
+    } else {
+      throw new Error("API key input must be text");
+    }
+  }
+  return value.trim();
+}
+
+async function initializeConclave(args: readonly string[]): Promise<void> {
+  const parsed = parseInitArguments(args);
+  const interactive = process.stdin.isTTY && process.stdout.isTTY;
+  const provider = parsed.provider ?? (await promptChoice(
+    "Select an API provider. This enables Ask and Task Mode; `conclave review` remains deterministic and does not use the key.",
+    [
+      { id: "openai", label: "OpenAI", description: "Direct OpenAI API" },
+      { id: "openrouter", label: "OpenRouter", description: "One OpenAI-compatible API for multiple model families" },
+      { id: "anthropic", label: "Anthropic", description: "Direct Claude Messages API" },
+    ] as const,
+  )).id;
+  const selectedProfile = interactive && parsed.profile === undefined && parsed.model === undefined
+    ? await promptChoice("Select a model profile.", providerProfiles(provider))
+    : undefined;
+  const selectedStyle = interactive && parsed.reasoning === undefined
+    ? await promptChoice("Select how Ask reasons over repository evidence.", REASONING_STYLES)
+    : undefined;
+  let apiKey: string | undefined;
+  if (!parsed.noKey) {
+    apiKey = parsed.apiKeyStdin
+      ? await readApiKeyFromStandardInput()
+      : await promptSecret("Paste API key (hidden)");
+  }
+  const profileId = parsed.profile ?? selectedProfile?.id;
+  const reasoningStyleId = parsed.reasoning ?? selectedStyle?.id;
+  const setup = createSetupConfiguration({
+    provider,
+    ...(profileId === undefined ? {} : { profileId }),
+    ...(parsed.model === undefined ? {} : { model: parsed.model }),
+    ...(reasoningStyleId === undefined ? {} : { reasoningStyleId }),
+    ...(apiKey === undefined ? {} : { apiKey }),
+  });
+  const write = await writeConclaveEnvironment(parsed.envFile, setup.environment);
+  const report = {
+    configFile: write.path,
+    updated: write.updated,
+    provider: setup.provider,
+    model: setup.model,
+    reasoningPreset: setup.reasoningPreset,
+    credentialSaved: setup.credentialSaved,
+    validation: "conclave review is deterministic and never sends repository data or API keys to a model",
+    next: setup.credentialSaved ? "Run `conclave provider-check` to test the selected provider." : "Set CONCLAVE_API_KEY later, then run `conclave provider-check`.",
+  };
+  if (parsed.json) {
+    print(report, true);
+    return;
+  }
+  console.log(`Saved Conclave configuration: ${report.configFile}`);
+  console.log(`Provider: ${report.provider}; model: ${report.model}; reasoning: ${report.reasoningPreset}`);
+  console.log(setup.credentialSaved ? "API key saved in the Git-ignored .env file." : "No API key saved.");
+  console.log("Validation remains local and deterministic. API-backed reasoning is used only by Ask and Task Mode.");
+  console.log(report.next);
+}
+
+function showModels(args: readonly string[]): void {
+  const providerFlagIndex = args.indexOf("--provider");
+  const requested = providerFlagIndex === -1 ? undefined : args[providerFlagIndex + 1];
+  if (providerFlagIndex !== -1 && (requested === undefined || !isGuidedProviderId(requested))) {
+    throw new Error("models --provider must be openai, openrouter, or anthropic");
+  }
+  if (args.some((argument, index) => argument.startsWith("--") && argument !== "--json" && !(argument === "--provider" && index === providerFlagIndex))) {
+    throw new Error("models accepts only --provider and --json");
+  }
+  const providers: readonly GuidedProviderId[] = requested === undefined
+    ? ["openai", "openrouter", "anthropic"]
+    : [requested as GuidedProviderId];
+  const report = providers.map((provider) => ({ provider, profiles: providerProfiles(provider) }));
+  if (args.includes("--json")) {
+    print({ providers: report, reasoningStyles: REASONING_STYLES }, true);
+    return;
+  }
+  for (const item of report) {
+    console.log(item.provider);
+    for (const profile of item.profiles) console.log(`  ${profile.id}: ${profile.model} — ${profile.description}`);
+  }
+  console.log("Reasoning: full includes architecture review for complex cross-module questions; fast skips that role.");
+}
+
+async function installSkill(args: readonly string[]): Promise<void> {
+  const script = resolve(dirname(fileURLToPath(import.meta.url)), "../scripts/install-agent-skill.mjs");
+  const exitCode = await new Promise<number>((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [script, ...args], { stdio: "inherit", shell: false });
+    child.once("error", reject);
+    child.once("close", (code) => resolvePromise(code ?? 1));
+  });
+  if (exitCode !== 0) throw new Error(`Skill installation failed with exit code ${String(exitCode)}`);
+}
+
 async function providerCheck(): Promise<void> {
   const credentials = new EnvironmentCredentialSource();
   const config = loadRuntimeConfig();
@@ -949,6 +1196,16 @@ async function main(): Promise<void> {
       return;
     case "config":
       showConfig(args);
+      return;
+    case "models":
+      showModels(args);
+      return;
+    case "init":
+      await initializeConclave(args);
+      return;
+    case "skill":
+      if (args[0] !== "install") throw new Error("skill requires the install subcommand");
+      await installSkill(args.slice(1));
       return;
     case "provider-check":
       await providerCheck();

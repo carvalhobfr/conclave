@@ -4,6 +4,13 @@
   "private": true,
   "description": "Graph-aware independent validator for code changes and agent claims",
   "type": "module",
+  "files": [
+    "dist",
+    "scripts/install-agent-skill.mjs",
+    "skills/conclave-validate",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "conclave": "./dist/cli.js"
   },
@@ -14,6 +21,8 @@
     "build:core": "tsc -p tsconfig.build.json",
     "build:web": "vite build",
     "build": "npm run build:core && npm run build:web",
+    "clean": "node scripts/clean-dist.mjs",
+    "prepack": "npm run clean && npm run build",
     "dev": "npm run build --silent && node dist/cli.js",
     "dev:web": "vite --host 127.0.0.1",
     "demo": "npm run build --silent && node dist/cli.js demo",

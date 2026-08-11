@@ -50,6 +50,28 @@ Exit codes:
 | `BLOCK` | 1 | A deterministic contradiction, parser error, or scope violation exists |
 | `INCONCLUSIVE` | 2 | Conclave cannot honestly prove the resolution with available evidence |
 
+## Guided API setup and model profiles
+
+Validation is usable with no model and no key. `conclave review` always rebuilds a deterministic local index and never calls a model. API configuration only enables the optional **Ask**, **Investigate**, and bounded **Task** flows.
+
+Run the guided initializer from the project whose local configuration should be used:
+
+```bash
+node dist/cli.js init
+node dist/cli.js models
+```
+
+The initializer asks for OpenAI, OpenRouter, or Anthropic/Claude; a provider model profile; full or fast reasoning; and an API key with terminal echo disabled. It writes a managed block to the Git-ignored `.env` without replacing unrelated variables. The key is never included in command-line arguments, JSON output, configuration diagnostics, or the validation report.
+
+For automation, keep the secret out of shell history and pass it only on standard input:
+
+```bash
+printf '%s' "$CONCLAVE_SETUP_API_KEY" | node dist/cli.js init \
+  --provider openrouter --profile claude-sonnet-latest --reasoning fast --api-key-stdin
+```
+
+`conclave models` currently includes four curated profiles for each provider. OpenAI profiles follow its current Sol/Terra/Luna capability tiers; OpenRouter profiles use documented model-family aliases (plus its free router); and Anthropic profiles use direct Messages API model IDs. Account access and routed availability remain provider-controlled, so run `conclave provider-check` after setup.
+
 ## Web validation
 
 ```bash
@@ -89,6 +111,18 @@ node scripts/install-agent-skill.mjs --target both --scope project --project /pa
 node scripts/install-agent-skill.mjs --target codex --scope user
 node scripts/install-agent-skill.mjs --target portable --destination /path/used/by/another-agent
 ```
+
+The same installer is available through the CLI after build:
+
+```bash
+node dist/cli.js skill install --target codex --scope project --project /path/to/project
+```
+
+The portable skill needs no API key to validate a change. When an agent needs optional API-backed reasoning, it should direct the user to `conclave init`; it must not request, print, or store the key itself.
+
+## npm and Yarn distribution
+
+The repository is package-ready: the CLI, portable skill, installer, README, and license are explicit package assets. It intentionally remains `private` until a package name and publishing owner are chosen, so this branch does not publish anything accidentally. After publishing a scoped package, the normal installation path is `npm install -D <package>` (or `yarn add -D <package>`), then `npx conclave skill install ...`. npm/yarn install the executable; the explicit CLI command installs the skill into the user or project agent directory, avoiding a package install silently changing agent configuration.
 
 The skill invokes `conclave review --json` through a bounded runner, verifies that verdict and process exit code agree, and refuses to reinterpret `BLOCK` or `INCONCLUSIVE` as approval. Set `CONCLAVE_CLI_PATH` when the compiled CLI is outside the repository being reviewed.
 

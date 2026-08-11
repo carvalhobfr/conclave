@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { loadRuntimeConfig } from "../src/config/runtime-config.js";
 import { FakeProvider } from "../src/providers/fake-provider.js";
+import { AnthropicProvider } from "../src/providers/anthropic-provider.js";
 import { OpenAiCompatibleProvider } from "../src/providers/openai-compatible-provider.js";
 import { createProvider } from "../src/providers/provider-factory.js";
 import { diagnoseProvider } from "../src/providers/provider-diagnostics.js";
@@ -99,18 +100,78 @@ describe("providers", () => {
     expect(JSON.parse(request.body)).not.toHaveProperty("max_completion_tokens");
   });
 
-  it("does not pretend provider-specific protocols are OpenAI-compatible", () => {
+  it("uses Anthropic's native Messages protocol and maps its response", async () => {
     const environment = {
       CONCLAVE_MODE: "api",
       CONCLAVE_PROVIDER: "anthropic",
-      CONCLAVE_BASE_URL: "https://api.anthropic.test/v1",
+      CONCLAVE_BASE_URL: "https://api.anthropic.test",
       CONCLAVE_API_KEY: "key",
+      CONCLAVE_MODEL: "claude-sonnet-5",
     };
     const config = loadRuntimeConfig(environment);
+    const fetchImplementation = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toEqual(expect.objectContaining({
+        "x-api-key": "key",
+        "anthropic-version": "2023-06-01",
+      }));
+      if (typeof init?.body !== "string") throw new Error("Expected a JSON request body");
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      expect(body["model"]).toBe("claude-sonnet-5");
+      expect(body["max_tokens"]).toBe(40);
+      expect(body["system"]).toEqual(expect.stringContaining("Return a valid JSON object only."));
+      expect(body["messages"]).toEqual([{ role: "user", content: "Hello" }]);
+      return Promise.resolve(new Response(JSON.stringify({
+        model: "claude-sonnet-5",
+        content: [{ type: "text", text: "{\"ok\":true}" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 3, output_tokens: 2 },
+      }), { status: 200 }));
+    });
+    const provider = createProvider(config, new EnvironmentCredentialSource(environment), { fetchImplementation });
 
-    expect(() => createProvider(config, new EnvironmentCredentialSource(environment))).toThrow(
-      "adapter is not implemented in Phase 1",
-    );
+    expect(provider).toBeInstanceOf(AnthropicProvider);
+    await expect(provider.generate({
+      model: "claude-sonnet-5",
+      messages: [{ role: "system", content: "Return structured output." }, { role: "user", content: "Hello" }],
+      maxOutputTokens: 40,
+      responseFormat: "json",
+    })).resolves.toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      text: "{\"ok\":true}",
+      finishReason: "end_turn",
+      usage: { inputTokens: 3, outputTokens: 2 },
+    });
+  });
+
+  it("uses the native Anthropic endpoint by default", () => {
+    const config = loadRuntimeConfig({
+      CONCLAVE_MODE: "api",
+      CONCLAVE_PROVIDER: "anthropic",
+      CONCLAVE_API_KEY: "key",
+      CONCLAVE_MODEL: "claude-sonnet-5",
+    });
+
+    expect(config.providerSelection.baseUrl).toBe("https://api.anthropic.com");
+  });
+
+  it("avoids duplicating the version path for a custom Anthropic endpoint", async () => {
+    const provider = new AnthropicProvider({
+      baseUrl: "https://api.anthropic.test/v1",
+      apiKey: "key",
+      fetchImplementation: (input) => {
+        const endpoint = input instanceof URL ? input.toString() : input instanceof Request ? input.url : input;
+        expect(endpoint).toBe("https://api.anthropic.test/v1/messages");
+        return Promise.resolve(new Response(JSON.stringify({
+          content: [{ type: "text", text: "ok" }],
+        }), { status: 200 }));
+      },
+    });
+
+    await expect(provider.generate({
+      model: "claude-sonnet-5",
+      messages: [{ role: "user", content: "Hello" }],
+    })).resolves.toEqual(expect.objectContaining({ text: "ok" }));
   });
 
   it("redacts a credential if an upstream error echoes it", async () => {
