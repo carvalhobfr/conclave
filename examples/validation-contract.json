@@ -1,0 +1,33 @@
+{
+  "objective": "Restore authentication after refresh without changing unrelated routes",
+  "allowedPathPrefixes": ["src/auth", "tests/auth"],
+  "claims": [
+    {
+      "id": "bootstrap-present",
+      "statement": "bootstrapSession exists after the resolution.",
+      "check": {
+        "kind": "symbol-exists",
+        "symbol": "bootstrapSession",
+        "expectation": "present"
+      }
+    },
+    {
+      "id": "legacy-key-removed",
+      "statement": "The legacy token key was removed.",
+      "check": {
+        "kind": "text",
+        "text": "legacy-auth-token",
+        "expectation": "absent"
+      }
+    },
+    {
+      "id": "session-test-changed",
+      "statement": "The session restoration test is part of the change.",
+      "check": {
+        "kind": "file-changed",
+        "path": "tests/auth/session.test.ts",
+        "expectation": "present"
+      }
+    }
+  ]
+}
