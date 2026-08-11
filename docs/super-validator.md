@@ -14,7 +14,7 @@ A validation run has three explicit inputs:
 - an objective describing the behavior the resolution is meant to deliver;
 - an optional validation contract containing scope and deterministic completion claims.
 
-The collected patch remains local in the deterministic gate. Reports expose patch byte size, changed files, hunks, and evidence, but not the complete patch.
+The collected patch remains local in the deterministic gate. Reports expose patch byte size, changed files, hunks, and evidence, but not the complete patch. Snapshot alignment is mandatory: untracked files are never silently omitted, staged validation rejects unstaged contamination, and branch/commit validation requires a clean tree.
 
 ## Project and impact graph
 
