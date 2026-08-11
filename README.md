@@ -44,6 +44,24 @@ Conclave gives a reviewer, CI gate, or coding agent an independent answer to a n
 
 **Requirements:** Node.js 20+ and Git.
 
+Install the public CLI:
+
+```bash
+npm install --global conclave-ai
+
+conclave review . --working \
+  --objective "Restore the session after page refresh"
+```
+
+Or run it without a global install:
+
+```bash
+npx --yes --package=conclave-ai conclave review . --working \
+  --objective "Restore the session after page refresh"
+```
+
+For local development, clone the repository:
+
 ```bash
 git clone https://github.com/carvalhobfr/conclave.git
 cd conclave
@@ -275,15 +293,13 @@ Task Mode is isolated and permission-controlled. It cannot turn an Ask or Review
 
 ## Package distribution
 
-The repository is package-ready but intentionally remains private until a package name and publishing owner are chosen. No npm package is published by this repository yet.
-
-Once published under a chosen scope, the intended workflow is:
+The npm package name for Conclave is `conclave-ai`; the executable remains `conclave`.
 
 ```bash
-npm install -D <package>
-# or: yarn add -D <package>
+npm install -D conclave-ai
+# or: yarn add -D conclave-ai
 
-npx conclave skill install --target codex --scope project --project .
+npx --no-install conclave skill install --target codex --scope project --project .
 ```
 
 npm or Yarn installs the executable. The explicit CLI command installs the agent skill, so a package install never silently changes a developer's agent configuration.
