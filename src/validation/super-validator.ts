@@ -313,7 +313,10 @@ export class SuperValidator {
           ));
         }
       }
-      if (changed.status === "deleted" || changed.hunks.some((hunk) => hunk.newCount === 0)) {
+      if (
+        isSourceFile(changed.path) &&
+        (changed.status === "deleted" || changed.hunks.some((hunk) => hunk.newCount === 0))
+      ) {
         findings.push(finding(
           "head-only-deletion",
           "warning",
