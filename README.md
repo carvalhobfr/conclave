@@ -1,138 +1,130 @@
+<div align="center">
+
 # Conclave
 
-**AI writes. Conclave verifies.**
+### AI writes. Conclave verifies.
 
-Conclave is a local-first, graph-aware validator for code changes. It does not need to be the agent that wrote the patch. It independently checks whether the resolution matches its objective, whether completion claims are true, and whether a small diff has consequences elsewhere in the project.
+**An independent, local-first verification gate for code changes and AI completion claims.**
 
-The primary product surface is `conclave review`. Ask, retrieval, graph inspection, MCP, and bounded Task execution remain available as supporting capabilities, but they are not the product promise.
+[![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4C1?logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Validation](https://img.shields.io/badge/validation-deterministic-5B5BD6)](#trust-boundary)
 
-## What a review does
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Agent integrations](#agents-and-skills) · [Documentation](#documentation) · [Contributing](CONTRIBUTING.md)
 
-1. Collects a working-tree, staged, branch, or commit change without executing repository code.
-2. Builds the current project index and deterministic code graph.
-3. Maps changed lines to symbols.
-4. Expands impact through callers, references, imports, exports, containment, and contracts.
-5. Checks an explicit validation contract and rejects contradicted completion claims.
-6. Returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with evidence and remediation.
+</div>
 
-A small diff is not assumed safe. If it changes an exported symbol whose callers live outside the diff, Conclave reports those unchanged consumers.
+---
+
+Conclave is the verification layer that runs after a change is written. Give it an objective, a Git change set, and optional machine-checkable claims. It builds a fresh code graph, follows the impact beyond the diff, and returns an evidence-backed decision:
+
+```text
+PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
+```
+
+It is deliberately not another agent that says “looks good.” The primary command, `conclave review`, is local, deterministic, and makes **zero model calls**.
+
+## Why Conclave?
+
+Small diffs often have large consequences. Renaming an exported function can leave callers unchanged. Deleting a token key can affect a lifecycle path that never appears in the diff. An AI agent can confidently claim a task is done while a deterministic fact in the repository contradicts it.
+
+Conclave gives a reviewer, CI gate, or coding agent an independent answer to a narrower and more useful question:
+
+> Does the repository provide evidence that this exact change achieved its stated objective?
+
+| Conclave does | Conclave does not |
+| --- | --- |
+| Collects Git changes without running repository code | Trust an agent's completion message |
+| Maps changed lines to symbols and graph impact | Treat a small diff as inherently safe |
+| Checks explicit, deterministic claims | Turn uncertainty into a false pass |
+| Returns evidence, remediation, and machine-readable JSON | Require an API key for validation |
 
 ## Quick start
 
-Requires Node.js 20 or newer.
+**Requirements:** Node.js 20+ and Git.
 
 ```bash
+git clone https://github.com/carvalhobfr/conclave.git
+cd conclave
 npm install
 npm run build
 
 node dist/cli.js review . --working \
   --objective "Restore the session after page refresh"
+```
 
+The result is designed to be read first and parsed second:
+
+```text
+Validation verdict: PASS
+The change matches its objective with no deterministic contradiction.
+
+Changed: 3 files / 7 symbols
+Impact: 5 files / 12 symbols
+```
+
+Add `--json` when a CI job, skill, or another tool needs the full schema-v1 report.
+
+```bash
 node dist/cli.js review . --staged \
-  --objective "Reject expired access tokens"
-
-node dist/cli.js review . --branch origin/master \
-  --contract examples/validation-contract.json
-
-node dist/cli.js review . --commit HEAD \
-  --objective "Rename persistToken without leaving stale callers" \
+  --objective "Reject expired access tokens" \
   --json
 ```
 
-Review defaults to `--working` when no change source is supplied. Working review compares all tracked changes against `HEAD`. Untracked files must be staged or ignored; staged review rejects unstaged contamination, and branch/commit review requires a clean working tree so the graph and diff describe the same snapshot.
+### Choose exactly what to review
 
-Exit codes:
+```bash
+# Default: tracked working-tree changes against HEAD
+node dist/cli.js review . --working --objective "..."
+
+# Only the staged snapshot
+node dist/cli.js review . --staged --objective "..."
+
+# A branch, commit, or checked-out merge result
+node dist/cli.js review . --branch origin/main --objective "..."
+node dist/cli.js review . --commit HEAD --objective "..."
+```
+
+Working-tree review intentionally refuses to ignore untracked files. Staged review refuses unstaged contamination. Branch and commit review require a clean tree. These constraints make the diff and the indexed snapshot describe the same repository state.
+
+### Understand the verdict
 
 | Verdict | Exit code | Meaning |
 | --- | ---: | --- |
-| `PASS` | 0 | Deterministic checks found no blocking or warning condition |
-| `WARN` | 0 | Review is usable, but human attention is required |
-| `BLOCK` | 1 | A deterministic contradiction, parser error, or scope violation exists |
-| `INCONCLUSIVE` | 2 | Conclave cannot honestly prove the resolution with available evidence |
+| `PASS` | `0` | No deterministic blocker or warning was found. |
+| `WARN` | `0` | The review is usable, but a human should inspect the stated risk. |
+| `BLOCK` | `1` | A deterministic contradiction, parse failure, or scope violation exists. |
+| `INCONCLUSIVE` | `2` | The available evidence cannot honestly prove the objective. |
 
-## Guided API setup and model profiles
+`WARN` is not a green light. `INCONCLUSIVE` is not a failure of confidence—it is the correct result when proof is missing.
 
-Validation is usable with no model and no key. `conclave review` always rebuilds a deterministic local index and never calls a model. API configuration only enables the optional **Ask**, **Investigate**, and bounded **Task** flows.
+## How it works
 
-Run the guided initializer from the project whose local configuration should be used:
-
-```bash
-node dist/cli.js init
-node dist/cli.js models
+```mermaid
+flowchart LR
+  A["Objective + Git change"] --> B["Fresh repository index"]
+  B --> C["Syntax-aware code graph"]
+  C --> D["Changed symbols + downstream impact"]
+  D --> E["Deterministic contract checks"]
+  E --> F{"Verdict"}
+  F -->|"PASS / WARN"| G["Evidence + next action"]
+  F -->|"BLOCK / INCONCLUSIVE"| H["Specific remediation"]
 ```
 
-The initializer asks for OpenAI, OpenRouter, or Anthropic/Claude; a provider model profile; full or fast reasoning; and an API key with terminal echo disabled. It writes a managed block to the Git-ignored `.env` without replacing unrelated variables. The key is never included in command-line arguments, JSON output, configuration diagnostics, or the validation report.
+For every review, Conclave:
 
-For automation, keep the secret out of shell history and pass it only on standard input:
+1. Collects a working-tree, staged, branch, or commit diff through read-only Git commands.
+2. Parses the resulting TypeScript/JavaScript project and builds a syntax-aware graph.
+3. Maps the diff to symbols, then expands through callers, references, imports, exports, and containment.
+4. Tests the declared objective and contract claims against repository evidence.
+5. Reports a verdict, findings, changed and impacted symbols, evidence locations, and remediation.
 
-```bash
-printf '%s' "$CONCLAVE_SETUP_API_KEY" | node dist/cli.js init \
-  --provider openrouter --profile claude-sonnet-latest --reasoning fast --api-key-stdin
-```
+The interesting part is step three: Conclave looks beyond files you edited. If a changed exported symbol has unchanged consumers, those consumers appear in the impact report.
 
-`conclave models` currently includes four curated profiles for each provider. OpenAI profiles follow its current Sol/Terra/Luna capability tiers; OpenRouter profiles use documented model-family aliases (plus its free router); and Anthropic profiles use direct Messages API model IDs. Account access and routed availability remain provider-controlled, so run `conclave provider-check` after setup.
+## Make the quality bar explicit
 
-## Web validation
-
-```bash
-npm run build
-npm run start:web
-# open http://127.0.0.1:4317
-```
-
-The home screen starts in **Validate**. Select a working tree, staged change, base branch, or checked-out commit; describe the objective; and optionally paste a validation contract. The first result is a product decision—not raw JSON—with:
-
-- a plain-language `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` headline;
-- the largest remaining risk and recommended next action;
-- blocking and warning counts;
-- proved or contradicted completion claims;
-- changed and graph-impacted files and symbols;
-- evidence paths and lines;
-- the exact machine-readable report under **Raw report**.
-
-The browser calls the local server. The server runs the same deterministic Git collector and `SuperValidator` used by the CLI; no model call is required for validation.
-
-Every schema-v1 validation report also includes a `trustBoundary`: validation rebuilds its knowledge with the TypeScript syntax parser, a syntax-aware graph, and local deterministic feature-hash embeddings. It records `reasoningModelCalls: 0`, `remoteCalls: 0`, and `repositoryScriptsExecuted: false`; configured remote embeddings are never used for the validation gate.
-
-## Codex, Claude Code, and other agents
-
-Conclave ships one portable `conclave-validate` skill and byte-identical project adapters for Codex and Claude Code:
-
-```text
-skills/conclave-validate/          portable source
-.agents/skills/conclave-validate/ Codex project skill
-.claude/skills/conclave-validate/ Claude Code project skill
-```
-
-Install the skill into another project or user profile from a Conclave checkout:
-
-```bash
-node scripts/install-agent-skill.mjs --target both --scope project --project /path/to/project
-node scripts/install-agent-skill.mjs --target codex --scope user
-node scripts/install-agent-skill.mjs --target portable --destination /path/used/by/another-agent
-```
-
-The same installer is available through the CLI after build:
-
-```bash
-node dist/cli.js skill install --target codex --scope project --project /path/to/project
-```
-
-The portable skill needs no API key to validate a change. When an agent needs optional API-backed reasoning, it should direct the user to `conclave init`; it must not request, print, or store the key itself.
-
-## npm and Yarn distribution
-
-The repository is package-ready: the CLI, portable skill, installer, README, and license are explicit package assets. It intentionally remains `private` until a package name and publishing owner are chosen, so this branch does not publish anything accidentally. After publishing a scoped package, the normal installation path is `npm install -D <package>` (or `yarn add -D <package>`), then `npx conclave skill install ...`. npm/yarn install the executable; the explicit CLI command installs the skill into the user or project agent directory, avoiding a package install silently changing agent configuration.
-
-The skill invokes `conclave review --json` through a bounded runner, verifies that verdict and process exit code agree, and refuses to reinterpret `BLOCK` or `INCONCLUSIVE` as approval. Set `CONCLAVE_CLI_PATH` when the compiled CLI is outside the repository being reviewed.
-
-Agents with MCP support can call `conclave_validate`. The MCP server fixes the repository root when it starts, rebuilds the current index for validation, executes only read-only Git collection and deterministic checks, and returns the same schema-v1 report with an explicit zero-model-call trust boundary.
-
-The public machine contract is [`schemas/validation-report.v1.schema.json`](schemas/validation-report.v1.schema.json).
-
-## Validation contracts
-
-A contract turns the task description and the agent's completion claims into fetchable, comparable checks.
+An objective is useful; a validation contract is stronger. Contracts convert “done” into checks that Conclave can fetch and compare.
 
 ```json
 {
@@ -149,7 +141,7 @@ A contract turns the task description and the agent's completion claims into fet
       }
     },
     {
-      "id": "legacy-removed",
+      "id": "legacy-key-removed",
       "statement": "The legacy token key no longer exists.",
       "check": {
         "kind": "text",
@@ -161,71 +153,171 @@ A contract turns the task description and the agent's completion claims into fet
 }
 ```
 
-Supported deterministic claim checks are `symbol-exists`, `callers`, `references`, `text`, and `file-changed`. A `text` check searches indexed TypeScript/JavaScript source; use `file-changed` for documentation and configuration files.
-
-## Architecture
-
-```mermaid
-flowchart TD
-  Change["Objective + diff + claims"] --> Index["Project index"]
-  Index --> Graph["Code and impact graph"]
-  Graph --> Checks["Deterministic challenges"]
-  Checks --> Verdict["Evidence-backed verdict"]
+```bash
+node dist/cli.js review . --branch origin/main \
+  --contract examples/validation-contract.json
 ```
 
-Repository source is untrusted data. The review collector invokes Git with `shell: false`, disables prompts, bounds output and time, and never executes repository scripts. The first validation gate is fully deterministic and makes no model call.
+Supported deterministic checks: `symbol-exists`, `callers`, `references`, `text`, and `file-changed`. See the [public report schema](schemas/validation-report.v1.schema.json) for the machine contract.
 
-## What came from the Gauntlet Loop idea
+## Trust boundary
 
-[Gauntlet Loop](https://github.com/robonuggets/gauntlet-loop) is a prompt skill, not a reusable validation engine. Conclave adopts its strongest principles without copying its implementation:
+### Deterministic by default
 
-- use a concrete, fetchable quality bar;
-- separate the builder from a harsh critic;
-- inspect actual output instead of trusting a description;
-- identify the largest remaining gap.
+`conclave review` does not require a model, a provider account, or a network call. Every schema-v1 validation report records its own boundary:
 
-In Conclave, the quality bar becomes a validation contract plus repository invariants. The critic becomes an independent verifier. Unlike Gauntlet Loop, Conclave never loops indefinitely: work is bounded, and unresolved proof returns `INCONCLUSIVE`.
+```json
+{
+  "deterministic": true,
+  "reasoningModelCalls": 0,
+  "repositoryScriptsExecuted": false,
+  "knowledge": {
+    "parser": "typescript-compiler-6.0",
+    "graph": "syntax-aware",
+    "embedding": {
+      "id": "conclave-local-hash-v1",
+      "kind": "deterministic-feature-hash",
+      "remoteCalls": 0
+    }
+  }
+}
+```
 
-## Current deterministic findings
+Repository content is untrusted input. Conclave invokes Git with `shell: false`, disables prompts, bounds output and time, and never executes a repository script during review. Configured remote embeddings are never used for the validation gate.
 
-- no collected change;
-- changed files outside explicit scope;
-- parser diagnostics in changed source;
-- graph impact outside the diff;
-- exported symbol changes without changed tests;
-- deleted-only behavior that requires a base index;
-- contradicted or unprovable completion claims.
+### Optional reasoning is separate
 
-## Supporting tools
+Ask, Investigate, and bounded Task Mode are optional product surfaces. They can use a provider, but they do not change the trust boundary of `review`.
+
+Run guided setup from the repository that should own the local configuration:
 
 ```bash
-npm run dev -- index /path/to/repository
-npm run dev -- retrieve /path/to/repository "Where is bootstrapSession called?"
-npm run dev -- graph /path/to/repository bootstrapSession --operation callers
-npm run dev -- ask /path/to/repository "Why might authentication disappear after refresh?"
-npm run dev -- mcp /path/to/repository
+node dist/cli.js init
+node dist/cli.js models
 ```
 
-Task Mode remains isolated and policy-controlled. It is not part of the validation trust boundary and cannot turn an Ask or Review request into permission to modify the repository.
+The setup flow asks for OpenAI, OpenRouter, or Anthropic/Claude; offers four curated profiles for each; allows a custom model; and chooses full or fast reasoning. API-key input is hidden, and the generated managed block lives in Git-ignored `.env` with owner-only file permissions.
 
-## Validation
+For automation, pass the secret through standard input rather than a command-line argument:
 
 ```bash
-npm run eval:validation
-npm run verify
+printf '%s' "$CONCLAVE_SETUP_API_KEY" | node dist/cli.js init \
+  --provider openrouter \
+  --profile claude-sonnet-latest \
+  --reasoning fast \
+  --api-key-stdin
 ```
 
-The validation tests cover Git diff parsing, graph impact outside the diff, contradicted claims, and scope expansion. Existing retrieval, reasoning, Task, web, security, and release evaluations remain active.
+Then run a bounded connectivity check:
+
+```bash
+node dist/cli.js provider-check
+```
+
+## Agents and skills
+
+Conclave ships one portable `conclave-validate` skill and byte-identical adapters for Codex and Claude Code:
+
+```text
+skills/conclave-validate/          portable source
+.agents/skills/conclave-validate/ Codex project skill
+.claude/skills/conclave-validate/ Claude Code project skill
+```
+
+Install a skill into another project:
+
+```bash
+node dist/cli.js skill install \
+  --target codex \
+  --scope project \
+  --project /path/to/repository
+```
+
+The skill calls `conclave review --json` through a bounded runner, verifies that the process exit code agrees with the report verdict, and refuses to reinterpret `BLOCK` or `INCONCLUSIVE` as approval. It needs no API key for validation.
+
+For MCP-capable clients, start a read-only server rooted at one repository:
+
+```bash
+node dist/cli.js mcp /path/to/repository
+```
+
+Clients can call `conclave_validate` and receive the same schema-v1 report and zero-model-call trust boundary.
+
+## Local web validation
+
+Want a human-first decision view instead of JSON?
+
+```bash
+npm run build
+npm run start:web
+# http://127.0.0.1:4317
+```
+
+The local UI starts in **Validate**. Choose the change source, write the objective, optionally paste a contract, and get the verdict before the raw report. It highlights the largest risk, the next action, claim outcomes, changed and graph-impacted symbols, and evidence paths.
+
+The server binds to `127.0.0.1` and runs the same deterministic collector and `SuperValidator` as the CLI.
+
+## More than one command
+
+`review` is the promise. The rest of the CLI helps you inspect the evidence that led there:
+
+```bash
+# Build a local index and inspect repository evidence
+node dist/cli.js index /path/to/repository
+node dist/cli.js retrieve /path/to/repository "Where is bootstrapSession called?"
+node dist/cli.js graph /path/to/repository bootstrapSession --operation callers
+
+# Optional API-backed repository reasoning
+node dist/cli.js ask /path/to/repository "Why might authentication disappear after refresh?"
+```
+
+Task Mode is isolated and permission-controlled. It cannot turn an Ask or Review request into permission to edit a repository, run checks, execute package scripts, or use the network.
+
+## Package distribution
+
+The repository is package-ready but intentionally remains private until a package name and publishing owner are chosen. No npm package is published by this repository yet.
+
+Once published under a chosen scope, the intended workflow is:
+
+```bash
+npm install -D <package>
+# or: yarn add -D <package>
+
+npx conclave skill install --target codex --scope project --project .
+```
+
+npm or Yarn installs the executable. The explicit CLI command installs the agent skill, so a package install never silently changes a developer's agent configuration.
 
 ## Current limits
 
 - The deterministic parser currently targets TypeScript and JavaScript.
-- The graph is syntax-aware and does not yet use the TypeScript type checker or `tsconfig` aliases.
-- Deleted-only changes return `INCONCLUSIVE` because this branch indexes current HEAD, not both base and head.
-- Review does not execute repository tests. Test execution remains a separately permissioned capability.
-- Free-form semantic claims still require the bounded reasoning layer; the first review gate accepts structured deterministic claims.
-- Real-world precision and false-positive rates still need dogfooding on external PRs.
+- The graph is syntax-aware; it does not yet use the TypeScript type checker or `tsconfig` aliases.
+- Deleted-only changes return `INCONCLUSIVE` because the validator indexes the current result, not both base and head snapshots.
+- Review does not run repository tests. Test execution remains a separately permissioned capability.
+- Free-form semantic claims require the bounded reasoning layer; the deterministic gate accepts structured claims.
+- Precision and false-positive rates still need continued dogfooding on external pull requests.
 
-See [the super-validator design](docs/super-validator.md), [security boundaries](docs/security.md), and [contributing guide](CONTRIBUTING.md).
+## Documentation
+
+| Topic | Read |
+| --- | --- |
+| Super-validator design | [docs/super-validator.md](docs/super-validator.md) |
+| Security boundaries | [docs/security.md](docs/security.md) |
+| Reasoning architecture | [docs/phase-3-reasoning.md](docs/phase-3-reasoning.md) |
+| Task execution policy | [docs/phase-4-task-execution.md](docs/phase-4-task-execution.md) |
+| Product UI | [docs/phase-5-product-ui.md](docs/phase-5-product-ui.md) |
+| Release readiness | [docs/phase-6-release-readiness.md](docs/phase-6-release-readiness.md) |
+
+## Inspiration
+
+[Gauntlet Loop](https://github.com/robonuggets/gauntlet-loop) is a prompt skill, not a reusable validation engine. Conclave carries forward the useful ideas—an explicit quality bar, independent criticism, and inspection of real output—while replacing an open-ended loop with bounded, evidence-backed decisions.
+
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), then run the complete local gate:
+
+```bash
+npm run verify
+```
 
 Conclave is released under the [MIT License](LICENSE).
