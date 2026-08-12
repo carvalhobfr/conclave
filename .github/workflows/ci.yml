@@ -38,26 +38,34 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             validation_base="origin/$BASE_REF"
+            validation_head="${{ github.event.pull_request.head.sha }}"
           elif [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
             validation_base="$BEFORE_SHA"
+            validation_head="${{ github.sha }}"
           else
             validation_base="$(git merge-base HEAD origin/master)"
+            validation_head="${{ github.sha }}"
           fi
 
           git rev-parse --verify "${validation_base}^{commit}"
+          git rev-parse --verify "${validation_head}^{commit}"
           echo "ref=$validation_base" >> "$GITHUB_OUTPUT"
+          echo "head=$validation_head" >> "$GITHUB_OUTPUT"
       - name: Dogfood Conclave against this change
         env:
           CONCLAVE_BASE: ${{ steps.validation-base.outputs.ref }}
+          CONCLAVE_HEAD: ${{ steps.validation-base.outputs.head }}
         run: >-
-          node dist/cli.js review . --branch "$CONCLAVE_BASE"
+          node dist/cli.js review . --base "$CONCLAVE_BASE" --head "$CONCLAVE_HEAD"
+          --objective "Keep the Conclave validator and its agent integration correct"
           --contract examples/self-validation-contract.json --json
       - name: Dogfood portable agent skill
         env:
           CONCLAVE_BASE: ${{ steps.validation-base.outputs.ref }}
+          CONCLAVE_HEAD: ${{ steps.validation-base.outputs.head }}
         run: >-
           node skills/conclave-validate/scripts/run-validation.mjs
-          --repository . --source branch --ref "$CONCLAVE_BASE"
+          --repository . --source branch --ref "$CONCLAVE_BASE" --head "$CONCLAVE_HEAD"
           --objective "Ship a portable, verdict-preserving agent integration"
           --contract examples/self-validation-contract.json
           --output /tmp/conclave-agent-skill-report.json

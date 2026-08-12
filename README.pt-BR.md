@@ -264,11 +264,21 @@ npx --yes --package=conclave-ai conclave skill install
 
 Esse comando instala os adaptadores, mas o validator ainda precisa encontrar uma CLI no projeto, globalmente ou em `CONCLAVE_CLI_PATH`. Use `--dry-run` para visualizar e `--force` somente depois de revisar uma substituição.
 
+A skill é a camada voltada ao agente: ela orienta Codex ou Claude a escolher a mudança correta, executar o validador independente, preservar o verdict e explicar as evidências. Ela não substitui a CLI e não aprova, edita ou faz merge de um pull request. Mantenha-a instalada no repositório quando quiser que esse fluxo fique visível e versionado com o time.
+
 Para instalar para seu usuário:
 
 ```bash
 conclave skill install --scope user
 ```
+
+Para adicionar um workflow pronto do GitHub Actions ao repositório atual:
+
+```bash
+conclave skill install --target github-actions
+```
+
+Isso cria `.github/workflows/conclave-review.yml`. O workflow compara a base do pull request com o SHA real do head, escreve um resultado legível no resumo do job, salva o JSON como artefato e falha o check somente quando o Conclave retorna `block` ou `inconclusive`. Ele requer `conclave-ai` nas dependências de desenvolvimento (`npm install --save-dev conclave-ai`). O workflow é determinístico e não precisa de chave de API.
 
 ## Configuração opcional de IA
 
@@ -324,6 +334,14 @@ conclave update --check
 Se a versão instalada já for a mais recente, o comando informa isso claramente e não tenta instalar de novo. Também é possível usar `npm install --save-dev conclave-ai@latest` ou `npm install --global conclave-ai@latest`. Depois de atualizar a skill, atualize uma cópia do projeto com `npx --no-install conclave skill install --force`.
 
 ## CI e GitHub Actions
+
+A skill é usada por um agente interativo; o GitHub Actions é a versão automática do mesmo gate de evidências. Os dois usam o mesmo relatório da CLI e mantêm a aprovação humana. A configuração recomendada é instalar o template:
+
+```bash
+npx --no-install conclave skill install --target github-actions
+```
+
+Faça commit do workflow criado para que todo pull request execute o check. No CI, não use `--working`: compare base e head explicitamente para que arquivos locais e o estado do checkout não alterem a mudança analisada.
 
 Execute a mesma verificação contra a base real do pull request:
 

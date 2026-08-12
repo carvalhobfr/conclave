@@ -43,6 +43,15 @@ describe("portable Conclave agent skill", () => {
     expect(schema["$id"]).toBe("https://conclave.dev/schemas/validation-report.v1.schema.json");
   });
 
+  it("ships a GitHub Actions template that compares the actual PR refs", async () => {
+    const workflow = await readFile(resolve("examples/github-actions/conclave-review.yml"), "utf8");
+    expect(workflow).toContain("pull_request:");
+    expect(workflow).toContain("--base \"${BASE_REF}\"");
+    expect(workflow).toContain("--head \"${HEAD_REF}\"");
+    expect(workflow).toContain("GITHUB_STEP_SUMMARY");
+    expect(workflow).toContain("actions/upload-artifact@v4");
+  });
+
   it.each([
     ["valid small change", "pass", 0],
     ["hallucinated completion BLOCK", "block", 1],

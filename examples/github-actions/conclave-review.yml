@@ -1,0 +1,65 @@
+name: Conclave PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conclave-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Evidence-backed PR review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Conclave
+        id: conclave
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: origin/${{ github.base_ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          objective="Review pull request: ${PR_TITLE}"
+          if [[ -n "${PR_BODY}" ]]; then
+            objective+=$'\n\n'
+            objective+="${PR_BODY}"
+          fi
+          npx --no-install conclave review . \
+            --base "${BASE_REF}" \
+            --head "${HEAD_REF}" \
+            --objective "${objective}" \
+            --json > conclave-validation.json
+          status=$?
+          set -e
+          node -e 'const fs=require("node:fs"); const report=JSON.parse(fs.readFileSync("conclave-validation.json","utf8")); const lines=["## Conclave PR review",`**Verdict:** ${report.verdict.toUpperCase()}`,report.summary,`**Changed files:** ${report.metrics.filesChanged}`,`**Impacted files:** ${report.metrics.impactedFiles}`]; if(report.findings.length) lines.push("", "### Findings", ...report.findings.map((f)=>`- **${f.severity}** ${f.title}: ${f.detail}`)); fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\\n")+"\\n"); console.log(lines.join("\\n"));'
+          exit "${status}"
+
+      - name: Upload Conclave report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conclave-validation-report
+          path: conclave-validation.json
+          if-no-files-found: ignore

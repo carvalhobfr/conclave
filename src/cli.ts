@@ -91,7 +91,7 @@ Usage:
   conclave init [--provider openai|openrouter|anthropic] [--profile id] [--model id] [--reasoning full|fast] [--api-key-stdin|--no-key] [--config-file path] [--json]
   conclave update [--local|--global|--check]
   conclave start [path]
-  conclave skill install [--target codex|claude|both|portable] [--scope project|user] [--project path] [--destination path] [--force] [--dry-run]
+  conclave skill install [--target codex|claude|both|github-actions|portable] [--scope project|user] [--project path] [--destination path] [--force] [--dry-run]
   conclave provider-check
   conclave demo
   conclave mcp <path>

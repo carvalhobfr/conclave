@@ -270,11 +270,21 @@ npx --yes --package=conclave-ai conclave skill install
 
 That one-shot command installs the adapters, but the validator still needs a Conclave CLI available in the repository, globally, or through `CONCLAVE_CLI_PATH` when the skill runs. Preview first with `--dry-run`; use `--force` only after reviewing a replacement.
 
+The skill is the agent-facing layer: it tells Codex or Claude how to select the correct change, run the independent validator, preserve its verdict, and explain the evidence. It does not replace the CLI and it does not approve, edit, or merge a pull request. Keep it installed in the repository when you want the workflow to be visible and versioned with the team.
+
 For a user-wide installation:
 
 ```bash
 conclave skill install --scope user
 ```
+
+To add a ready-to-run GitHub Actions check to the current repository:
+
+```bash
+conclave skill install --target github-actions
+```
+
+This creates `.github/workflows/conclave-review.yml`. It compares the pull request base with the actual head SHA, writes a readable result to the GitHub job summary, uploads the JSON report as an artifact, and fails the check only when Conclave returns a blocking or inconclusive verdict. It requires `conclave-ai` in the repository's dev dependencies (`npm install --save-dev conclave-ai`). The workflow is deterministic and does not need an API key.
 
 ## Optional AI configuration
 
@@ -330,6 +340,14 @@ conclave update --check
 If the installed version is already current, the command exits with an explicit “already on the latest release” message. You can also use `npm install --save-dev conclave-ai@latest` or `npm install --global conclave-ai@latest`. After a skill update, refresh a project copy with `npx --no-install conclave skill install --force`.
 
 ## CI and GitHub Actions
+
+The agent skill is for an interactive coding agent; GitHub Actions is the unattended version of the same evidence gate. Both use the same CLI report and keep the human approval step intact. The recommended setup is to install the workflow template:
+
+```bash
+npx --no-install conclave skill install --target github-actions
+```
+
+Commit the generated workflow so every pull request runs the check. Do not use `--working` in CI: compare an explicit base and head so local files and the checkout state cannot change what is reviewed.
 
 Run the same check on a pull request's actual base branch:
 

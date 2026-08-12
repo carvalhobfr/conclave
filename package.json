@@ -23,6 +23,7 @@
   "files": [
     "dist",
     "docs/assets",
+    "examples/github-actions",
     "scripts/install-agent-skill.mjs",
     "skills/conclave-validate",
     "README.md",
