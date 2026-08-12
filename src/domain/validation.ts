@@ -3,7 +3,7 @@ import type { GraphRelation } from "./code-index.js";
 export type ChangeSource =
   | { readonly kind: "working" }
   | { readonly kind: "staged" }
-  | { readonly kind: "branch"; readonly base: string }
+  | { readonly kind: "branch"; readonly base: string; readonly head?: string }
   | { readonly kind: "commit"; readonly commit: string };
 
 export type ValidationChangedFileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "unknown";

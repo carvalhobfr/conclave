@@ -46,7 +46,7 @@
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "working" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "staged" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "base"], "properties": { "kind": { "const": "branch" }, "base": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "base"], "properties": { "kind": { "const": "branch" }, "base": { "type": "string" }, "head": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "commit"], "properties": { "kind": { "const": "commit" }, "commit": { "type": "string" } } }
       ]
     },

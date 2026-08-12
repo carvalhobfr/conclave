@@ -19,7 +19,7 @@ export interface PullRequestSummary {
 function comparison(report: ValidationReport): string {
   switch (report.changeSet.source.kind) {
     case "branch":
-      return `HEAD compared with ${report.changeSet.source.base}`;
+      return `${report.changeSet.source.head ?? "HEAD"} compared with ${report.changeSet.source.base}`;
     case "commit":
       return `Commit ${report.changeSet.source.commit} compared with its parent`;
     case "staged":

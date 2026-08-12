@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { posix, resolve } from "node:path";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, posix, resolve, sep } from "node:path";
 
 import type {
   ChangeSet,
@@ -25,7 +27,11 @@ function safeRef(value: string, label: string): string {
   return value;
 }
 
-function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOutput> {
+function runGit(
+  repositoryRoot: string,
+  args: readonly string[],
+  extraEnvironment: Readonly<Record<string, string>> = {},
+): Promise<GitOutput> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn("git", [...args], {
       cwd: resolve(repositoryRoot),
@@ -36,6 +42,7 @@ function runGit(repositoryRoot: string, args: readonly string[]): Promise<GitOut
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_TERMINAL_PROMPT: "0",
         LC_ALL: "C",
+        ...extraEnvironment,
       },
     });
     const stdoutChunks: Buffer[] = [];
@@ -211,9 +218,10 @@ function sourceArguments(source: ChangeSource): {
       };
     case "branch": {
       const base = safeRef(source.base, "Branch");
+      const head = source.head === undefined ? "HEAD" : safeRef(source.head, "Head branch");
       return {
-        patch: ["diff", ...commonPatch, base + "...HEAD", "--"],
-        names: ["diff", ...commonNames, base + "...HEAD", "--"],
+        patch: ["diff", ...commonPatch, base + "..." + head, "--"],
+        names: ["diff", ...commonNames, base + "..." + head, "--"],
       };
     }
     case "commit": {
@@ -226,30 +234,61 @@ function sourceArguments(source: ChangeSource): {
   }
 }
 
+function archiveHead(source: ChangeSource): string | undefined {
+  if (source.kind !== "branch") return undefined;
+  return source.head ?? "HEAD";
+}
+
+async function refExists(repositoryRoot: string, ref: string, label: string): Promise<void> {
+  try {
+    await runGit(repositoryRoot, ["rev-parse", "--verify", `${safeRef(ref, label)}^{commit}`]);
+  } catch (error) {
+    throw new Error(`${label} ref does not exist or is not available locally: ${ref}. Run git fetch and retry.`, { cause: error });
+  }
+}
+
+async function materializeArchive(repositoryRoot: string, ref: string): Promise<{ readonly rootPath: string; readonly cleanupPath: string }> {
+  const cleanupPath = await mkdtemp(join(tmpdir(), "conclave-git-snapshot-"));
+  const destination = join(cleanupPath, "tree");
+  await mkdir(destination);
+  const indexPath = join(cleanupPath, "index");
+  const environment = { GIT_INDEX_FILE: indexPath };
+  try {
+    await runGit(repositoryRoot, ["read-tree", safeRef(ref, "Head branch")], environment);
+    await runGit(repositoryRoot, ["checkout-index", "--all", `--prefix=${destination}${sep}`], environment);
+  } catch (error) {
+    await rm(cleanupPath, { recursive: true, force: true });
+    throw new Error("Git could not materialize the head ref: " + (error instanceof Error ? error.message : "unknown error"), { cause: error });
+  }
+  return { rootPath: destination, cleanupPath };
+}
+
 export class GitChangeSetService {
   public async collect(repositoryRoot: string, source: ChangeSource): Promise<ChangeSet> {
     const root = resolve(repositoryRoot);
     const statusEntries = (await runGit(root, ["status", "--porcelain=v1", "-z"]))
       .stdout.split("\0").filter((entry) => entry !== "");
     const untracked = statusEntries.filter((entry) => entry.startsWith("?? "));
-    if (untracked.length > 0) {
+    if ((source.kind === "working" || source.kind === "staged") && untracked.length > 0) {
       throw new Error(
-        "Untracked files are not silently excluded from validation; stage them or add them to ignore rules",
+        "Untracked files are not silently excluded from this validation; stage them, add them to ignore rules, or choose a branch/commit comparison",
       );
     }
     if (
       source.kind === "staged" &&
-      statusEntries.some((entry) => (entry[1] ?? " ") !== " ")
+      statusEntries.some((entry) => !entry.startsWith("?? ") && (entry[1] ?? " ") !== " ")
     ) {
       throw new Error("--staged requires no unstaged changes so the index matches the staged snapshot");
     }
-    if (
-      (source.kind === "branch" || source.kind === "commit") &&
-      statusEntries.length > 0
-    ) {
-      throw new Error("--branch and --commit require a clean working tree so graph evidence matches HEAD");
+    if (source.kind === "commit" && statusEntries.length > 0) {
+      throw new Error("--commit requires a clean working tree so graph evidence matches HEAD");
     }
-    const headSha = (await runGit(root, ["rev-parse", "HEAD"])).stdout.trim();
+    const requestedHead = archiveHead(source);
+    if (source.kind === "branch") {
+      await refExists(root, source.base, "Base");
+      await refExists(root, requestedHead ?? "HEAD", "Head");
+    }
+    const headSha = (await runGit(root, ["rev-parse", requestedHead ?? "HEAD"])).stdout.trim();
     if (source.kind === "commit") {
       const targetSha = (await runGit(root, ["rev-parse", safeRef(source.commit, "Commit")])).stdout.trim();
       if (targetSha !== headSha) {
@@ -269,5 +308,16 @@ export class GitChangeSetService {
       patch: patch.stdout,
       collectedAt: new Date().toISOString(),
     };
+  }
+
+  /** Materializes an immutable Git tree for branch validation, excluding working-tree and untracked files. */
+  public async materializeValidationRoot(repositoryRoot: string, source: ChangeSource): Promise<{
+    readonly rootPath: string;
+    readonly cleanup: () => Promise<void>;
+  }> {
+    const ref = archiveHead(source);
+    if (ref === undefined) return { rootPath: resolve(repositoryRoot), cleanup: () => Promise.resolve() };
+    const materialized = await materializeArchive(repositoryRoot, ref);
+    return { rootPath: materialized.rootPath, cleanup: () => rm(materialized.cleanupPath, { recursive: true, force: true }) };
   }
 }

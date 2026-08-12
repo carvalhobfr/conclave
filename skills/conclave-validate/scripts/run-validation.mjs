@@ -14,7 +14,7 @@ function parseArguments(argv) {
   const parsed = { repository: ".", source: "working" };
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
-    if (!["--repository", "--source", "--ref", "--objective", "--contract", "--output"].includes(name)) {
+    if (!["--repository", "--source", "--ref", "--head", "--objective", "--contract", "--output"].includes(name)) {
       throw new Error(`Unknown option: ${name ?? ""}`);
     }
     const value = argv[index + 1];
@@ -34,6 +34,8 @@ function parseArguments(argv) {
   if ((parsed.source === "working" || parsed.source === "staged") && parsed.ref !== undefined) {
     throw new Error(`--ref is not valid for ${parsed.source} validation`);
   }
+  if (parsed.source !== "branch" && parsed.head !== undefined) throw new Error("--head is only valid for branch validation");
+  if (parsed.head !== undefined && parsed.ref === undefined) throw new Error("--head requires --ref as the branch comparison base");
   return parsed;
 }
 
@@ -68,9 +70,11 @@ async function resolveCommand(repository) {
 }
 
 function commandArguments(parsed) {
-  const args = ["review", resolve(parsed.repository), `--${parsed.source}`];
+  const sourceFlag = parsed.source === "branch" ? "--base" : `--${parsed.source}`;
+  const args = ["review", resolve(parsed.repository), sourceFlag];
   if (parsed.ref !== undefined) args.push(parsed.ref);
   args.push("--objective", parsed.objective.trim());
+  if (parsed.head !== undefined) args.push("--head", parsed.head);
   if (parsed.contract !== undefined) args.push("--contract", resolve(parsed.contract));
   args.push("--json");
   return args;

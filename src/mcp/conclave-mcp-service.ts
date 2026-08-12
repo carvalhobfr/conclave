@@ -65,7 +65,11 @@ function validationSource(input: Readonly<Record<string, unknown>>): ChangeSourc
     case "staged":
       return { kind: "staged" };
     case "branch":
-      return { kind: "branch", base: string(input["ref"], "ref", 200) };
+      return {
+        kind: "branch",
+        base: string(input["ref"], "ref", 200),
+        ...(input["head"] === undefined ? {} : { head: string(input["head"], "head", 200) }),
+      };
     case "commit":
       return { kind: "commit", commit: string(input["ref"], "ref", 200) };
     default:
@@ -172,9 +176,16 @@ export class ConclaveMcpService {
         const source = validationSource(input);
         const contract = validationContract(input, objective);
         try {
-          const changeSet = await new GitChangeSetService().collect(this.#repositoryRoot, source);
-          const indexed = await createDeterministicValidationIndex(this.#repositoryRoot);
-          const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+          const changeService = new GitChangeSetService();
+          const changeSet = await changeService.collect(this.#repositoryRoot, source);
+          const materialized = await changeService.materializeValidationRoot(this.#repositoryRoot, source);
+          let report;
+          try {
+            const indexed = await createDeterministicValidationIndex(materialized.rootPath);
+            report = new SuperValidator().validate(indexed.index, changeSet, contract);
+          } finally {
+            await materialized.cleanup();
+          }
           evidenceCount = report.findings.reduce(
             (count, item) => count + item.evidence.length,
             0,

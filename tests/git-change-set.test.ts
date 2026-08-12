@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -90,6 +90,31 @@ describe("GitChangeSetService parsers", () => {
     await expect(service.collect(root, { kind: "working" })).rejects.toThrow(
       "Untracked files are not silently excluded",
     );
+  });
+
+  it("compares an explicit base and head without reading the current worktree", async () => {
+    const root = await gitFixture();
+    await runGit(root, ["add", "--", "src/session.ts"]);
+    await runGit(root, ["commit", "-m", "feature"]);
+    const featureHead = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await runGit(root, ["switch", "--detach", "HEAD~1"]);
+    await writeFile(join(root, "untracked.ts"), "export const ignoredByBranchReview = true;\n");
+    const service = new GitChangeSetService();
+    const collected = await service.collect(root, { kind: "branch", base: "HEAD", head: featureHead });
+    expect(collected.files).toEqual([
+      expect.objectContaining({ path: "src/session.ts", status: "modified" }),
+    ]);
+    const materialized = await service.materializeValidationRoot(root, { kind: "branch", base: "HEAD", head: featureHead });
+    await expect(readFile(join(materialized.rootPath, "src/session.ts"), "utf8")).resolves.toContain("restored");
+    await expect(readFile(join(materialized.rootPath, "untracked.ts"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await materialized.cleanup();
+  });
+
+  it("allows a branch comparison with unrelated untracked files", async () => {
+    const root = await gitFixture();
+    await writeFile(join(root, "notes.txt"), "local notes\n");
+    const service = new GitChangeSetService();
+    await expect(service.collect(root, { kind: "branch", base: "HEAD" })).resolves.toBeDefined();
   });
 
 });

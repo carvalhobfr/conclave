@@ -366,8 +366,17 @@ export class ConclaveProductService {
       const changeSet = session.source === "demo"
         ? demoChangeSet(session.index, source)
         : await new GitChangeSetService().collect(session.root, source);
-      const indexed = await createDeterministicValidationIndex(session.root);
-      return validationView(new SuperValidator().validate(indexed.index, changeSet, contract), session.source === "demo");
+      if (session.source === "demo") {
+        return validationView(new SuperValidator().validate(session.index, changeSet, contract), true);
+      }
+      const changeService = new GitChangeSetService();
+      const materialized = await changeService.materializeValidationRoot(session.root, source);
+      try {
+        const indexed = await createDeterministicValidationIndex(materialized.rootPath);
+        return validationView(new SuperValidator().validate(indexed.index, changeSet, contract), false);
+      } finally {
+        await materialized.cleanup();
+      }
     } catch (error) {
       throw new ProductServiceError(
         "validation_unavailable",

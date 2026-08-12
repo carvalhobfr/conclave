@@ -59,7 +59,11 @@ function changeSource(value: unknown): ChangeSource {
     case "staged":
       return { kind };
     case "branch":
-      return { kind, base: string(parsed["base"], "Base branch") };
+      return {
+        kind,
+        base: string(parsed["base"], "Base branch"),
+        ...(parsed["head"] === undefined ? {} : { head: string(parsed["head"], "Head branch") }),
+      };
     case "commit":
       return { kind, commit: string(parsed["commit"], "Commit") };
     default:

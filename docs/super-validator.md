@@ -16,11 +16,11 @@ A model statement is never completion evidence. A successful model call is never
 
 A validation run has three explicit inputs:
 
-- a Git change source: working tree, staged index, branch range, or checked-out commit;
+- a Git change source: working tree, staged index, an explicit base/head branch range, or a checked-out commit;
 - an objective describing the behavior the resolution is meant to deliver;
 - an optional validation contract containing scope and deterministic completion claims.
 
-The collected patch remains local in the deterministic gate. Reports expose patch byte size, changed files, hunks, and evidence, but not the complete patch. Snapshot alignment is mandatory: untracked files are never silently omitted, staged validation rejects unstaged contamination, and branch/commit validation requires a clean tree.
+The collected patch remains local in the deterministic gate. Reports expose patch byte size, changed files, hunks, and evidence, but not the complete patch. Snapshot alignment is mandatory: untracked files are never silently omitted from working/staged validation, staged validation rejects unstaged contamination, and an explicit branch base/head is materialized from Git so the current checkout and untracked files cannot contaminate the comparison.
 
 ## Project and impact graph
 

@@ -57,7 +57,7 @@ import { DEFAULT_TASK_EXECUTION_LIMITS } from "./domain/task-execution.js";
 import { StructuredTaskAgentRuntime } from "./execution/task-agent-runtime.js";
 import { TaskExecutionEngine } from "./execution/task-execution-engine.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
-import type { ChangeSource, ValidationContract } from "./domain/validation.js";
+import type { ChangeSource, ValidationContract, ValidationReport } from "./domain/validation.js";
 import { createValidationContract, parseValidationContract } from "./validation/contract-parser.js";
 import { GitChangeSetService } from "./validation/git-change-set.js";
 import { createDeterministicValidationIndex } from "./validation/deterministic-index.js";
@@ -77,9 +77,10 @@ Usage:
   conclave graph <path> <symbol-or-file> [--operation neighbors|callers|callees|imports|exports|references|containing|contained|related] [--depth N] [--limit N] [--json]
   conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
   conclave ask <path> <question> [--json] [--debug]
-  conclave review <path> [--working|--staged|--branch <base>|--commit <sha>] --objective <goal> [--contract <file.json>] [--json]
+  conclave review <path> [--working|--staged|--base <ref> [--head <ref>]|--commit <sha>] --objective <goal> [--contract <file.json>] [--json]
   conclave validate <path> [same options as review]
-  conclave pr <path> [--branch <base>|--working|--staged|--commit <sha>] --objective <goal> [--json]
+  conclave pr <path> [--base <ref> [--head <ref>]|--working|--staged|--commit <sha>] --objective <goal> [--json]
+  conclave compare [path]                Guided branch comparison with selectable local/remote refs
   conclave history [path] [--json]
   conclave task <path> <objective> [--plan-only] [--allow-edits] [--allow-checks] [--allow-repository-scripts] [--allow-network] [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
@@ -95,6 +96,21 @@ Usage:
   conclave demo
   conclave mcp <path>
   conclave help
+
+Workflow shortcuts:
+  start      Guided menu for the complete PR workflow and common setup tasks
+  compare    Interactive branch comparison; choose base and target from Git refs
+  pr         Compare a Git source, summarize the PR, show evidence, and save local history
+  review     Low-level deterministic evidence report for scripts and CI
+  validate   Explicit alias for review
+  history    List previous local PR passes for a repository
+  update     Update the project or global CLI, or check the registry
+
+index is an optional persistent context cache for search/graph/Ask. It is not required before pr or review.
+
+Review sources are mutually exclusive: --working, --staged, --base <ref> [--head <ref>], or --commit <sha>.
+Use --base for the comparison base and --head for the branch/commit to inspect. --branch is kept as a backwards-compatible alias for --base.
+Use --objective to describe what the change should deliver. Use --json for machine-readable output.
 
 Retrieval returns repository Evidence and deterministic graph context only. It does not generate an answer or run agents.`;
 
@@ -129,6 +145,7 @@ interface ParsedArguments {
   readonly working: boolean;
   readonly staged: boolean;
   readonly branch: string | undefined;
+  readonly head: string | undefined;
   readonly commit: string | undefined;
   readonly objective: string | undefined;
   readonly contractPath: string | undefined;
@@ -152,6 +169,7 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let working = false;
   let staged = false;
   let branch: string | undefined;
+  let head: string | undefined;
   let commit: string | undefined;
   let objective: string | undefined;
   let contractPath: string | undefined;
@@ -193,12 +211,13 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       staged = true;
       continue;
     }
-    if (argument === "--branch" || argument === "--commit" || argument === "--objective" || argument === "--contract") {
+    if (argument === "--base" || argument === "--branch" || argument === "--head" || argument === "--commit" || argument === "--objective" || argument === "--contract") {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--")) {
         throw new Error(argument + " requires a value");
       }
-      if (argument === "--branch") branch = value;
+      if (argument === "--base" || argument === "--branch") branch = value;
+      else if (argument === "--head") head = value;
       else if (argument === "--commit") commit = value;
       else if (argument === "--objective") objective = value;
       else contractPath = value;
@@ -287,6 +306,7 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     working,
     staged,
     branch,
+    head,
     commit,
     objective,
     contractPath,
@@ -304,6 +324,13 @@ function print(value: unknown, json: boolean): void {
 function progress(label: string, detail: string): void {
   if (process.stdout.isTTY) console.log(`\x1b[36m›\x1b[0m ${label} ${detail}`);
   else console.log(`${label}: ${detail}`);
+}
+
+function requireObjective(parsed: ParsedArguments, command: "review" | "pr"): void {
+  const objective = parsed.objective?.trim() ?? "";
+  if (objective === "") {
+    throw new Error(`${command} requires a non-empty --objective describing what the change should deliver`);
+  }
 }
 
 async function scan(args: readonly string[]): Promise<void> {
@@ -390,11 +417,12 @@ async function indexRepository(args: readonly string[]): Promise<void> {
     print(report, true);
     return;
   }
-  console.log(`Indexed ${report.repository.name}`);
+  console.log(`Persistent repository index ready: ${report.repository.name}`);
   console.log(
     `${String(report.files)} files, ${String(report.symbols)} symbols, ${String(report.graphEdges)} graph edges`,
   );
   console.log(`Changes: ${JSON.stringify(result.stats)}`);
+  console.log("Saved: .conclave/code-index-v2.json (used by search, graph, and Ask; PR review builds its own snapshot)");
 }
 
 function printEvidenceResults(results: readonly {
@@ -724,10 +752,17 @@ function selectedChangeSource(parsed: ParsedArguments): ChangeSource {
   const selected: ChangeSource[] = [];
   if (parsed.working) selected.push({ kind: "working" });
   if (parsed.staged) selected.push({ kind: "staged" });
-  if (parsed.branch !== undefined) selected.push({ kind: "branch", base: parsed.branch });
+  if (parsed.head !== undefined && parsed.branch === undefined) {
+      throw new Error("--head requires --base <ref>; use --head to name the branch being inspected");
+  }
+  if (parsed.branch !== undefined) {
+    selected.push(parsed.head === undefined
+      ? { kind: "branch", base: parsed.branch }
+      : { kind: "branch", base: parsed.branch, head: parsed.head });
+  }
   if (parsed.commit !== undefined) selected.push({ kind: "commit", commit: parsed.commit });
   if (selected.length > 1) {
-    throw new Error("review accepts exactly one of --working, --staged, --branch, or --commit");
+    throw new Error("review accepts exactly one of --working, --staged, --base, or --commit");
   }
   return selected[0] ?? { kind: "working" };
 }
@@ -746,9 +781,17 @@ function runExternalCommand(command: string, args: readonly string[]): Promise<n
   });
 }
 
-function captureExternalCommand(command: string, args: readonly string[]): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
+function captureExternalCommand(
+  command: string,
+  args: readonly string[],
+  cwd?: string,
+): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"], shell: false });
+    const child = spawn(command, [...args], {
+      cwd: cwd === undefined ? undefined : resolve(cwd),
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -816,25 +859,127 @@ async function showVersion(): Promise<void> {
 
 type GuidedChoice = { readonly id: string; readonly label: string; readonly description: string };
 
+async function gitBranchChoices(root: string): Promise<readonly GuidedChoice[]> {
+  const result = await captureExternalCommand(
+    "git",
+    ["for-each-ref", "--format=%(refname:short)", "--sort=refname", "refs/heads", "refs/remotes"],
+    root,
+  );
+  if (result.code !== 0) {
+    throw new Error(`Could not list Git branches: ${result.stderr.trim() || "this folder is not a Git repository"}`);
+  }
+  const currentResult = await captureExternalCommand("git", ["branch", "--show-current"], root);
+  const current = currentResult.code === 0 ? currentResult.stdout.trim() : "";
+  const refs = [...new Set(result.stdout
+    .split(/\r?\n/u)
+    .map((ref) => ref.trim())
+    .filter((ref) => ref !== "" && !ref.endsWith("/HEAD")))];
+  if (current !== "" && refs.includes(current)) {
+    refs.splice(refs.indexOf(current), 1);
+    refs.unshift(current);
+  }
+  return refs.map((ref) => ({
+    id: ref,
+    label: ref === current ? `${ref} (checked out)` : ref,
+    description: ref.startsWith("remotes/") ? "Remote-tracking branch" : "Local branch",
+  }));
+}
+
+async function promptBranch(root: string, label: string, exclude?: string): Promise<string> {
+  const choices = (await gitBranchChoices(root)).filter((choice) => choice.id !== exclude);
+  if (choices.length === 0) {
+    return promptLine(`${label} (Git ref)`, exclude === undefined ? "" : "HEAD");
+  }
+  const manual: GuidedChoice = {
+    id: "__manual__",
+    label: "Enter another Git ref",
+    description: "Type a branch, tag, commit, or remote ref manually",
+  };
+  const selected = await promptChoice(label, [...choices, manual], terminalColorEnabled());
+  return selected.id === manual.id ? promptLine("Git ref") : selected.id;
+}
+
+async function compareBranches(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const root = resolve(parsed.positionals[0] ?? ".");
+  let base = parsed.branch;
+  let head = parsed.head;
+  if ((base === undefined) !== (head === undefined)) {
+    throw new Error("compare needs both --base and --head, or no flags for the interactive selector");
+  }
+  if (base === undefined || head === undefined) {
+    base = await promptBranch(root, "Choose the comparison base branch");
+    head = await promptBranch(root, "Choose the branch to inspect", base);
+  }
+  if (base === head) throw new Error("Base and target must be different branches");
+  const objective = parsed.objective?.trim() === "" || parsed.objective === undefined
+    ? await promptLine("What should this change deliver?")
+    : parsed.objective;
+  const forwarded = [root, "--base", base, "--head", head, "--objective", objective];
+  if (parsed.json) forwarded.push("--json");
+  await pullRequestSummary(forwarded);
+}
+
+async function guidedChangeSource(root: string, color: boolean): Promise<readonly string[]> {
+  const source = await promptChoice(
+    "Which change should Conclave check?",
+    [
+      { id: "branch", label: "Compare two branches", description: "Choose a base and target branch without changing checkout (recommended for PRs)" },
+      { id: "working", label: "Working tree", description: "Check tracked unstaged changes; stage or ignore untracked files first" },
+      { id: "staged", label: "Staged files", description: "Check only what is in the Git index" },
+      { id: "commit", label: "One commit", description: "Check a commit that already exists in Git" },
+    ],
+    color,
+  );
+  if (source.id === "branch") {
+    const base = await promptBranch(root, "Choose the comparison base branch");
+    const head = await promptBranch(root, "Choose the branch to inspect", base);
+    return [
+      root,
+      "--base",
+      base,
+      "--head",
+      head,
+    ];
+  }
+  if (source.id === "commit") {
+    return [root, "--commit", await promptLine("Commit", "HEAD")];
+  }
+  return [root, `--${source.id}`];
+}
+
 async function startGuided(path = "."): Promise<void> {
   const root = resolve(path);
   const choices: readonly GuidedChoice[] = [
-    { id: "review", label: "Review a change", description: "Compare the current branch, working tree, staged files, or a commit" },
+    { id: "pr", label: "Run a complete PR pass", description: "Compare a branch, summarize the change, show evidence, and save history" },
+    { id: "compare", label: "Compare branches", description: "Choose the base and target branch from a list, then run the PR pass" },
+    { id: "review", label: "Review evidence (advanced)", description: "Run the low-level deterministic report for a working tree, branch, staged change, or commit" },
     { id: "understand", label: "Understand this repository", description: "Build a local index and inspect files, code units, and relationships" },
     { id: "ask", label: "Ask about the code", description: "Use a configured provider to investigate a repository question" },
     { id: "task", label: "Plan or execute a task", description: "Use a configured agent with explicit permissions and a final check" },
     { id: "setup", label: "Configure a provider", description: "Choose OpenAI/Codex, OpenRouter, or Anthropic and a model" },
     { id: "update", label: "Update Conclave", description: "Install the latest CLI version" },
+    { id: "history", label: "Show PR history", description: "List previous local PR passes for this repository" },
     { id: "help", label: "Show all commands", description: "Print the complete CLI reference" },
   ];
   console.log("\nConclave — your PR companion\n");
   console.log(`Repository: ${root}`);
   const choice = await promptChoice("What do you want to do?", choices, terminalColorEnabled());
+  const color = terminalColorEnabled();
   switch (choice.id) {
-    case "review": {
-      const base = await promptLine("Base branch/ref", "origin/main");
+    case "compare":
+      await compareBranches([root]);
+      return;
+    case "pr": {
+      const source = await guidedChangeSource(root, color);
       const objective = await promptLine("What should this change deliver?");
-      await reviewChanges([root, "--branch", base, "--objective", objective]);
+      await pullRequestSummary([...source, "--objective", objective]);
+      return;
+    }
+    case "review": {
+      const source = await guidedChangeSource(root, color);
+      const objective = await promptLine("What should this change deliver?");
+      await reviewChanges([...source, "--objective", objective]);
       return;
     }
     case "understand":
@@ -856,6 +1001,9 @@ async function startGuided(path = "."): Promise<void> {
       return;
     case "update":
       await updateConclave([]);
+      return;
+    case "history":
+      await showReviewHistory([root]);
       return;
     default:
       console.log(HELP);
@@ -882,24 +1030,37 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
   if (requestedPath === undefined || parsed.positionals.length !== 1) {
     throw new Error("review requires exactly one repository path; use --objective for the goal");
   }
+  requireObjective(parsed, "review");
   const repositoryRoot = resolve(requestedPath);
   const contract = await loadValidationContract(parsed);
-  const changeSet = await new GitChangeSetService().collect(
-    repositoryRoot,
-    selectedChangeSource(parsed),
-  );
-  const indexed = await createDeterministicValidationIndex(repositoryRoot);
-  const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+  const changeService = new GitChangeSetService();
+  const source = selectedChangeSource(parsed);
+  const changeSet = await changeService.collect(repositoryRoot, source);
+  const materialized = await changeService.materializeValidationRoot(repositoryRoot, source);
+  try {
+    const indexed = await createDeterministicValidationIndex(materialized.rootPath);
+    const report = new SuperValidator().validate(indexed.index, changeSet, contract);
 
-  if (parsed.json) {
-    print(report, true);
-  } else {
+    if (parsed.json) {
+      print(report, true);
+    } else {
+      printValidationReport(report);
+    }
+
+    if (report.verdict === "block") process.exitCode = 1;
+    else if (report.verdict === "inconclusive") process.exitCode = 2;
+  } finally {
+    await materialized.cleanup();
+  }
+}
+
+function printValidationReport(report: ValidationReport): void {
     console.log("Validation verdict: " + report.verdict.toUpperCase());
     console.log(report.summary);
     console.log("Objective: " + (report.objective === "" ? "<missing>" : report.objective));
     if (report.changeSet.source.kind === "branch") {
-      console.log("Comparison: HEAD (checked-out branch) against " + report.changeSet.source.base + " (base branch)");
-      console.log("Tip: --branch names the base ref; switch to the feature branch you want to inspect before running review.");
+      const head = report.changeSet.source.head ?? "HEAD (checked-out branch)";
+      console.log("Comparison: " + head + " against " + report.changeSet.source.base + " (base branch)");
     }
     console.log(
       "Changed: " + String(report.metrics.filesChanged) + " files / " +
@@ -937,10 +1098,6 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
       console.log("CLAIM " + result.outcome.toUpperCase() + ": " + result.claim.statement);
       console.log(result.explanation);
     }
-  }
-
-  if (report.verdict === "block") process.exitCode = 1;
-  else if (report.verdict === "inconclusive") process.exitCode = 2;
 }
 
 async function pullRequestSummary(args: readonly string[]): Promise<void> {
@@ -949,14 +1106,19 @@ async function pullRequestSummary(args: readonly string[]): Promise<void> {
   if (requestedPath === undefined || parsed.positionals.length !== 1) {
     throw new Error("pr requires exactly one repository path and an objective");
   }
+  requireObjective(parsed, "pr");
   const repositoryRoot = resolve(requestedPath);
   const contract = await loadValidationContract(parsed);
-  progress("Collecting", "Git change");
-  const changeSet = await new GitChangeSetService().collect(repositoryRoot, selectedChangeSource(parsed));
-  progress("Indexing", "local repository context");
-  const indexed = await createDeterministicValidationIndex(repositoryRoot);
-  progress("Validating", "objective, impact, and claims");
-  const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+  if (!parsed.json) progress("Collecting", "Git change");
+  const changeService = new GitChangeSetService();
+  const source = selectedChangeSource(parsed);
+  const changeSet = await changeService.collect(repositoryRoot, source);
+  if (!parsed.json) progress("Indexing", "local repository context");
+  const materialized = await changeService.materializeValidationRoot(repositoryRoot, source);
+  try {
+    const indexed = await createDeterministicValidationIndex(materialized.rootPath);
+    if (!parsed.json) progress("Validating", "objective, impact, and claims");
+    const report = new SuperValidator().validate(indexed.index, changeSet, contract);
   const summary = createPullRequestSummary(report);
   const record: ReviewHistoryRecord = {
     id: createHash("sha256").update(JSON.stringify({ headSha: report.changeSet.headSha, source: report.changeSet.source, objective: report.objective })).digest("hex").slice(0, 24),
@@ -967,9 +1129,9 @@ async function pullRequestSummary(args: readonly string[]): Promise<void> {
     summary,
   };
   await saveReviewHistory(repositoryRoot, record);
-  if (parsed.json) {
-    print({ summary, report }, true);
-  } else {
+    if (parsed.json) {
+      print({ summary, report }, true);
+    } else {
     console.log(`\nPR summary: ${summary.title}`);
     console.log(`Comparison: ${summary.comparison}`);
     console.log(summary.summary);
@@ -985,9 +1147,12 @@ async function pullRequestSummary(args: readonly string[]): Promise<void> {
     console.log("\nNext steps:");
     for (const step of summary.nextSteps) console.log(`- ${step}`);
     console.log("\nFull evidence: run the same command with --json.");
+    }
+    if (report.verdict === "block") process.exitCode = 1;
+    else if (report.verdict === "inconclusive") process.exitCode = 2;
+  } finally {
+    await materialized.cleanup();
   }
-  if (report.verdict === "block") process.exitCode = 1;
-  else if (report.verdict === "inconclusive") process.exitCode = 2;
 }
 
 async function showReviewHistory(args: readonly string[]): Promise<void> {
@@ -1441,6 +1606,9 @@ async function main(): Promise<void> {
       return;
     case "pr":
       await pullRequestSummary(args);
+      return;
+    case "compare":
+      await compareBranches(args);
       return;
     case "history":
       await showReviewHistory(args);
