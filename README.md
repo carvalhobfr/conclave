@@ -19,8 +19,12 @@
 
 Conclave sits between **code changed** and **ready to merge**:
 
-```text
-Developer or agent changes code → Conclave verifies the change → PR can move forward
+```mermaid
+flowchart LR
+  A["Code change or PR"] --> B["Conclave checks<br/>objective · diff · impact · claims"]
+  B --> C["Verdict + review context<br/>evidence · affected code · next action"]
+  C --> D["Human reviews<br/>and approves"]
+  D --> E["PR can move forward"]
 ```
 
 Give it a Git change and its objective. Conclave inspects the diff, follows affected symbols beyond the edited files, checks optional machine-readable claims, and returns one verdict:
