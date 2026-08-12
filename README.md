@@ -4,7 +4,7 @@
 
 ### Simplify and protect every PR.
 
-**Conclave is the evidence layer for AI-assisted development: it helps agents understand a repository, helps reviewers understand a change, and helps teams move PRs forward with less guesswork.**
+**Conclave é um companheiro de PR: fornece contexto, evidências e um caminho mais seguro entre a mudança de código e o merge.**
 
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -21,7 +21,7 @@ Conclave sits between **code changed** and **ready to merge**:
 
 <p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/codex/readme-product-guide/docs/assets/conclave-pr-flow.svg" alt="A code change is checked by Conclave, produces evidence, and goes to human approval" width="900"></p>
 
-**In one sentence:** Conclave turns a code change into shared context, evidence, and a clear next step for the agent, CI, and human reviewer.
+**Em uma frase:** Conclave ajuda agentes e pessoas a entenderem o que mudou, o que foi afetado e qual é o próximo passo antes do merge.
 
 Conclave has two connected jobs. First, it gives an agent or developer local repository context for investigation and implementation. Then it checks the resulting change before the PR moves to human approval. Its validation step inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations), checks optional machine-readable claims, and returns one verdict:
 
