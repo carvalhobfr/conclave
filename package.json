@@ -26,6 +26,7 @@
     "scripts/install-agent-skill.mjs",
     "skills/conclave-validate",
     "README.md",
+    "README.pt-BR.md",
     "LICENSE"
   ],
   "bin": {
