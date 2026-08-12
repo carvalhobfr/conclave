@@ -838,6 +838,10 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
     console.log("Validation verdict: " + report.verdict.toUpperCase());
     console.log(report.summary);
     console.log("Objective: " + (report.objective === "" ? "<missing>" : report.objective));
+    if (report.changeSet.source.kind === "branch") {
+      console.log("Comparison: HEAD (checked-out branch) against " + report.changeSet.source.base + " (base branch)");
+      console.log("Tip: --branch names the base ref; switch to the feature branch you want to inspect before running review.");
+    }
     console.log(
       "Changed: " + String(report.metrics.filesChanged) + " files / " +
       String(report.metrics.symbolsChanged) + " symbols",

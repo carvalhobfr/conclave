@@ -174,7 +174,7 @@ conclave review . --working --objective "..."
 # Only staged changes
 conclave review . --staged --objective "..."
 
-# Current branch compared with its base
+# Current checked-out branch compared with its base
 conclave review . --branch origin/main --objective "..."
 
 # One commit
@@ -190,7 +190,25 @@ Add `--json` for CI, agents, or other tools.
 | `BLOCK` | `1` | A deterministic problem contradicts the change |
 | `INCONCLUSIVE` | `2` | There is not enough evidence to approve it |
 
-Conclave intentionally blocks a comparison with no diff. A merged `main` compared with `origin/main` is not a change to validate.
+`--branch` means **the base ref**, not the branch to inspect. Conclave always analyzes the currently checked-out `HEAD` against that base. A typical flow is:
+
+```bash
+git fetch origin
+git switch feature/login
+git status --short       # branch/commit review requires a clean tree
+conclave review . --branch origin/main \
+  --objective "Add passwordless login"
+```
+
+Conclave intentionally blocks a comparison with no diff. If the result shows only an unexpected file, first check the comparison Git itself sees:
+
+```bash
+git diff --stat origin/main...HEAD
+git diff --name-status origin/main...HEAD
+git merge-base origin/main HEAD
+```
+
+If those commands do not show the expected work, fetch the remote or use the correct base ref. If they do show the expected work but Conclave does not, include the exact command and JSON report when reporting a bug. Do not compare a merged `main` with `origin/main`; both point to the same commit after the merge.
 
 ### Compare branches and summarize the change
 

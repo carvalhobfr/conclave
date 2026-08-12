@@ -65,10 +65,22 @@ Também é possível usar diretamente `npm install --save-dev conclave-ai@latest
 ## Comparar uma branch
 
 ```bash
-# estando na branch feature/login
+git fetch origin
+git switch feature/login
+git status --short       # review de branch/commit exige árvore limpa
 conclave review . --branch origin/main \
   --objective "Adicionar login sem senha"
 ```
+
+`--branch` é a **referência-base**, não a branch que será analisada. O Conclave sempre compara o `HEAD` atualmente em checkout com essa base. Para conferir o que o Git está comparando:
+
+```bash
+git diff --stat origin/main...HEAD
+git diff --name-status origin/main...HEAD
+git merge-base origin/main HEAD
+```
+
+Se esses comandos não mostrarem as mudanças esperadas, atualize as referências remotas ou escolha a base correta. Não compare uma `main` já mesclada com `origin/main`: depois do merge, as duas apontam para o mesmo commit.
 
 O resultado mostra arquivos alterados, unidades de código afetadas, evidências e próximos passos. Use `--json` para CI e ferramentas:
 
