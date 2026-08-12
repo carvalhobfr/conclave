@@ -10,7 +10,7 @@ import type { EmbeddingProvider } from "./embedding.js";
 import type { RepositoryDescriptor, SourceLanguage } from "./repository.js";
 
 export const CODE_INDEX_SCHEMA_VERSION = 2;
-export const CODE_INDEXING_VERSION = 2;
+export const CODE_INDEXING_VERSION = 3;
 
 export class UnsupportedCodeIndexSchemaError extends Error {
   public constructor() {

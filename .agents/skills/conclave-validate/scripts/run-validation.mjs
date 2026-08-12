@@ -57,17 +57,14 @@ async function resolveCommand(repository) {
   const entrypoints = [
     resolve(repository, "dist/cli.js"),
     resolve(skillRoot, "dist/cli.js"),
-    resolve(repository, "node_modules/conclave/dist/cli.js"),
+    resolve(repository, "node_modules/conclave-ai/dist/cli.js"),
   ];
   for (const path of entrypoints) {
     if (await executable(path)) return { command: process.execPath, prefix: [path] };
   }
   const localBinary = resolve(repository, "node_modules/.bin/conclave");
   if (await executable(localBinary)) return { command: localBinary, prefix: [] };
-  if (process.env.CONCLAVE_BIN !== undefined) {
-    return { command: process.env.CONCLAVE_BIN, prefix: [] };
-  }
-  throw new Error("Conclave executable was not found. Build Conclave, install it in the target repository, or set CONCLAVE_CLI_PATH.");
+  return { command: process.env.CONCLAVE_BIN ?? "conclave", prefix: [] };
 }
 
 function commandArguments(parsed) {

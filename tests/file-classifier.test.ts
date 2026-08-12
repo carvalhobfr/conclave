@@ -7,6 +7,8 @@ describe("file classifier", () => {
     ["src/App.tsx", "tsx"],
     ["src/index.ts", "typescript"],
     ["scripts/build.mjs", "javascript"],
+    ["src/auth/session.py", "python"],
+    ["src/auth/Session.java", "java"],
     ["README.md", "markdown"],
     ["Dockerfile", "unknown"],
   ] as const)("detects %s as %s", (path, expected) => {

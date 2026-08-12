@@ -2,6 +2,8 @@ export * from "./config/runtime-config.js";
 export * from "./config/reasoning-config.js";
 export * from "./config/task-config.js";
 export * from "./code-intelligence/typescript-parser.js";
+export * from "./code-intelligence/structured-language-parser.js";
+export * from "./code-intelligence/multi-language-parser.js";
 export * from "./domain/code-intelligence.js";
 export * from "./domain/code-index.js";
 export * from "./domain/context-bundle.js";

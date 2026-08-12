@@ -6,9 +6,9 @@ Phase 2 turns safe Phase 1 repository snapshots into persistent code intelligenc
 
 ## Parser choice
 
-Conclave uses the TypeScript compiler API behind the `CodeParser` port.
+Conclave uses a language-router behind the `CodeParser` port. The TypeScript compiler parser handles TypeScript/TSX/JavaScript/JSX, while deterministic structural parsers handle Python and Java.
 
-It was selected over Tree-sitter for the initial language set because it offers native TypeScript/TSX/JavaScript/JSX syntax coverage, tolerant AST creation for partially malformed files, precise source offsets, and first-class import/export syntax without native bindings. The parser creates a `SourceFile` only; it does not create a `Program`, resolve modules through package code, type-check, evaluate imports, or execute repository scripts.
+The TypeScript parser was selected over Tree-sitter for the initial JavaScript-family language set because it offers native syntax coverage, tolerant AST creation for partially malformed files, precise source offsets, and first-class import/export syntax without native bindings. Python and Java use conservative line/brace-aware structural parsing so partially edited files remain indexable. None of the parsers type-check, evaluate imports, or execute repository scripts.
 
 Additional language parsers can implement `CodeParser` without changing indexing or retrieval.
 
@@ -23,13 +23,15 @@ The parser emits `StructuralCodeUnit` values for:
 - nested named functions;
 - interfaces, type aliases, and enums.
 
+Python and Java units currently cover declarations, methods, imports, calls, exports, and inheritance. Their parsers intentionally do not claim compiler-level diagnostics; unsupported languages continue through file-level indexing and contract checks.
+
 Each unit has a deterministic identity, exact source range, exact node text, parent symbol where applicable, file imports/exports, direct syntactic calls, and identifier references.
 
 Persisted indexes store source text once per file. Indexed structural units retain ranges and identities rather than duplicate excerpts. `Evidence` reconstructs exact complete source lines from the single file copy.
 
 ## Index lifecycle
 
-Phase 2 originally used schema 1. Phase 2.5 advances graph provenance to schema 2, persisted at `.conclave/code-index-v2.json`, with owner-only file permissions and atomic replacement.
+Phase 2 originally used schema 1. Phase 2.5 advances graph provenance to schema 2, persisted at `.conclave/code-index-v2.json`, with owner-only file permissions and atomic replacement. The current indexing version is 3 because the Python and Java structural parsers are part of the index contract; older indexes rebuild automatically.
 
 Indexing:
 

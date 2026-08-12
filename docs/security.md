@@ -47,7 +47,7 @@ The provider adapter never accepts a repository snapshot directly. A caller must
 - Parser operations create syntax trees only. They do not type-check, import, evaluate, install, or execute repository code.
 - Index paths are canonicalized beneath the repository root. Persisted file/unit paths must be normalized repository-relative paths.
 - Index schema, repository ownership, unit/file ownership, and embedding dimensions are validated when loading.
-- `.conclave/code-index-v2.json` is written atomically with owner-only permissions and is ignored by repository loading and Git.
+- `.conclave/code-index-v2.json` is written atomically with owner-only permissions and is ignored by repository loading and Git. Indexing version changes invalidate older parser output and trigger a rebuild.
 - Graph operations traverse only validated indexed nodes and edges and enforce bounded depth/node/result limits.
 - Context packing reconstructs ranges only from the validated canonical source copy, verifies evidence content hashes, and enforces evidence, source-byte, and approximate-token budgets.
 - Retrieval observability records event type, counts, paths, and ranks where needed. It does not record queries, complete private files, credentials, or hidden model reasoning.

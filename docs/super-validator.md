@@ -1,5 +1,9 @@
 # Super-validator design
 
+SuperValidator is the deterministic review gate behind `conclave review`. It is intentionally independent of provider credentials and model calls: the validator consumes a Git change set, a local repository index, and an objective/contract, then emits a report with evidence and a verdict.
+
+The index is built locally from safe repository files. It contains file metadata, supported-language structural units, imports, exports, calls, inheritance, deterministic local embeddings, and graph edges. A review does not ask a model whether the change looks correct; it checks whether the repository can support the claims made about that change.
+
 ## Product invariant
 
 Conclave validates a resolution independently of the actor that produced it.
@@ -18,7 +22,7 @@ The collected patch remains local in the deterministic gate. Reports expose patc
 
 ## Project and impact graph
 
-The current repository index supplies file and symbol nodes plus typed relations:
+The current repository index supplies file and code-unit nodes plus typed relations. In the report schema, a code unit is called a `symbol`: a named declaration such as a function, class, method, interface, enum, or component.
 
 - symbol ownership and containment;
 - imports and exports;
@@ -41,7 +45,7 @@ interface ValidationContract {
 }
 ```
 
-Claims use typed checks instead of free-form model agreement. A contradicted claim blocks. A claim whose target cannot be resolved is inconclusive. Text claims search the supported TypeScript/JavaScript source index; non-source artifacts should be asserted with file-level checks.
+Claims use typed checks instead of free-form model agreement. A contradicted claim blocks. A claim whose target cannot be resolved is inconclusive. Text claims search the supported TypeScript/JavaScript/Python/Java source index; non-source artifacts and languages without deep parsers should be asserted with file-level checks.
 
 ## Challenge order
 

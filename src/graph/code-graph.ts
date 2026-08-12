@@ -9,7 +9,9 @@ import type {
   RepositoryCodeIndex,
 } from "../domain/code-index.js";
 
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+const SOURCE_EXTENSIONS = [
+  ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py", ".pyw", ".java",
+];
 
 function fileNode(path: string): GraphNodeReference {
   return { kind: "file", id: path };
@@ -39,18 +41,31 @@ function createEdge(edge: Omit<GraphEdge, "id">): GraphEdge {
 function resolveImportPath(
   importerPath: string,
   source: string,
+  importerLanguage: IndexedFile["language"],
   files: Readonly<Record<string, IndexedFile>>,
 ): string | undefined {
-  if (!source.startsWith(".")) {
-    return undefined;
+  const relative = source.startsWith(".");
+  const moduleImport = importerLanguage === "python" || importerLanguage === "java";
+  if (!relative && !moduleImport) return undefined;
+  const importerDirectory = dirname(importerPath).replaceAll("\\", "/");
+  let relativeDirectory = importerDirectory;
+  let relativeSource = source;
+  if (relative && importerLanguage === "python") {
+    const dots = source.match(/^\.+/)?.[0].length ?? 0;
+    relativeSource = source.slice(dots).replaceAll(".", "/");
+    for (let index = 1; index < dots; index += 1) relativeDirectory = dirname(relativeDirectory);
   }
-  const base = posix.normalize(posix.join(dirname(importerPath).replaceAll("\\", "/"), source));
+  const normalizedSource = source.replaceAll(".", "/").replace(/^\/+/, "");
+  const base = relative
+    ? posix.normalize(posix.join(relativeDirectory, relativeSource.replace(/^\//, "")))
+    : posix.normalize(normalizedSource);
   const candidates = [base];
   if (extname(base) === "") {
     for (const extension of SOURCE_EXTENSIONS) {
       candidates.push(`${base}${extension}`);
       candidates.push(`${base}/index${extension}`);
     }
+    if (importerLanguage === "python") candidates.push(`${base}/__init__.py`);
   }
   return candidates.find((candidate) => files[candidate] !== undefined);
 }
@@ -165,7 +180,7 @@ export function buildCodeGraph(
   for (const file of Object.values(files)) {
     const importedTargets = new Map<string, IndexedCodeUnit>();
     for (const importReference of file.imports) {
-      const targetPath = resolveImportPath(file.path, importReference.source, files);
+      const targetPath = resolveImportPath(file.path, importReference.source, file.language, files);
       if (targetPath === undefined) {
         continue;
       }

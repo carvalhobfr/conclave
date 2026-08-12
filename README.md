@@ -2,9 +2,9 @@
 
 # Conclave
 
-### AI writes. Conclave verifies.
+### Simplify and protect every PR.
 
-**A local-first PR assistant that checks whether a code change did what it claims.**
+**Conclave gives reviewers a deterministic, evidence-backed check between a code change and human approval.**
 
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -27,13 +27,38 @@ flowchart LR
   D --> E["PR can move forward"]
 ```
 
-Give it a Git change and its objective. Conclave inspects the diff, follows affected symbols beyond the edited files, checks optional machine-readable claims, and returns one verdict:
+Give it a Git change and its objective. Conclave inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations) beyond the edited files, checks optional machine-readable claims, and returns one verdict:
 
 ```text
 PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
 ```
 
 `conclave review` is deterministic, runs locally, needs no API key, and makes zero model calls.
+
+## How review works
+
+Review is not an LLM code review. It is a local verification pipeline:
+
+```mermaid
+flowchart LR
+  A["Git snapshot"] --> B["Safe local file scan"]
+  B --> C["Language parser + symbol graph"]
+  C --> D["Objective, diff, impact, and contract checks"]
+  D --> E["Evidence-backed verdict"]
+```
+
+When you run `conclave review`, Conclave:
+
+1. collects the working tree, staged files, branch diff, or commit you selected;
+2. excludes ignored, binary, secret-like, or unsafe files from the index;
+3. parses supported source files and builds a local dependency graph of code units;
+4. maps changed lines to functions, classes, methods, and other declarations, then follows their local impact;
+5. checks the objective and any explicit validation contract; and
+6. returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with evidence and next actions.
+
+The review path does not send repository content anywhere, use provider credentials, call a model, execute repository scripts, or require network access. This is why it works in local development and CI without provider setup.
+
+API-backed providers are only for optional features such as `conclave ask` and `conclave task`. Those commands use the provider configured by `conclave init`; they are separate from the deterministic review gate.
 
 ## Where it fits
 
@@ -109,6 +134,25 @@ Add `--json` for CI, agents, or other tools.
 
 Conclave intentionally blocks a comparison with no diff. A merged `main` compared with `origin/main` is not a change to validate.
 
+### Compare branches and summarize the change
+
+The branch mode compares the checked-out branch (`HEAD`) with any Git ref you provide. It is useful for a local pre-PR summary as well as for validation:
+
+```bash
+# While checked out on feature/login
+conclave review . --branch origin/main \
+  --objective "Add passwordless login"
+```
+
+The human-readable output includes the verdict, changed/impacted file and code-unit counts, and a compact list of each changed file with its status and number of diff hunks. In Conclave's JSON schema, these code units are represented as `symbols`: a symbol is simply a named piece of code such as a function, class, method, interface, or component. Add `--json` when another tool or a CI job needs the complete machine-readable change set, evidence, and summary:
+
+```bash
+conclave review . --branch origin/main \
+  --objective "Add passwordless login" --json
+```
+
+This does not call an API or generate an LLM summary: Conclave derives the comparison from Git and its local code index. If you want a natural-language explanation, use the optional API-backed `conclave ask` separately after configuring a provider.
+
 ## Make PR claims checkable
 
 An objective provides context. A validation contract turns important completion claims into deterministic checks:
@@ -145,9 +189,18 @@ Install it in the current repository:
 
 ```bash
 npm install --save-dev conclave-ai
-npx --no-install conclave skill install \
-  --target both --scope project --project .
+npx conclave skill install
 ```
+
+That command defaults to the current repository and installs both agent adapters. Use `--target codex` or `--target claude` when you only want one.
+
+If you only want the skill files and do not want to add Conclave to the project, use the one-shot installer:
+
+```bash
+npx --yes conclave-ai skill install
+```
+
+This installs the adapters without changing `package.json`. The validation engine still needs to be available through a project install, a global install, or an explicit `CONCLAVE_CLI_PATH` when the skill runs.
 
 This creates:
 
@@ -162,8 +215,7 @@ For a user-wide installation:
 
 ```bash
 npm install --global conclave-ai
-export CONCLAVE_BIN=conclave
-conclave skill install --target both --scope user
+conclave skill install --scope user
 ```
 
 Preview any skill installation with `--dry-run`; use `--force` only when you intend to replace an existing copy.
@@ -250,7 +302,8 @@ Both expose the same validation result as the CLI.
 ## Language support and limits
 
 - Git collection and file-level contract checks work at repository level.
-- Deep symbol and dependency analysis currently supports TypeScript and JavaScript.
+- Deep structural analysis currently supports TypeScript, JavaScript, Python, and Java. Python and Java use deterministic source-structure parsers for declarations, imports, calls, exports, and inheritance; compiler-level type checking is outside Conclave's scope.
+- Other languages still receive repository-level diff, text, changed-file, and contract validation while their deep symbol graph is being added.
 - Node.js is the Conclave runtime; the repository being reviewed does not need to be a Node project.
 - Review does not execute repository tests or scripts.
 - Deleted-only changes can be `INCONCLUSIVE` because validation indexes the resulting repository.

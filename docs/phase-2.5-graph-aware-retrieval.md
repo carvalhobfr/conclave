@@ -27,7 +27,7 @@ Every edge has a provenance kind:
 
 Provenance retains the source path, start/end line when available, relation type on the edge, resolution method, and a human-readable reason. There are no inferred or model-generated edges.
 
-The persisted index advances to schema/indexing version 2 and `.conclave/code-index-v2.json`. Older indexes are not trusted as schema 2; indexing rebuilds them from the safe repository snapshot.
+The persisted index uses schema version 2 and `.conclave/code-index-v2.json`. The current indexing version is 3 after adding Python and Java structural parsers. Older indexes are not trusted; indexing rebuilds them from the safe repository snapshot.
 
 ## First-class graph queries
 

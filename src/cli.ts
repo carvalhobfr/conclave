@@ -762,6 +762,16 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
       "Impact: " + String(report.metrics.impactedFiles) + " files / " +
       String(report.metrics.impactedSymbols) + " symbols",
     );
+    if (report.changeSet.files.length > 0) {
+      console.log("Changed files:");
+      for (const file of report.changeSet.files) {
+        const hunks = file.hunks.length === 0
+          ? "no hunks"
+          : String(file.hunks.length) + " hunk" + (file.hunks.length === 1 ? "" : "s");
+        const previous = file.previousPath === undefined ? "" : ` (from ${file.previousPath})`;
+        console.log(`- ${file.status}: ${file.path}${previous} — ${hunks}`);
+      }
+    }
     for (const item of report.findings) {
       console.log("");
       console.log(item.severity.toUpperCase() + " " + item.kind + ": " + item.title);

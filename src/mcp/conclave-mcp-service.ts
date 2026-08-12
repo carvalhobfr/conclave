@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
+import { MultiLanguageCodeParser } from "../code-intelligence/multi-language-parser.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { EmbeddingProvider } from "../domain/embedding.js";
 import type { ChangeSource, ValidationContract } from "../domain/validation.js";
@@ -113,7 +113,7 @@ export class ConclaveMcpService {
     const allowed = resolve(options.allowedRoot ?? root);
     if (!isPathInside(allowed, root)) throw new McpInputError("MCP repository root is outside the configured allowed root");
     const embedding = options.embeddingProvider ?? new LocalHashEmbeddingProvider();
-    const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
+    const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new MultiLanguageCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
     const retrieval = new CodeRetrievalService(indexed.index, embedding);
     return new ConclaveMcpService(
       retrieval,

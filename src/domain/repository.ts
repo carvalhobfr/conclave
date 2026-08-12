@@ -7,6 +7,8 @@ export type SourceLanguage =
   | "tsx"
   | "javascript"
   | "jsx"
+  | "python"
+  | "java"
   | "json"
   | "markdown"
   | "css"
