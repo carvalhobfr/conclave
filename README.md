@@ -4,7 +4,7 @@
 
 ### Simplify and protect every PR.
 
-**Conclave gives reviewers a deterministic, evidence-backed check between a code change and human approval.**
+**Conclave is a PR companion: it gives agents and reviewers context, evidence, and a safer path from code change to merge.**
 
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -23,19 +23,19 @@ Conclave sits between **code changed** and **ready to merge**:
 
 **In one sentence:** Conclave checks the change, shows the evidence, and leaves the final merge decision with a human.
 
-Give it a Git change and its objective. Conclave inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations) beyond the edited files, checks optional machine-readable claims, and returns one verdict:
+Give it a Git change and its objective. Conclave can prepare local code context, help an agent investigate or plan work, and run a deterministic validation step before a human approves the PR. The validation step inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations), checks optional machine-readable claims, and returns one verdict:
 
 ```text
 PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
 ```
 
-`conclave review` is deterministic, runs locally, needs no API key, and makes zero model calls. `conclave validate` is an equivalent, more explicit alias.
+The full product can use an optional provider for `ask` and `task`. The `review`/`validate` command is the deterministic validation step inside that larger workflow; it runs locally and does not call a model. `conclave validate` is the more explicit alias.
 
-> **Important:** `validate` is a pre-merge check, not a complete judgment of code quality. It does not compile the project, run the test suite, execute the application, or decide whether the product behavior is good. It checks whether the proposed change is structurally consistent and whether its claims are supported by repository evidence. Tests, runtime checks, security review, and human approval still complete the PR review.
+> **Important:** `validate` is one step, not the whole review. It does not compile the project, run the test suite, execute the application, or decide whether the product behavior is good. It checks whether the proposed change is structurally consistent and whether its claims are supported by repository evidence. An agent or human still uses that evidence together with tests, runtime checks, security review, and product judgment.
 
-### Review is validation, not just indexing
+### Where validation fits
 
-The word **review** describes the user-facing job: checking whether a proposed change is ready for human PR approval. Indexing is only the preparation step. Conclave builds a temporary local map of the repository so it can answer concrete validation questions:
+`validate` is not “the AI reviewer”. It is the evidence checkpoint in the PR workflow. Indexing is only its preparation step. Conclave builds a temporary local map of the repository so the next agent or reviewer can answer concrete questions with evidence:
 
 | Step | What it does |
 | --- | --- |
@@ -43,9 +43,18 @@ The word **review** describes the user-facing job: checking whether a proposed c
 | Build local map | Finds files, functions, classes, methods, imports, calls, and dependencies |
 | Trace impact | Follows which unchanged code uses or depends on the changed code |
 | Validate | Checks the objective, changed scope, contracts, claims, and available evidence |
-| Report | Returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with file/line evidence |
+| Evidence step | Returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with file/line evidence |
 
-So the validator is not pretending to be an AI reviewer. It performs deterministic checks that a model should not be trusted to invent: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. A `PASS` means **“the available structural checks found no blocker”**, not **“this code is guaranteed correct”**. It does not understand product intent or runtime behavior the way a human or a language model does; that is why the final PR decision remains with the human reviewer.
+It performs deterministic checks that an agent or model should not be trusted to invent: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. A `PASS` means **“the available structural checks found no blocker”**, not **“this code is guaranteed correct”**. The result is input to the next step, not the final PR decision.
+
+Typical flow:
+
+```text
+1. Agent or developer changes code
+2. Conclave indexes the repository and validates the change
+3. Agent/reviewer reads the evidence, runs tests, and investigates open questions
+4. Human approves or requests changes
+```
 
 Think of the result as a **change-readiness signal**:
 
@@ -70,7 +79,7 @@ When you run `conclave review`, Conclave:
 5. checks the objective and any explicit validation contract; and
 6. returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with evidence and next actions.
 
-The review path does not send repository content anywhere, use provider credentials, call a model, execute repository scripts, or require network access. This is why it works in local development and CI without provider setup.
+The validation path does not send repository content anywhere, use provider credentials, call a model, execute repository scripts, or require network access. It is designed to be a reliable local checkpoint that can run before or alongside the model-backed parts of Conclave.
 
 API-backed providers are only for optional features such as `conclave ask` and `conclave task`. Those commands use the provider configured by `conclave init`; they are separate from the deterministic review gate.
 

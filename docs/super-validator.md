@@ -1,8 +1,8 @@
 # Super-validator design
 
-SuperValidator is the deterministic review gate behind `conclave review`. It is intentionally independent of provider credentials and model calls: the validator consumes a Git change set, a local repository index, and an objective/contract, then emits a report with evidence and a verdict.
+SuperValidator is the deterministic evidence checkpoint behind `conclave review` and `conclave validate`. It is one step in the broader Conclave PR workflow, not a complete AI review: the validator consumes a Git change set, a local repository index, and an objective/contract, then emits a report with evidence and a verdict for an agent or human to use.
 
-This is a pre-merge validation layer, not a full code-quality or runtime judge. It does not compile the repository, run its test suite, execute the application, or infer product intent. `PASS` means that the available deterministic checks found no blocker; it does not guarantee that the implementation is correct in every environment. Tests, runtime checks, security review, and a human reviewer remain part of the PR decision.
+This is a pre-merge evidence layer, not a full code-quality or runtime judge. It does not compile the repository, run its test suite, execute the application, or infer product intent. `PASS` means that the available deterministic checks found no blocker; it does not guarantee that the implementation is correct in every environment. The next workflow step is to use the evidence with tests, runtime checks, optional model reasoning, security review, and human approval.
 
 The index is built locally from safe repository files. It contains file metadata, supported-language structural units, imports, exports, calls, inheritance, deterministic local embeddings, and graph edges. A review does not ask a model whether the change looks correct; it checks whether the repository can support the claims made about that change.
 
