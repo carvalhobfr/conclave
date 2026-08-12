@@ -31,6 +31,8 @@ PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
 
 `conclave review` is deterministic, runs locally, needs no API key, and makes zero model calls. `conclave validate` is an equivalent, more explicit alias.
 
+> **Important:** `validate` is a pre-merge check, not a complete judgment of code quality. It does not compile the project, run the test suite, execute the application, or decide whether the product behavior is good. It checks whether the proposed change is structurally consistent and whether its claims are supported by repository evidence. Tests, runtime checks, security review, and human approval still complete the PR review.
+
 ### Review is validation, not just indexing
 
 The word **review** describes the user-facing job: checking whether a proposed change is ready for human PR approval. Indexing is only the preparation step. Conclave builds a temporary local map of the repository so it can answer concrete validation questions:
@@ -43,7 +45,15 @@ The word **review** describes the user-facing job: checking whether a proposed c
 | Validate | Checks the objective, changed scope, contracts, claims, and available evidence |
 | Report | Returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with file/line evidence |
 
-So the validator is not pretending to be an AI reviewer. It performs deterministic checks that a model should not be trusted to invent: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. It does not understand product intent the way a human or a language model does; that is why the final PR decision remains with the human reviewer.
+So the validator is not pretending to be an AI reviewer. It performs deterministic checks that a model should not be trusted to invent: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. A `PASS` means **“the available structural checks found no blocker”**, not **“this code is guaranteed correct”**. It does not understand product intent or runtime behavior the way a human or a language model does; that is why the final PR decision remains with the human reviewer.
+
+Think of the result as a **change-readiness signal**:
+
+| Conclave can say | Conclave cannot say by itself |
+| --- | --- |
+| “This claim is supported by the repository.” | “Users will love this behavior.” |
+| “This branch changes these files and affected code units.” | “The application works in production.” |
+| “A deterministic blocker or missing piece was found.” | “All tests and runtime paths pass.” |
 
 ## How review works
 
