@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="250" viewBox="0 0 1200 250" role="img" aria-labelledby="title desc">
+  <title id="title">Conclave deterministic review pipeline</title>
+  <desc id="desc">Git snapshot, local indexing, graph impact, contract checks, and a verdict.</desc>
+  <defs><linearGradient id="bg" x1="0" x2="1"><stop stop-color="#f8fafc"/><stop offset="1" stop-color="#e0f2fe"/></linearGradient><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+  <rect width="1200" height="250" rx="24" fill="url(#bg)" stroke="#cbd5e1"/>
+  <text x="50" y="48" fill="#0f172a" font-family="Arial,sans-serif" font-size="24" font-weight="700">What happens inside <tspan fill="#2563eb">conclave review</tspan></text>
+  <g font-family="Arial,sans-serif" font-size="15" fill="#0f172a">
+    <g transform="translate(45 90)"><rect width="180" height="90" rx="14" fill="#dbeafe" stroke="#60a5fa"/><text x="90" y="38" text-anchor="middle" font-weight="700">Git snapshot</text><text x="90" y="63" text-anchor="middle">branch / staged /</text><text x="90" y="82" text-anchor="middle">working / commit</text></g>
+    <g transform="translate(270 90)"><rect width="180" height="90" rx="14" fill="#ccfbf1" stroke="#2dd4bf"/><text x="90" y="38" text-anchor="middle" font-weight="700">Local index</text><text x="90" y="63" text-anchor="middle">safe files + code</text><text x="90" y="82" text-anchor="middle">units and imports</text></g>
+    <g transform="translate(495 90)"><rect width="180" height="90" rx="14" fill="#ede9fe" stroke="#a78bfa"/><text x="90" y="38" text-anchor="middle" font-weight="700">Impact graph</text><text x="90" y="63" text-anchor="middle">callers, consumers</text><text x="90" y="82" text-anchor="middle">and dependencies</text></g>
+    <g transform="translate(720 90)"><rect width="180" height="90" rx="14" fill="#fef3c7" stroke="#fbbf24"/><text x="90" y="38" text-anchor="middle" font-weight="700">Checks</text><text x="90" y="63" text-anchor="middle">objective + contract</text><text x="90" y="82" text-anchor="middle">+ changed lines</text></g>
+    <g transform="translate(945 90)"><rect width="200" height="90" rx="14" fill="#dcfce7" stroke="#4ade80"/><text x="100" y="38" text-anchor="middle" font-weight="700">Verdict</text><text x="100" y="63" text-anchor="middle">PASS · WARN · BLOCK</text><text x="100" y="82" text-anchor="middle">with evidence</text></g>
+  </g>
+  <path d="M225 135h38M450 135h38M675 135h38M900 135h38" stroke="#475569" stroke-width="3" marker-end="url(#arrow)"/>
+</svg>

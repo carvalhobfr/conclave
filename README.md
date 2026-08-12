@@ -19,13 +19,9 @@
 
 Conclave sits between **code changed** and **ready to merge**:
 
-```mermaid
-flowchart LR
-  A["Code change or PR"] --> B["Conclave checks<br/>objective · diff · impact · claims"]
-  B --> C["Verdict + review context<br/>evidence · affected code · next action"]
-  C --> D["Human reviews<br/>and approves"]
-  D --> E["PR can move forward"]
-```
+<p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/codex/readme-product-guide/docs/assets/conclave-pr-flow.svg" alt="A code change is checked by Conclave, produces evidence, and goes to human approval" width="900"></p>
+
+**In one sentence:** Conclave checks the change, shows the evidence, and leaves the final merge decision with a human.
 
 Give it a Git change and its objective. Conclave inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations) beyond the edited files, checks optional machine-readable claims, and returns one verdict:
 
@@ -39,13 +35,7 @@ PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
 
 Review is not an LLM code review. It is a local verification pipeline:
 
-```mermaid
-flowchart LR
-  A["Git snapshot"] --> B["Safe local file scan"]
-  B --> C["Language parser + symbol graph"]
-  C --> D["Objective, diff, impact, and contract checks"]
-  D --> E["Evidence-backed verdict"]
-```
+<p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/codex/readme-product-guide/docs/assets/conclave-review-pipeline.svg" alt="Conclave review pipeline from Git snapshot to evidence-backed verdict" width="900"></p>
 
 When you run `conclave review`, Conclave:
 
