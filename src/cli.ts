@@ -83,6 +83,7 @@ Usage:
   conclave config [--json]
   conclave models [--provider openai|openrouter|anthropic] [--json]
   conclave init [--provider openai|openrouter|anthropic] [--profile id] [--model id] [--reasoning full|fast] [--api-key-stdin|--no-key] [--config-file path] [--json]
+  conclave update [--local|--global|--check]
   conclave skill install [--target codex|claude|both|portable] [--scope project|user] [--project path] [--destination path] [--force] [--dry-run]
   conclave provider-check
   conclave demo
@@ -720,6 +721,48 @@ function selectedChangeSource(parsed: ParsedArguments): ChangeSource {
   return selected[0] ?? { kind: "working" };
 }
 
+function runExternalCommand(command: string, args: readonly string[]): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, [...args], { stdio: "inherit", shell: false });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal !== null) {
+        reject(new Error(`${command} was terminated by ${signal}`));
+      } else {
+        resolvePromise(code ?? 1);
+      }
+    });
+  });
+}
+
+async function updateConclave(args: readonly string[]): Promise<void> {
+  const modes = args.filter((argument): argument is "--local" | "--global" | "--check" =>
+    argument === "--local" || argument === "--global" || argument === "--check");
+  const unknown = args.filter((argument) => argument !== "--local" && argument !== "--global" && argument !== "--check");
+  if (unknown.length > 0 || modes.length > 1) {
+    throw new Error("update accepts one of --local, --global, or --check");
+  }
+  const mode = modes[0] ?? "--local";
+  if (mode === "--check") {
+    const code = await runExternalCommand("npm", ["view", "conclave-ai", "version"]);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
+  const commandArgs = mode === "--global"
+    ? ["install", "--global", "conclave-ai@latest"]
+    : ["install", "--save-dev", "conclave-ai@latest"];
+  console.log(`Updating Conclave ${mode === "--global" ? "globally" : "in this project"}...`);
+  const code = await runExternalCommand("npm", commandArgs);
+  if (code !== 0) process.exitCode = code;
+  else console.log("Conclave updated. Run `conclave --version` or `npm list conclave-ai` to confirm.");
+}
+
+async function showVersion(): Promise<void> {
+  const packagePath = resolve(dirname(fileURLToPath(import.meta.url)), "../package.json");
+  const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as { version?: string };
+  console.log(packageJson.version ?? "unknown");
+}
+
 async function loadValidationContract(parsed: ParsedArguments): Promise<ValidationContract> {
   if (parsed.contractPath === undefined) {
     return createValidationContract(parsed.objective ?? "");
@@ -1187,6 +1230,10 @@ async function runDemo(): Promise<void> {
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   switch (command) {
+    case "--version":
+    case "-v":
+      await showVersion();
+      return;
     case "scan":
       await scan(args);
       return;
@@ -1219,6 +1266,9 @@ async function main(): Promise<void> {
       return;
     case "validate":
       await reviewChanges(args);
+      return;
+    case "update":
+      await updateConclave(args);
       return;
     case "task":
       await executeTask(args);

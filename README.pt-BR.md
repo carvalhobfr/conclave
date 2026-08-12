@@ -38,6 +38,28 @@ npx --yes --package=conclave-ai conclave review . --working \
   --objective "Restaurar a sessão após atualizar a página"
 ```
 
+## Atualizar o Conclave
+
+Se o Conclave está instalado no projeto atual:
+
+```bash
+conclave update
+```
+
+Para atualizar uma instalação global:
+
+```bash
+conclave update --global
+```
+
+Para apenas consultar a versão mais recente publicada:
+
+```bash
+conclave update --check
+```
+
+Também é possível usar diretamente `npm install --save-dev conclave-ai@latest` no projeto ou `npm install --global conclave-ai@latest` globalmente. Depois da atualização, reinstale a skill se ela estiver copiada no projeto: `npx conclave skill install --force`.
+
 ## Comparar uma branch
 
 ```bash

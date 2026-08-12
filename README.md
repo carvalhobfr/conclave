@@ -139,6 +139,28 @@ npm install --global conclave-ai
 conclave review . --working --objective "..."
 ```
 
+### Update Conclave
+
+If Conclave is installed in the current project, update it with:
+
+```bash
+conclave update
+```
+
+For a global installation:
+
+```bash
+conclave update --global
+```
+
+To check the latest published version without changing anything:
+
+```bash
+conclave update --check
+```
+
+You can also use the package manager directly: `npm install --save-dev conclave-ai@latest` for a project or `npm install --global conclave-ai@latest` for a global install. After updating, reinstall the agent skill if you keep a project-local copy: `npx conclave skill install --force`.
+
 ## What it reviews
 
 Choose the Git snapshot that matches your workflow:
