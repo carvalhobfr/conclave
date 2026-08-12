@@ -1,6 +1,6 @@
 # Super-validator design
 
-SuperValidator is the deterministic evidence checkpoint behind `conclave review` and `conclave validate`. It is one step in the broader Conclave PR workflow, not a complete AI review: the validator consumes a Git change set, a local repository index, and an objective/contract, then emits a report with evidence and a verdict for an agent or human to use.
+SuperValidator is the independent evidence checkpoint behind `conclave review` and `conclave validate`. It is one step in the broader Conclave workflow: the context and agent features help investigate or implement a change, while SuperValidator checks the resulting Git change and emits a report with evidence and a verdict for an agent, CI job, or human to use.
 
 This is a pre-merge evidence layer, not a full code-quality or runtime judge. It does not compile the repository, run its test suite, execute the application, or infer product intent. `PASS` means that the available deterministic checks found no blocker; it does not guarantee that the implementation is correct in every environment. The next workflow step is to use the evidence with tests, runtime checks, optional model reasoning, security review, and human approval.
 

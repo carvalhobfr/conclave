@@ -4,7 +4,7 @@
 
 ### Simplify and protect every PR.
 
-**Conclave is a PR companion: it gives agents and reviewers context, evidence, and a safer path from code change to merge.**
+**Conclave is the evidence layer for AI-assisted development: it helps agents understand a repository, helps reviewers understand a change, and helps teams move PRs forward with less guesswork.**
 
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -21,21 +21,30 @@ Conclave sits between **code changed** and **ready to merge**:
 
 <p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/codex/readme-product-guide/docs/assets/conclave-pr-flow.svg" alt="A code change is checked by Conclave, produces evidence, and goes to human approval" width="900"></p>
 
-**In one sentence:** Conclave checks the change, shows the evidence, and leaves the final merge decision with a human.
+**In one sentence:** Conclave turns a code change into shared context, evidence, and a clear next step for the agent, CI, and human reviewer.
 
-Give it a Git change and its objective. Conclave can prepare local code context, help an agent investigate or plan work, and run a deterministic validation step before a human approves the PR. The validation step inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations), checks optional machine-readable claims, and returns one verdict:
+Conclave has two connected jobs. First, it gives an agent or developer local repository context for investigation and implementation. Then it checks the resulting change before the PR moves to human approval. Its validation step inspects the diff, follows affected code units (functions, classes, methods, interfaces, and similar declarations), checks optional machine-readable claims, and returns one verdict:
 
 ```text
 PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
 ```
 
-The full product can use an optional provider for `ask` and `task`. The `review`/`validate` command is the deterministic validation step inside that larger workflow; it runs locally and does not call a model. `conclave validate` is the more explicit alias.
+The context and agent features (`ask`, `investigate`, and `task`) can use a provider that you configure. The `review`/`validate` command is the independent verification step inside that larger workflow; it runs locally and does not call a model. `conclave validate` is the more explicit alias.
 
-> **Important:** `validate` is one step, not the whole review. It does not compile the project, run the test suite, execute the application, or decide whether the product behavior is good. It checks whether the proposed change is structurally consistent and whether its claims are supported by repository evidence. An agent or human still uses that evidence together with tests, runtime checks, security review, and product judgment.
+> **Important:** `validate` is one step, not the whole product. It produces an independent evidence report for the next step. It does not compile the project, run the test suite, execute the application, or decide whether the product behavior is good. An agent or human uses its report together with tests, runtime checks, security review, and product judgment.
+
+### The product in practice
+
+| Stage | Conclave's job | Output |
+| --- | --- | --- |
+| Understand | Index the repository and expose search, code relationships, and evidence | Local code context |
+| Work | Let a configured agent investigate, plan, or make a bounded change | A proposed implementation |
+| Check | Compare the Git change with its objective and claims | Independent validation report |
+| Decide | Give the agent, CI, and reviewer the same evidence | Fix, investigate, or approve |
 
 ### Where validation fits
 
-`validate` is not “the AI reviewer”. It is the evidence checkpoint in the PR workflow. Indexing is only its preparation step. Conclave builds a temporary local map of the repository so the next agent or reviewer can answer concrete questions with evidence:
+`validate` is the independent evidence checkpoint in the PR workflow. Indexing is only its preparation step. Conclave builds a temporary local map of the repository so the next agent or reviewer can answer concrete questions with evidence:
 
 | Step | What it does |
 | --- | --- |
@@ -45,7 +54,7 @@ The full product can use an optional provider for `ask` and `task`. The `review`
 | Validate | Checks the objective, changed scope, contracts, claims, and available evidence |
 | Evidence step | Returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with file/line evidence |
 
-It performs deterministic checks that an agent or model should not be trusted to invent: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. A `PASS` means **“the available structural checks found no blocker”**, not **“this code is guaranteed correct”**. The result is input to the next step, not the final PR decision.
+It performs deterministic checks that should remain independent from the agent that made the change: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. A `PASS` means **“the available structural checks found no blocker”**, not **“this code is guaranteed correct”**. The result is input to the next step, not the final PR decision.
 
 Typical flow:
 
@@ -66,7 +75,7 @@ Think of the result as a **change-readiness signal**:
 
 ## How review works
 
-Review is not an LLM code review. It is a local verification pipeline:
+The verification step is a local evidence pipeline:
 
 <p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/codex/readme-product-guide/docs/assets/conclave-review-pipeline.svg" alt="Conclave review pipeline from Git snapshot to evidence-backed verdict" width="900"></p>
 
@@ -79,7 +88,7 @@ When you run `conclave review`, Conclave:
 5. checks the objective and any explicit validation contract; and
 6. returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with evidence and next actions.
 
-The validation path does not send repository content anywhere, use provider credentials, call a model, execute repository scripts, or require network access. It is designed to be a reliable local checkpoint that can run before or alongside the model-backed parts of Conclave.
+The verification path does not send repository content anywhere, use provider credentials, call a model, execute repository scripts, or require network access. This separation keeps the report independent from the agent's own reasoning and makes it suitable for local development and CI.
 
 API-backed providers are only for optional features such as `conclave ask` and `conclave task`. Those commands use the provider configured by `conclave init`; they are separate from the deterministic review gate.
 
