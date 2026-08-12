@@ -75,6 +75,7 @@ Usage:
   conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
   conclave ask <path> <question> [--json] [--debug]
   conclave review <path> [--working|--staged|--branch <base>|--commit <sha>] --objective <goal> [--contract <file.json>] [--json]
+  conclave validate <path> [same options as review]
   conclave task <path> <objective> [--plan-only] [--allow-edits] [--allow-checks] [--allow-repository-scripts] [--allow-network] [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
@@ -1214,6 +1215,9 @@ async function main(): Promise<void> {
       await askRepository(args);
       return;
     case "review":
+      await reviewChanges(args);
+      return;
+    case "validate":
       await reviewChanges(args);
       return;
     case "task":

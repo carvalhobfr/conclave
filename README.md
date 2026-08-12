@@ -29,7 +29,21 @@ Give it a Git change and its objective. Conclave inspects the diff, follows affe
 PASS  ·  WARN  ·  BLOCK  ·  INCONCLUSIVE
 ```
 
-`conclave review` is deterministic, runs locally, needs no API key, and makes zero model calls.
+`conclave review` is deterministic, runs locally, needs no API key, and makes zero model calls. `conclave validate` is an equivalent, more explicit alias.
+
+### Review is validation, not just indexing
+
+The word **review** describes the user-facing job: checking whether a proposed change is ready for human PR approval. Indexing is only the preparation step. Conclave builds a temporary local map of the repository so it can answer concrete validation questions:
+
+| Step | What it does |
+| --- | --- |
+| Collect change | Reads the selected Git diff or branch comparison |
+| Build local map | Finds files, functions, classes, methods, imports, calls, and dependencies |
+| Trace impact | Follows which unchanged code uses or depends on the changed code |
+| Validate | Checks the objective, changed scope, contracts, claims, and available evidence |
+| Report | Returns `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE` with file/line evidence |
+
+So the validator is not pretending to be an AI reviewer. It performs deterministic checks that a model should not be trusted to invent: whether a claimed function exists, whether a change touches the requested scope, whether a deleted unit still has consumers, and whether the repository provides enough evidence. It does not understand product intent the way a human or a language model does; that is why the final PR decision remains with the human reviewer.
 
 ## How review works
 
