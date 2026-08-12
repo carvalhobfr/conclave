@@ -159,6 +159,8 @@ To check the latest published version without changing anything:
 conclave update --check
 ```
 
+If you are already on the latest release, `conclave update` exits with a clear message instead of attempting an unnecessary install.
+
 You can also use the package manager directly: `npm install --save-dev conclave-ai@latest` for a project or `npm install --global conclave-ai@latest` for a global install. After updating, reinstall the agent skill if you keep a project-local copy: `npx conclave skill install --force`.
 
 ## What it reviews

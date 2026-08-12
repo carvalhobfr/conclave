@@ -735,6 +735,31 @@ function runExternalCommand(command: string, args: readonly string[]): Promise<n
   });
 }
 
+function captureExternalCommand(command: string, args: readonly string[]): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"], shell: false });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal !== null) reject(new Error(`${command} was terminated by ${signal}`));
+      else resolvePromise({ code: code ?? 1, stdout, stderr });
+    });
+  });
+}
+
+function compareVersions(left: string, right: string): number {
+  const parse = (value: string): readonly number[] => value.replace(/^v/u, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    if ((a[index] ?? 0) !== (b[index] ?? 0)) return (a[index] ?? 0) - (b[index] ?? 0);
+  }
+  return 0;
+}
+
 async function updateConclave(args: readonly string[]): Promise<void> {
   const modes = args.filter((argument): argument is "--local" | "--global" | "--check" =>
     argument === "--local" || argument === "--global" || argument === "--check");
@@ -744,9 +769,24 @@ async function updateConclave(args: readonly string[]): Promise<void> {
   }
   const mode = modes[0] ?? "--local";
   if (mode === "--check") {
-    const code = await runExternalCommand("npm", ["view", "conclave-ai", "version"]);
-    if (code !== 0) process.exitCode = code;
+    const result = await captureExternalCommand("npm", ["view", "conclave-ai", "version"]);
+    if (result.code !== 0) {
+      process.stderr.write(result.stderr);
+      process.exitCode = result.code;
+    } else console.log(result.stdout.trim());
     return;
+  }
+  const latest = await captureExternalCommand("npm", ["view", "conclave-ai", "version"]);
+  if (latest.code !== 0) {
+    process.stderr.write(latest.stderr);
+    process.exitCode = latest.code;
+    return;
+  }
+  const current = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "../package.json"), "utf8")) as { version?: string };
+  const currentVersion = current.version ?? "0.0.0";
+  const latestVersion = latest.stdout.trim();
+  if (compareVersions(currentVersion, latestVersion) >= 0) {
+    throw new Error(`Conclave já está na versão mais recente (${currentVersion}). Nenhuma atualização foi necessária.`);
   }
   const commandArgs = mode === "--global"
     ? ["install", "--global", "conclave-ai@latest"]

@@ -58,6 +58,8 @@ Para apenas consultar a versão mais recente publicada:
 conclave update --check
 ```
 
+Se você já estiver na versão mais recente, `conclave update` encerra com uma mensagem clara e não tenta fazer uma instalação desnecessária.
+
 Também é possível usar diretamente `npm install --save-dev conclave-ai@latest` no projeto ou `npm install --global conclave-ai@latest` globalmente. Depois da atualização, reinstale a skill se ela estiver copiada no projeto: `npx conclave skill install --force`.
 
 ## Comparar uma branch
