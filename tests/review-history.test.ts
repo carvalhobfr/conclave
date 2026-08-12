@@ -1,0 +1,33 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import { listReviewHistory, saveReviewHistory, type ReviewHistoryRecord } from "../src/storage/review-history.js";
+
+const summary = {
+  title: "Update src/session.ts",
+  summary: "One file changed.",
+  comparison: "HEAD compared with origin/main",
+  verdict: "pass" as const,
+  changedFiles: [],
+  changedCodeUnits: 1,
+  impactedFiles: 1,
+  risks: [],
+  nextSteps: ["Run tests"],
+};
+
+describe("review history", () => {
+  it("stores the latest review locally and keeps the file owner-only", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conclave-review-history-"));
+    const record: ReviewHistoryRecord = { id: "review-1", createdAt: "2026-01-01T00:00:00.000Z", repository: root, objective: "Test", headSha: "abc", summary };
+    try {
+      await saveReviewHistory(root, record);
+      expect(await listReviewHistory(root)).toEqual([record]);
+      expect(JSON.parse(await readFile(join(root, ".conclave", "review-history.json"), "utf8"))).toEqual([record]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

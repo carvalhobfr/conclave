@@ -82,6 +82,30 @@ conclave review . --branch origin/main \
   --objective "Adicionar login sem senha"
 ```
 
+## Fluxo completo de PR
+
+Para executar a comparação, validação, resumo em linguagem humana, próximos passos e histórico local em um comando:
+
+```bash
+conclave pr . --branch origin/main \
+  --objective "Adicionar login sem senha"
+```
+
+Esse é o ponto de partida recomendado para um PR. Ele não chama um modelo nem publica nada fora da máquina. O resultado fica registrado em `.conclave/review-history.json`:
+
+```bash
+conclave history .
+conclave history . --json
+```
+
+Depois de um `BLOCK` ou `WARN`, leia as evidências, corrija com seu agente ou editor e execute o mesmo comando novamente:
+
+```text
+mudança → conclave pr → ler evidências → corrigir → conclave pr novamente → aprovação humana
+```
+
+A versão atual ainda não publica comentários no GitHub nem aplica patches gerados automaticamente. Essas ações exigem integração autenticada ou permissão explícita de edição e serão adaptadores separados; primeiro o relatório local é a fonte de verdade.
+
 `--branch` é a **referência-base**, não a branch que será analisada. O Conclave sempre compara o `HEAD` atualmente em checkout com essa base. Para conferir o que o Git está comparando:
 
 ```bash

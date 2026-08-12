@@ -175,6 +175,30 @@ You can also use the package manager directly: `npm install --save-dev conclave-
 
 ## What it reviews
 
+### A complete PR pass
+
+For a single command that combines the Git comparison, validation, human-readable summary, next steps, and local history:
+
+```bash
+conclave pr . --branch origin/main \
+  --objective "Add passwordless login"
+```
+
+This is the recommended starting point for a PR. It does not call a model or publish anything externally. It writes a small, owner-only history file at `.conclave/review-history.json` so you can compare previous checks locally:
+
+```bash
+conclave history .
+conclave history . --json
+```
+
+The next step after a `BLOCK` or `WARN` is to inspect the listed evidence, make the correction with your agent or editor, and run the same `conclave pr` command again. The loop is intentionally explicit:
+
+```text
+change → conclave pr → read evidence → correct → conclave pr again → human approval
+```
+
+The current release does not post GitHub comments or apply generated patches automatically. Those actions require an authenticated GitHub integration or explicit edit permission and are planned as separate adapters; the local PR report is the source of truth first.
+
 Choose the Git snapshot that matches your workflow:
 
 ```bash

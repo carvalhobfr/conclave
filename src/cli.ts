@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -61,6 +62,8 @@ import { createValidationContract, parseValidationContract } from "./validation/
 import { GitChangeSetService } from "./validation/git-change-set.js";
 import { createDeterministicValidationIndex } from "./validation/deterministic-index.js";
 import { SuperValidator } from "./validation/super-validator.js";
+import { createPullRequestSummary } from "./domain/pr-summary.js";
+import { listReviewHistory, saveReviewHistory, type ReviewHistoryRecord } from "./storage/review-history.js";
 
 const HELP = `Conclave Code Intelligence CLI
 
@@ -76,6 +79,8 @@ Usage:
   conclave ask <path> <question> [--json] [--debug]
   conclave review <path> [--working|--staged|--branch <base>|--commit <sha>] --objective <goal> [--contract <file.json>] [--json]
   conclave validate <path> [same options as review]
+  conclave pr <path> [--branch <base>|--working|--staged|--commit <sha>] --objective <goal> [--json]
+  conclave history [path] [--json]
   conclave task <path> <objective> [--plan-only] [--allow-edits] [--allow-checks] [--allow-repository-scripts] [--allow-network] [--json] [--debug]
   conclave eval <path> <cases.json> [--json]
   conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
@@ -294,6 +299,11 @@ function print(value: unknown, json: boolean): void {
     return;
   }
   console.log(value);
+}
+
+function progress(label: string, detail: string): void {
+  if (process.stdout.isTTY) console.log(`\x1b[36m›\x1b[0m ${label} ${detail}`);
+  else console.log(`${label}: ${detail}`);
 }
 
 async function scan(args: readonly string[]): Promise<void> {
@@ -933,6 +943,71 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
   else if (report.verdict === "inconclusive") process.exitCode = 2;
 }
 
+async function pullRequestSummary(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const requestedPath = parsed.positionals[0];
+  if (requestedPath === undefined || parsed.positionals.length !== 1) {
+    throw new Error("pr requires exactly one repository path and an objective");
+  }
+  const repositoryRoot = resolve(requestedPath);
+  const contract = await loadValidationContract(parsed);
+  progress("Collecting", "Git change");
+  const changeSet = await new GitChangeSetService().collect(repositoryRoot, selectedChangeSource(parsed));
+  progress("Indexing", "local repository context");
+  const indexed = await createDeterministicValidationIndex(repositoryRoot);
+  progress("Validating", "objective, impact, and claims");
+  const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+  const summary = createPullRequestSummary(report);
+  const record: ReviewHistoryRecord = {
+    id: createHash("sha256").update(JSON.stringify({ headSha: report.changeSet.headSha, source: report.changeSet.source, objective: report.objective })).digest("hex").slice(0, 24),
+    createdAt: new Date().toISOString(),
+    repository: repositoryRoot,
+    objective: report.objective,
+    headSha: report.changeSet.headSha,
+    summary,
+  };
+  await saveReviewHistory(repositoryRoot, record);
+  if (parsed.json) {
+    print({ summary, report }, true);
+  } else {
+    console.log(`\nPR summary: ${summary.title}`);
+    console.log(`Comparison: ${summary.comparison}`);
+    console.log(summary.summary);
+    console.log(`Verdict: ${summary.verdict.toUpperCase()}`);
+    if (summary.changedFiles.length > 0) {
+      console.log("\nChanged files:");
+      for (const file of summary.changedFiles) console.log(`- ${file.status}: ${file.path} (${String(file.hunks)} hunks)`);
+    }
+    if (summary.risks.length > 0) {
+      console.log("\nRisks:");
+      for (const risk of summary.risks) console.log(`- ${risk}`);
+    }
+    console.log("\nNext steps:");
+    for (const step of summary.nextSteps) console.log(`- ${step}`);
+    console.log("\nFull evidence: run the same command with --json.");
+  }
+  if (report.verdict === "block") process.exitCode = 1;
+  else if (report.verdict === "inconclusive") process.exitCode = 2;
+}
+
+async function showReviewHistory(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const repositoryRoot = resolve(parsed.positionals[0] ?? ".");
+  const records = await listReviewHistory(repositoryRoot);
+  if (parsed.json) {
+    print(records, true);
+    return;
+  }
+  if (records.length === 0) {
+    console.log("No Conclave PR reviews recorded for this repository yet.");
+    return;
+  }
+  console.log(`Review history: ${repositoryRoot}`);
+  for (const record of records) {
+    console.log(`- ${record.createdAt} ${record.summary.verdict.toUpperCase()} ${record.summary.title} — ${record.objective}`);
+  }
+}
+
 async function executeTask(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
@@ -1363,6 +1438,12 @@ async function main(): Promise<void> {
       return;
     case "validate":
       await reviewChanges(args);
+      return;
+    case "pr":
+      await pullRequestSummary(args);
+      return;
+    case "history":
+      await showReviewHistory(args);
       return;
     case "update":
       await updateConclave(args);
