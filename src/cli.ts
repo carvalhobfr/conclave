@@ -84,6 +84,7 @@ Usage:
   conclave models [--provider openai|openrouter|anthropic] [--json]
   conclave init [--provider openai|openrouter|anthropic] [--profile id] [--model id] [--reasoning full|fast] [--api-key-stdin|--no-key] [--config-file path] [--json]
   conclave update [--local|--global|--check]
+  conclave start [path]
   conclave skill install [--target codex|claude|both|portable] [--scope project|user] [--project path] [--destination path] [--force] [--dry-run]
   conclave provider-check
   conclave demo
@@ -803,6 +804,54 @@ async function showVersion(): Promise<void> {
   console.log(packageJson.version ?? "unknown");
 }
 
+type GuidedChoice = { readonly id: string; readonly label: string; readonly description: string };
+
+async function startGuided(path = "."): Promise<void> {
+  const root = resolve(path);
+  const choices: readonly GuidedChoice[] = [
+    { id: "review", label: "Review a change", description: "Compare the current branch, working tree, staged files, or a commit" },
+    { id: "understand", label: "Understand this repository", description: "Build a local index and inspect files, code units, and relationships" },
+    { id: "ask", label: "Ask about the code", description: "Use a configured provider to investigate a repository question" },
+    { id: "task", label: "Plan or execute a task", description: "Use a configured agent with explicit permissions and a final check" },
+    { id: "setup", label: "Configure a provider", description: "Choose OpenAI/Codex, OpenRouter, or Anthropic and a model" },
+    { id: "update", label: "Update Conclave", description: "Install the latest CLI version" },
+    { id: "help", label: "Show all commands", description: "Print the complete CLI reference" },
+  ];
+  console.log("\nConclave — your PR companion\n");
+  console.log(`Repository: ${root}`);
+  const choice = await promptChoice("What do you want to do?", choices, terminalColorEnabled());
+  switch (choice.id) {
+    case "review": {
+      const base = await promptLine("Base branch/ref", "origin/main");
+      const objective = await promptLine("What should this change deliver?");
+      await reviewChanges([root, "--branch", base, "--objective", objective]);
+      return;
+    }
+    case "understand":
+      await indexRepository([root]);
+      console.log("\nNext: use `conclave search`, `conclave graph`, or choose Ask from this menu.");
+      return;
+    case "ask": {
+      const question = await promptLine("Question");
+      await askRepository([root, question]);
+      return;
+    }
+    case "task": {
+      const objective = await promptLine("What should the agent do?");
+      await executeTask([root, objective, "--plan-only"]);
+      return;
+    }
+    case "setup":
+      await initializeConclave([]);
+      return;
+    case "update":
+      await updateConclave([]);
+      return;
+    default:
+      console.log(HELP);
+  }
+}
+
 async function loadValidationContract(parsed: ParsedArguments): Promise<ValidationContract> {
   if (parsed.contractPath === undefined) {
     return createValidationContract(parsed.objective ?? "");
@@ -1273,6 +1322,10 @@ async function runDemo(): Promise<void> {
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
+  if (process.argv.length === 2 && process.stdin.isTTY && process.stdout.isTTY) {
+    await startGuided();
+    return;
+  }
   switch (command) {
     case "--version":
     case "-v":
@@ -1313,6 +1366,9 @@ async function main(): Promise<void> {
       return;
     case "update":
       await updateConclave(args);
+      return;
+    case "start":
+      await startGuided(args[0] ?? ".");
       return;
     case "task":
       await executeTask(args);

@@ -60,6 +60,16 @@ conclave update --check
 
 Se você já estiver na versão mais recente, `conclave update` encerra com uma mensagem clara e não tenta fazer uma instalação desnecessária.
 
+## CLI guiada
+
+Para navegar pelos fluxos sem memorizar comandos:
+
+```bash
+conclave start
+```
+
+O menu oferece os caminhos principais: revisar uma branch, entender o repositório, fazer uma pergunta, planejar uma tarefa, configurar um provider, atualizar o Conclave ou ver a ajuda. Executar apenas `conclave` em um terminal interativo abre o mesmo menu.
+
 Também é possível usar diretamente `npm install --save-dev conclave-ai@latest` no projeto ou `npm install --global conclave-ai@latest` globalmente. Depois da atualização, reinstale a skill se ela estiver copiada no projeto: `npx conclave skill install --force`.
 
 ## Comparar uma branch

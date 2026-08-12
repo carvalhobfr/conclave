@@ -139,6 +139,16 @@ npm install --global conclave-ai
 conclave review . --working --objective "..."
 ```
 
+### Guided CLI
+
+For a discoverable workflow, run:
+
+```bash
+conclave start
+```
+
+It opens a menu for the common paths: review a branch, understand a repository, ask a question, plan a task, configure a provider, update Conclave, or show help. Running `conclave` with no arguments opens the same menu in an interactive terminal.
+
 ### Update Conclave
 
 If Conclave is installed in the current project, update it with:
