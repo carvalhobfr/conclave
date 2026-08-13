@@ -9,6 +9,7 @@
 [English](README.md) · [Português (Brasil)](README.pt-BR.md)
 
 [![npm](https://img.shields.io/npm/v/conclave-ai?logo=npm&color=CB3837)](https://www.npmjs.com/package/conclave-ai)
+[![npm downloads](https://img.shields.io/npm/dm/conclave-ai?logo=npm&label=downloads%2Fmonth&color=CB3837)](https://www.npmjs.com/package/conclave-ai)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Licença: MIT](https://img.shields.io/badge/license-MIT-4C1)](LICENSE)
 [![Changelog](https://img.shields.io/badge/changelog-histórico%20de%20versões-8B5CF6)](CHANGELOG.pt-BR.md)
