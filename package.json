@@ -1,6 +1,6 @@
 {
   "name": "conclave-ai",
-  "version": "0.2.8",
+  "version": "0.6.0",
   "description": "Graph-aware independent validator for code changes and agent claims",
   "keywords": [
     "ai",
@@ -23,11 +23,16 @@
   "files": [
     "dist",
     "docs/assets",
+    "docs/security.md",
     "examples/github-actions",
+    "schemas",
     "scripts/install-agent-skill.mjs",
     "skills/conclave-validate",
     "README.md",
     "README.pt-BR.md",
+    "CHANGELOG.md",
+    "CHANGELOG.pt-BR.md",
+    "ROADMAP.md",
     "LICENSE"
   ],
   "bin": {
@@ -50,7 +55,6 @@
     "eval:graph": "npm run dev -- eval-graph tests/fixtures/code-rag tests/fixtures/code-rag/eval-cases.json tests/fixtures/code-rag/graph-eval-cases.json --json",
     "eval:release": "npm run dev -- eval-graph tests/fixtures/code-rag tests/fixtures/code-rag/release-eval-cases.json --json",
     "eval:reasoning": "vitest run tests/reasoning-evaluation.test.ts --maxWorkers=1",
-    "eval:task": "vitest run tests/task-evaluation.test.ts --maxWorkers=1",
     "eval:skill": "vitest run tests/agent-skill.test.ts tests/mcp-server.test.ts --maxWorkers=1",
     "audit": "npm audit --omit=dev",
     "lint": "eslint .",
@@ -59,7 +63,7 @@
     "test:web": "vitest run --config vitest.web.config.ts --maxWorkers=1",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
-    "verify": "npm test && npm run test:web && npm run typecheck && npm run lint && npm run build && npm run eval && npm run eval:graph && npm run eval:release && npm run eval:reasoning && npm run eval:task && npm run eval:validation && npm run eval:skill && npm run audit",
+    "verify": "npm test && npm run test:web && npm run typecheck && npm run lint && npm run build && npm run eval && npm run eval:graph && npm run eval:release && npm run eval:reasoning && npm run eval:validation && npm run eval:skill && npm run audit",
     "eval:validation": "vitest run tests/git-change-set.test.ts tests/super-validator.test.ts tests/validation-web.test.ts --maxWorkers=1"
   },
   "dependencies": {

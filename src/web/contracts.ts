@@ -1,7 +1,7 @@
 import type { ChangeSource, ValidationReport } from "../domain/validation.js";
 
-export type ProductIntent = "validate" | "ask" | "investigate" | "task";
-export type ProductRunStatus = "completed" | "completed-with-uncertainty" | "failed" | "blocked" | "planned" | "error";
+export type ProductIntent = "validate" | "ask" | "investigate";
+export type ProductRunStatus = "completed" | "completed-with-uncertainty" | "failed" | "blocked" | "error";
 
 export interface ProjectView {
   readonly id: string;
@@ -15,6 +15,14 @@ export interface ProjectView {
   readonly graphNodes: number;
   readonly graphEdges: number;
   readonly updatedAt: string;
+  readonly git?: {
+    readonly currentBranch: string;
+    readonly defaultBase: string;
+    readonly branches: readonly string[];
+    readonly staged: number;
+    readonly unstaged: number;
+    readonly untracked: number;
+  };
 }
 
 export interface EvidenceView {
@@ -58,24 +66,6 @@ export interface RetrievalView {
   readonly approximateTokens: number;
 }
 
-export interface TaskView {
-  readonly plan: {
-    readonly summary: string;
-    readonly requirements: readonly string[];
-    readonly steps: readonly { readonly description: string; readonly files: readonly string[] }[];
-  };
-  readonly permissions: {
-    readonly allowFileEdits: boolean;
-    readonly allowCommands: boolean;
-    readonly allowRepositoryScripts: boolean;
-    readonly allowNetwork: boolean;
-  };
-  readonly progress: readonly { readonly stage: string; readonly detail: string; readonly state: "completed" | "current" | "blocked" }[];
-  readonly diff: readonly { readonly path: string; readonly additions: number; readonly deletions: number; readonly expected: boolean; readonly patch: string }[];
-  readonly revisionRounds: number;
-  readonly checks: readonly { readonly id: string; readonly status: string; readonly kind: string; readonly reason: string }[];
-}
-
 export interface ProductRunView {
   readonly intent: Exclude<ProductIntent, "validate">;
   readonly status: ProductRunStatus;
@@ -87,7 +77,6 @@ export interface ProductRunView {
   readonly retrieval: RetrievalView;
   readonly metrics: readonly { readonly label: string; readonly value: string }[];
   readonly graph: GraphView;
-  readonly task?: TaskView;
   readonly error?: { readonly code: string; readonly message: string; readonly action: string };
 }
 
@@ -116,7 +105,19 @@ export interface ValidationRunView {
     readonly totalClaims: number;
   };
   readonly report: ValidationReport;
+  readonly patch: string;
+  readonly handoff: string;
   readonly demo: boolean;
+}
+
+export interface ReviewHistoryView {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly objective: string;
+  readonly verdict: ValidationReport["verdict"];
+  readonly title: string;
+  readonly report?: ValidationReport;
+  readonly handoff?: string;
 }
 
 export interface RuntimeModeView {

@@ -34,51 +34,6 @@ describe("ConclaveProductService", () => {
     expect(run.trace.every((item) => item.status === "ran")).toBe(true);
   });
 
-  it("returns a plan-only task with default-deny permissions", async () => {
-    const product = service();
-    const project = await product.openDemo();
-    const run = await product.task(
-      project.id,
-      "Fix authentication disappearing after refresh.",
-      true,
-      { allowFileEdits: false, allowCommands: false, allowRepositoryScripts: false, allowNetwork: false },
-    );
-
-    expect(run.status).toBe("planned");
-    expect(run.task?.permissions.allowFileEdits).toBe(false);
-    expect(run.task?.diff).toHaveLength(0);
-  });
-
-  it("runs the bounded demo task in isolation and returns only the final patch", async () => {
-    const product = service();
-    const project = await product.openDemo();
-    const run = await product.task(
-      project.id,
-      "Fix authentication disappearing after refresh.",
-      false,
-      { allowFileEdits: true, allowCommands: false, allowRepositoryScripts: false, allowNetwork: false },
-    );
-
-    expect(run.status).toBe("completed");
-    expect(run.claims.some((claim) => claim.status === "rejected")).toBe(true);
-    expect(run.task?.revisionRounds).toBe(1);
-    expect(run.task?.diff).toHaveLength(1);
-    expect(run.task?.diff[0]?.patch).toContain("const persistedToken = getStoredToken();");
-  });
-
-  it("retains completed-with-uncertainty instead of prettifying it", async () => {
-    const product = service();
-    const project = await product.openDemo();
-    const run = await product.task(
-      project.id,
-      "Fix authentication disappearing after refresh. Keep runtime behavior uncertain.",
-      false,
-      { allowFileEdits: true, allowCommands: false, allowRepositoryScripts: false, allowNetwork: false },
-    );
-
-    expect(run.status).toBe("completed-with-uncertainty");
-  });
-
   it("refuses local paths outside the server configured root", async () => {
     await expect(service().openLocal(resolve("."))).rejects.toMatchObject({ code: "repository_denied" });
   });

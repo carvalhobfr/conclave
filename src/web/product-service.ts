@@ -1,21 +1,15 @@
-import { cp, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { basename, resolve } from "node:path";
 
-import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
+import { MultiLanguageCodeParser } from "../code-intelligence/multi-language-parser.js";
 import type { RepositoryCodeIndex } from "../domain/code-index.js";
 import { loadReasoningConfiguration } from "../config/reasoning-config.js";
 import { loadRuntimeConfig } from "../config/runtime-config.js";
-import { loadTaskConfiguration } from "../config/task-config.js";
 import type { Evidence } from "../domain/evidence.js";
 import { DEFAULT_REASONING_LIMITS, type ReasoningResult } from "../domain/reasoning.js";
-import type { ExecutionPermissions, TaskExecutionResult } from "../domain/task-execution.js";
-import { DEFAULT_TASK_EXECUTION_LIMITS } from "../domain/task-execution.js";
 import type { ChangeSet, ChangeSource, ValidationReport } from "../domain/validation.js";
-import { createEmbeddingProvider } from "../embeddings/embedding-factory.js";
 import { LocalHashEmbeddingProvider } from "../embeddings/local-hash-embedding.js";
-import { TaskExecutionEngine } from "../execution/task-execution-engine.js";
-import { StructuredTaskAgentRuntime } from "../execution/task-agent-runtime.js";
 import { InMemoryCodeIndexStore } from "../indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "../indexing/repository-indexer.js";
 import { createProvider } from "../providers/provider-factory.js";
@@ -29,7 +23,11 @@ import { createValidationContract, parseValidationContract } from "../validation
 import { createDeterministicValidationIndex } from "../validation/deterministic-index.js";
 import { GitChangeSetService } from "../validation/git-change-set.js";
 import { SuperValidator } from "../validation/super-validator.js";
-import { createDemoReasoningEngine, createDemoTaskEngine } from "./demo-runtime.js";
+import { createReviewHandoff } from "../domain/review-handoff.js";
+import { createPullRequestSummary } from "../domain/pr-summary.js";
+import { listReviewHistory, saveReviewHistory } from "../storage/review-history.js";
+import { inspectRepository } from "../workflow/repository-inspector.js";
+import { createDemoReasoningEngine } from "./demo-runtime.js";
 import type {
   ClaimView,
   EvidenceView,
@@ -38,9 +36,9 @@ import type {
   ProductRunView,
   ProjectView,
   RuntimeModeView,
-  TaskView,
   TraceView,
   ValidationRunView,
+  ReviewHistoryView,
 } from "./contracts.js";
 
 interface ProjectSession {
@@ -161,74 +159,6 @@ function reasoningView(intent: "ask" | "investigate", result: ReasoningResult, r
   };
 }
 
-function taskView(result: TaskExecutionResult, permissions: ExecutionPermissions): TaskView {
-  const trace = result.trace;
-  const stage = (name: string, types: readonly string[]): TaskView["progress"][number] => {
-    const event = trace.find((item) => types.includes(item.type));
-    return { stage: name, detail: event?.detail ?? "Not reached", state: event === undefined ? "blocked" : "completed" };
-  };
-  const latestDiffs = new Map<string, TaskView["diff"][number]>();
-  for (const record of result.patchRecords) {
-    for (const file of record.changedFiles) {
-      latestDiffs.set(file.path, {
-        path: file.path,
-        additions: file.additions,
-        deletions: file.deletions,
-        expected: file.expectedByPlan,
-        patch: record.unifiedDiff,
-      });
-    }
-  }
-  return {
-    plan: {
-      summary: result.task.plan.summary,
-      requirements: result.task.plan.requirements.map((item) => item.statement),
-      steps: result.task.plan.steps.map((item) => ({ description: item.description, files: item.targetFiles })),
-    },
-    permissions,
-    progress: [
-      stage("Investigating", ["task_started"]),
-      stage("Planning", ["implementation_plan_created"]),
-      stage("Creating isolated worktree", ["repository_snapshot_created"]),
-      stage("Implementing", ["patch_applied", "patch_proposed"]),
-      stage("Re-indexing", ["repository_reindexed"]),
-      stage("Reviewing", ["reviewer_started"]),
-      stage("Verifying", ["post_change_evidence_created"]),
-      stage("Final verdict", ["execution_verdict_completed"]),
-    ],
-    diff: [...latestDiffs.values()],
-    revisionRounds: result.verdict.revisionRounds,
-    checks: result.verdict.checks.map((check) => ({ id: check.requestId, status: check.status, kind: check.command.kind, reason: check.policyReason })),
-  };
-}
-
-function taskRun(result: TaskExecutionResult, permissions: ExecutionPermissions, retrieval: CodeRetrievalService): ProductRunView {
-  const status = result.verdict.status;
-  return {
-    intent: "task",
-    status,
-    title: status === "planned" ? "Verified implementation plan" : "Task verdict",
-    answer: result.verdict.summary,
-    claims: [
-      ...result.verdict.supportedClaims.map((claim) => ({ id: claim.id, statement: claim.statement, status: "supported" as const, role: "implementer", evidenceIds: claim.evidenceIds, challengeCount: 0, verificationCount: 1 })),
-      ...result.verdict.rejectedClaims.map((claim) => ({ id: claim.id, statement: claim.statement, status: "rejected" as const, role: "implementer", evidenceIds: claim.evidenceIds, challengeCount: 0, verificationCount: 1 })),
-      ...result.verdict.uncertainClaims.map((claim) => ({ id: claim.id, statement: claim.statement, status: "uncertain" as const, role: "implementer", evidenceIds: claim.evidenceIds, challengeCount: 0, verificationCount: 1 })),
-    ],
-    evidence: [...result.preChangeEvidence, ...result.postChangeEvidence].map(viewEvidence),
-    trace: result.metrics.roleUsage.map((usage) => ({ role: usage.role, status: usage.calls > 0 ? "ran" as const : "skipped" as const, reason: usage.calls > 0 ? `${String(usage.calls)} bounded calls` : "Not reached" })),
-    retrieval: { operations: [{ label: "post-change incremental reindex", status: result.patchRecords.length > 0 ? "executed" : "skipped" }], evidenceCount: result.postChangeEvidence.length, sourceBytes: result.postChangeEvidence.reduce((total, item) => total + Buffer.byteLength(item.excerpt), 0), approximateTokens: result.metrics.approximateInputTokens },
-    metrics: [
-      { label: "Task model calls", value: String(result.metrics.taskModelCalls) },
-      { label: "Revisions", value: String(result.metrics.revisionRounds) },
-      { label: "Files changed", value: String(result.metrics.filesChanged) },
-      { label: "Changed lines", value: String(result.metrics.changedLines) },
-    ],
-    graph: graph(retrieval, "bootstrapSession"),
-    task: taskView(result, permissions),
-  };
-}
-
-
 function demoChangeSet(index: RepositoryCodeIndex, requestedSource: ChangeSource): ChangeSet {
   const file = Object.values(index.files).find((item) => item.path.endsWith("AuthProvider.ts"))
     ?? Object.values(index.files)[0];
@@ -258,7 +188,7 @@ function demoChangeSet(index: RepositoryCodeIndex, requestedSource: ChangeSource
   };
 }
 
-function validationView(report: ValidationReport, demo: boolean): ValidationRunView {
+function validationView(report: ValidationReport, patch: string, demo: boolean): ValidationRunView {
   const blocking = report.findings.filter((item) => item.severity === "blocking").length;
   const warning = report.findings.filter((item) => item.severity === "warning").length;
   const supportedClaims = report.claims.filter((item) => item.outcome === "supported").length;
@@ -304,6 +234,8 @@ function validationView(report: ValidationReport, demo: boolean): ValidationRunV
       totalClaims: report.claims.length,
     },
     report,
+    patch,
+    handoff: createReviewHandoff(report).prompt,
     demo,
   };
 }
@@ -367,13 +299,26 @@ export class ConclaveProductService {
         ? demoChangeSet(session.index, source)
         : await new GitChangeSetService().collect(session.root, source);
       if (session.source === "demo") {
-        return validationView(new SuperValidator().validate(session.index, changeSet, contract), true);
+      return validationView(new SuperValidator().validate(session.index, changeSet, contract), changeSet.patch, true);
       }
       const changeService = new GitChangeSetService();
       const materialized = await changeService.materializeValidationRoot(session.root, source);
       try {
         const indexed = await createDeterministicValidationIndex(materialized.rootPath);
-        return validationView(new SuperValidator().validate(indexed.index, changeSet, contract), false);
+      const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+      const summary = createPullRequestSummary(report);
+      const handoff = createReviewHandoff(report);
+      await saveReviewHistory(session.root, {
+        id: createHash("sha256").update(JSON.stringify({ headSha: report.changeSet.headSha, source: report.changeSet.source, objective: report.objective })).digest("hex").slice(0, 24),
+        createdAt: new Date().toISOString(),
+        repository: session.root,
+        objective: report.objective,
+        headSha: report.changeSet.headSha,
+        summary,
+        report,
+        handoff,
+      });
+      return validationView(report, changeSet.patch, false);
       } finally {
         await materialized.cleanup();
       }
@@ -398,21 +343,6 @@ export class ConclaveProductService {
     }
   }
 
-  public async task(id: string, objective: string, planOnly: boolean, permissions: ExecutionPermissions): Promise<ProductRunView> {
-    if (objective.trim() === "") throw new ProductServiceError("empty_task", "Enter an explicit task objective.", "Describe the bounded code change you want.");
-    if (permissions.allowRepositoryScripts && !permissions.allowCommands) throw new ProductServiceError("permission_invalid", "Repository scripts require static-check permission.", "Enable checks first, then explicitly enable repository scripts.");
-    if (permissions.allowNetwork && !permissions.allowRepositoryScripts) throw new ProductServiceError("permission_invalid", "Network permission requires repository-script permission.", "Repository code remains default-deny.");
-    const session = this.#session(id);
-    try {
-      const result = session.source === "demo"
-        ? await this.#demoTask(session.root, objective, planOnly, permissions)
-        : await this.#liveTask(session.retrieval, permissions).execute({ intent: "task", repositoryRoot: session.root, objective, planOnly });
-      return taskRun(result, permissions, session.retrieval);
-    } catch (error) {
-      return this.#error("task", error, "Review the task permissions, repository state, and provider configuration.", session.retrieval);
-    }
-  }
-
   public graph(id: string, symbol: string): GraphView {
     return graph(this.#session(id).retrieval, symbol);
   }
@@ -434,11 +364,25 @@ export class ConclaveProductService {
     }
   }
 
+  public async history(id: string): Promise<readonly ReviewHistoryView[]> {
+    const session = this.#session(id);
+    if (session.source === "demo") return [];
+    return (await listReviewHistory(session.root)).map((record) => ({
+      id: record.id,
+      createdAt: record.createdAt,
+      objective: record.objective,
+      verdict: record.summary.verdict,
+      title: record.summary.title,
+      ...(record.report === undefined ? {} : { report: record.report }),
+      ...(record.handoff === undefined ? {} : { handoff: record.handoff.prompt }),
+    }));
+  }
+
   async #open(root: string, source: "demo" | "local"): Promise<ProjectView> {
-    const embedding = source === "demo"
-      ? new LocalHashEmbeddingProvider()
-      : createEmbeddingProvider(process.env, new EnvironmentCredentialSource());
-    const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
+    // Opening and reviewing a repository is always local and deterministic.
+    // Provider calls are reserved for explicit Ask/Investigate runs.
+    const embedding = new LocalHashEmbeddingProvider();
+    const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new MultiLanguageCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
     const id = `${source}:${indexed.index.repository.id}`;
     const languages = [...new Set(Object.values(indexed.index.files).map((file) => file.language))].sort();
     const project: ProjectView = {
@@ -453,6 +397,16 @@ export class ConclaveProductService {
       graphNodes: Object.keys(indexed.index.files).length + Object.keys(indexed.index.units).length,
       graphEdges: indexed.index.graphEdges.length,
       updatedAt: indexed.index.updatedAt,
+      ...(source === "demo" ? {} : await inspectRepository(root).then((inspection) => ({
+        git: {
+          currentBranch: inspection.currentBranch,
+          defaultBase: inspection.defaultBase,
+          branches: inspection.branches,
+          staged: inspection.status.staged,
+          unstaged: inspection.status.unstaged,
+          untracked: inspection.status.untracked,
+        },
+      })).catch(() => ({}))),
     };
     this.#sessions.set(id, { id, root, source, project, index: indexed.index, retrieval: new CodeRetrievalService(indexed.index, embedding) });
     return project;
@@ -469,32 +423,6 @@ export class ConclaveProductService {
     const reasoning = loadReasoningConfiguration(runtime);
     const provider = createProvider(runtime, new EnvironmentCredentialSource());
     return new ReasoningEngine({ retrieval, runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoning.assignments, DEFAULT_REASONING_LIMITS), preset: reasoning.preset });
-  }
-
-  #liveTask(retrieval: CodeRetrievalService, permissions: ExecutionPermissions): TaskExecutionEngine {
-    const runtime = loadRuntimeConfig();
-    const reasoning = loadReasoningConfiguration(runtime);
-    const task = loadTaskConfiguration(runtime);
-    const provider = createProvider(runtime, new EnvironmentCredentialSource());
-    const investigator = new ReasoningEngine({ retrieval, runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoning.assignments, DEFAULT_REASONING_LIMITS), preset: reasoning.preset });
-    return new TaskExecutionEngine({ investigator, taskRuntime: new StructuredTaskAgentRuntime(new Map([[provider.id, provider]]), task.assignments, DEFAULT_TASK_EXECUTION_LIMITS), permissions, limits: DEFAULT_TASK_EXECUTION_LIMITS, allowedPackageScripts: task.allowedPackageScripts });
-  }
-
-  async #demoTask(
-    root: string,
-    objective: string,
-    planOnly: boolean,
-    permissions: ExecutionPermissions,
-  ): Promise<TaskExecutionResult> {
-    const temporaryRoot = await mkdtemp(join(tmpdir(), "conclave-web-demo-"));
-    const repositoryRoot = join(temporaryRoot, "repository");
-    await cp(root, repositoryRoot, { recursive: true, dereference: false });
-    try {
-      const engine = await createDemoTaskEngine(repositoryRoot, permissions);
-      return await engine.execute({ intent: "task", repositoryRoot, objective, planOnly });
-    } finally {
-      await rm(temporaryRoot, { recursive: true, force: true });
-    }
   }
 
   #error(intent: Exclude<ProductIntent, "validate">, error: unknown, action: string, retrieval: CodeRetrievalService): ProductRunView {

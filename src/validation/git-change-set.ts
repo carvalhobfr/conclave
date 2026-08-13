@@ -31,6 +31,7 @@ function runGit(
   repositoryRoot: string,
   args: readonly string[],
   extraEnvironment: Readonly<Record<string, string>> = {},
+  acceptedExitCodes: readonly number[] = [0],
 ): Promise<GitOutput> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn("git", [...args], {
@@ -100,7 +101,7 @@ function runGit(
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr: Buffer.concat(stderrChunks).toString("utf8"),
       };
-      if (code !== 0) {
+      if (!acceptedExitCodes.includes(code ?? -1)) {
         reject(new Error("Git command failed: " + output.stderr.trim()));
         return;
       }
@@ -211,6 +212,8 @@ function sourceArguments(source: ChangeSource): {
         patch: ["diff", ...commonPatch, "HEAD", "--"],
         names: ["diff", ...commonNames, "HEAD", "--"],
       };
+    case "workspace":
+      throw new Error("Workspace comparisons require a resolved merge base");
     case "staged":
       return {
         patch: ["diff", "--cached", ...commonPatch, "--"],
@@ -237,6 +240,30 @@ function sourceArguments(source: ChangeSource): {
 function archiveHead(source: ChangeSource): string | undefined {
   if (source.kind !== "branch") return undefined;
   return source.head ?? "HEAD";
+}
+
+async function untrackedDiff(repositoryRoot: string, entries: readonly string[]): Promise<{
+  readonly patch: string;
+  readonly files: readonly ValidationChangedFile[];
+}> {
+  const patches: string[] = [];
+  const files: ValidationChangedFile[] = [];
+  let bytes = 0;
+  for (const entry of entries) {
+    const path = normalizedPath(entry.slice(3));
+    if (path === undefined) continue;
+    const result = await runGit(
+      repositoryRoot,
+      ["diff", "--no-index", "--no-color", "--unified=0", "--", "/dev/null", path],
+      {},
+      [0, 1],
+    );
+    bytes += Buffer.byteLength(result.stdout, "utf8");
+    if (bytes > MAX_GIT_OUTPUT_BYTES) throw new Error("Git output exceeded the validation limit");
+    patches.push(result.stdout);
+    files.push({ path, status: "added", hunks: [] });
+  }
+  return { patch: patches.join(""), files };
 }
 
 async function refExists(repositoryRoot: string, ref: string, label: string): Promise<void> {
@@ -266,10 +293,10 @@ async function materializeArchive(repositoryRoot: string, ref: string): Promise<
 export class GitChangeSetService {
   public async collect(repositoryRoot: string, source: ChangeSource): Promise<ChangeSet> {
     const root = resolve(repositoryRoot);
-    const statusEntries = (await runGit(root, ["status", "--porcelain=v1", "-z"]))
+    const statusEntries = (await runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]))
       .stdout.split("\0").filter((entry) => entry !== "");
     const untracked = statusEntries.filter((entry) => entry.startsWith("?? "));
-    if ((source.kind === "working" || source.kind === "staged") && untracked.length > 0) {
+    if (source.kind === "staged" && untracked.length > 0) {
       throw new Error(
         "Untracked files are not silently excluded from this validation; stage them, add them to ignore rules, or choose a branch/commit comparison",
       );
@@ -288,6 +315,7 @@ export class GitChangeSetService {
       await refExists(root, source.base, "Base");
       await refExists(root, requestedHead ?? "HEAD", "Head");
     }
+    if (source.kind === "workspace") await refExists(root, source.base, "Base");
     const headSha = (await runGit(root, ["rev-parse", requestedHead ?? "HEAD"])).stdout.trim();
     if (source.kind === "commit") {
       const targetSha = (await runGit(root, ["rev-parse", safeRef(source.commit, "Commit")])).stdout.trim();
@@ -295,17 +323,33 @@ export class GitChangeSetService {
         throw new Error("--commit must identify the checked-out HEAD so graph evidence matches the change");
       }
     }
-    const args = sourceArguments(source);
-    const [patch, names] = await Promise.all([
-      runGit(root, args.patch),
-      runGit(root, args.names),
+    const resolvedArgs = source.kind === "workspace"
+      ? await (async () => {
+        const mergeBase = (await runGit(root, ["merge-base", safeRef(source.base, "Base"), "HEAD"])).stdout.trim();
+        return {
+          patch: ["diff", "--no-ext-diff", "--no-color", "--unified=0", mergeBase, "--"],
+          names: ["diff", "--no-ext-diff", "--name-status", "-z", mergeBase, "--"],
+        };
+      })()
+      : sourceArguments(source);
+    const [patch, names, extra] = await Promise.all([
+      runGit(root, resolvedArgs.patch),
+      runGit(root, resolvedArgs.names),
+      source.kind === "working" || source.kind === "workspace"
+        ? untrackedDiff(root, untracked)
+        : Promise.resolve({ patch: "", files: [] }),
     ]);
-    const namedFiles = parseNameStatus(names.stdout);
+    const patchText = patch.stdout + extra.patch;
+    if (Buffer.byteLength(patchText, "utf8") > MAX_GIT_OUTPUT_BYTES) {
+      throw new Error("Git output exceeded the validation limit");
+    }
+    const namedFiles = [...parseNameStatus(names.stdout), ...extra.files]
+      .filter((file, index, all) => all.findIndex((candidate) => candidate.path === file.path) === index);
     return {
       source,
       headSha,
-      files: parseUnifiedDiff(patch.stdout, namedFiles),
-      patch: patch.stdout,
+      files: parseUnifiedDiff(patchText, namedFiles),
+      patch: patchText,
       collectedAt: new Date().toISOString(),
     };
   }

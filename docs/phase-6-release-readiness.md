@@ -8,14 +8,14 @@ flowchart LR
   Index --> Graph[Deterministic graph and retrieval]
   Graph --> Evidence[Bounded provenance-backed evidence]
   Evidence --> Reasoning[Claims, challenges, verification, verdict]
-  Reasoning --> Task[Isolated bounded task execution]
+  Evidence --> Review[Review verdict and handoff]
   CLI[CLI] --> Graph
   Web[Loopback web] --> Reasoning
   MCP[Read-only MCP] --> Graph
   MCP --> Reasoning
 ```
 
-MCP is stdio JSON-RPC and read-only. It is launched against one repository root with `conclave mcp /path/to/repository`; clients cannot choose another host path. It exposes compact search, symbol, graph, graph-path, evidence, Ask, and Investigate tools. Repository source is explicitly returned as untrusted evidence. Task Mode, shell execution, provider configuration, and environment access are absent.
+MCP is stdio JSON-RPC and read-only. It is launched against one repository root with `conclave mcp /path/to/repository`; clients cannot choose another host path. It exposes compact search, symbol, graph, graph-path, evidence, Ask, and Investigate tools. Repository source is explicitly returned as untrusted evidence. Shell execution, provider configuration, and environment access are absent.
 
 ## Provider and embedding status
 
@@ -31,4 +31,4 @@ Free Mode remains a deployable configuration boundary, not a hosted public servi
 
 ## Known limits
 
-The broader quality claims remain bounded by deterministic fixtures. No hosted Free endpoint, remote repository import, persistent web history, patch application, or MCP Task Mode is included. See `docs/security.md` for the active threat model.
+The broader quality claims remain bounded by deterministic fixtures. No hosted Free endpoint, remote repository import, patch application, or mutation-capable MCP surface is included. See `docs/security.md` for the active threat model.

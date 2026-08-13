@@ -4,7 +4,6 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConclaveEnvironment } from "../config/environment-file.js";
-import type { ExecutionPermissions } from "../domain/task-execution.js";
 import type { ChangeSource } from "../domain/validation.js";
 import { ConclaveProductService, ProductServiceError } from "./product-service.js";
 
@@ -47,10 +46,6 @@ function string(value: unknown, label: string): string {
   return value;
 }
 
-function boolean(value: unknown): boolean {
-  return value === true;
-}
-
 function changeSource(value: unknown): ChangeSource {
   const parsed = isRecord(value) ? value : {};
   const kind = string(parsed["kind"], "Change source");
@@ -58,6 +53,8 @@ function changeSource(value: unknown): ChangeSource {
     case "working":
     case "staged":
       return { kind };
+    case "workspace":
+      return { kind, base: string(parsed["base"], "Base branch") };
     case "branch":
       return {
         kind,
@@ -69,7 +66,7 @@ function changeSource(value: unknown): ChangeSource {
     default:
       throw new ProductServiceError(
         "invalid_change_source",
-        "Change source must be working, staged, branch, or commit.",
+        "Change source must be workspace, working, staged, branch, or commit.",
         "Select a supported Git comparison.",
       );
   }
@@ -82,16 +79,6 @@ function send(response: ServerResponse, status: number, value: unknown): void {
     "X-Content-Type-Options": "nosniff",
   });
   response.end(JSON.stringify(value));
-}
-
-function permissions(value: unknown): ExecutionPermissions {
-  const parsed = isRecord(value) ? value : {};
-  return {
-    allowFileEdits: boolean(parsed["allowFileEdits"]),
-    allowCommands: boolean(parsed["allowCommands"]),
-    allowRepositoryScripts: boolean(parsed["allowRepositoryScripts"]),
-    allowNetwork: boolean(parsed["allowNetwork"]),
-  };
 }
 
 function safeStaticPath(root: string, pathname: string): string {
@@ -139,13 +126,12 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
         send(response, 200, await product.run(string(payload["projectId"], "Project"), intent, string(payload["query"], "Question")));
         return;
       }
-      if (url.pathname === "/api/task" && request.method === "POST") {
-        const payload = await body(request);
-        send(response, 200, await product.task(string(payload["projectId"], "Project"), string(payload["objective"], "Task objective"), boolean(payload["planOnly"]), permissions(payload["permissions"])));
-        return;
-      }
       if (url.pathname === "/api/graph" && request.method === "GET") {
         send(response, 200, product.graph(string(url.searchParams.get("projectId"), "Project"), string(url.searchParams.get("symbol"), "Symbol")));
+        return;
+      }
+      if (url.pathname === "/api/history" && request.method === "GET") {
+        send(response, 200, await product.history(string(url.searchParams.get("projectId"), "Project")));
         return;
       }
       if (request.method !== "GET" && request.method !== "HEAD") { send(response, 405, { error: { code: "method_not_allowed", message: "Method not allowed.", action: "Use the local web application." } }); return; }

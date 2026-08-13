@@ -67,28 +67,9 @@ Local Mode is marked `local-only`, accepts only loopback HTTP(S) provider endpoi
 - Execution traces retain concise structured conclusions and usage metadata. They do not store hidden chain-of-thought.
 - Reasoning is capped by model-call, round, repeated-request, evidence, graph, approximate-token, and output-token limits.
 
-## Task execution
+## Read-only product boundary
 
-Task Mode has no model-to-shell path. The only execution flow is:
-
-```text
-model requests a typed capability
-    -> Conclave policy validates permissions, shape, target, and budget
-    -> policy creates an unforgeable approved command
-    -> structured runner starts the fixed executable with shell disabled
-```
-
-- Intent is explicit. `ask` and `investigate` cannot enter the mutation workflow.
-- Permissions default to plan-only. Editing, static checks, repository-code execution, and network access are separate cumulative grants.
-- The Planner, Implementer, and Reviewer return strict JSON. Unknown fields, paths outside the plan, fabricated IDs, raw command strings, executable names, and argument arrays are rejected.
-- Repository content, prior diffs, implementation claims, check output, and post-change evidence remain labelled untrusted data in every role prompt.
-- A clean Git repository is edited in a detached temporary worktree. A non-Git folder is copied to a temporary workspace without symlinks, ignored files, or likely secrets. The source repository is never edited directly.
-- Patches are exact, expected-hash-bound replacements against existing regular files. Protected, ignored, secret-like, escaping, and symlink paths are rejected. Every applied round can be rolled back.
-- File count, per-file lines, total lines, patch bytes, model calls, commands, command duration, command output, evidence, revision rounds, and total task duration are bounded.
-- Allowed commands are a closed union: Node syntax checks, Node test files, and host-allowlisted package scripts. There is no raw shell command domain type.
-- Command policy maps capabilities to fixed executable/argument vectors. The runner uses `spawn` with `shell: false`, a fixed isolated working directory, a credential-free environment allowlist, timeout/process-group termination, and bounded captured output.
-- The same in-memory index is incrementally refreshed after edits. Deterministic requirement and claim checks override model assertions; unrelated edits, failed checks, and unsupported required claims create blocking findings even if the Reviewer approves.
-- Revisions are bounded and stop on repeated no-progress signatures. Completion is never inferred only from an Implementer or Reviewer statement.
+Conclave does not edit repository files, apply patches, execute repository scripts, commit, push, approve, or merge. Review collects Git data and builds deterministic structural evidence. Ask and Investigate can call a configured reasoning provider, but their outputs cannot enter a mutation or shell path. Correction belongs to the developer's coding agent; approval belongs to a human.
 
 ## Local web application
 
@@ -98,14 +79,12 @@ model requests a typed capability
 - API JSON bodies are capped at 64 KB and API errors are converted to concise product-safe messages rather than provider headers, credentials, or stack traces.
 - Provider configuration continues to be read by the local server process from existing environment-backed configuration. Phase 5 adds no plaintext browser credential store.
 - Demo Mode uses a bundled repository fixture and FakeProvider responses labelled as deterministic demo inference. It does not represent a configured remote provider or hosted Free service.
-- Task permission controls request the existing Task Mode flags only. The core policy remains the authority for every patch and command capability; the UI cannot construct an approved command or apply a patch to the original repository.
+- The UI can display the exact reviewed diff and a correction handoff, but it has no endpoint that applies the patch or executes a correction.
 
 ## Residual risks
 
 - Pattern-based secret detection has false positives and false negatives.
 - Prompt injection cannot be eliminated solely through delimiters and instructions; later structured outputs and evidence validation remain necessary.
-- Node tests and package scripts execute repository code. Because portable child-process filesystem and network isolation is unavailable, they require explicit repository-script and network grants and should be enabled only for trusted repositories. Isolation protects the original Git worktree from ordinary edits but is not a host sandbox against absolute-path access or child processes.
-- The child environment excludes credentials known to Conclave, but a hostile repository process may still discover host information through operating-system interfaces. Default-deny repository-code execution remains the safe mode.
 - The local web server has no authentication, multi-user session boundary, rate limiting, hosted request controls, or remote-path defense because it is loopback-only. Do not expose it through a reverse proxy or public network without a dedicated hosted security design.
 - Root ignore-file support does not yet reproduce nested Git ignore semantics.
 - Files can change during a scan. Symlink and canonical-path checks narrow traversal risk but do not provide an immutable filesystem snapshot.

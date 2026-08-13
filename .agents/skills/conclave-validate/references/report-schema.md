@@ -22,5 +22,6 @@ Runner errors use exit code 3 and do not constitute a Conclave verdict.
 - `metrics`: bounded deterministic work performed; model calls are not implied.
 - `trustBoundary`: exact reasoning-model and repository-script call counts, plus the parser, graph, and embedding strategy used to build validation knowledge.
 - `changeSet`: exact comparison source and HEAD identity. The patch is represented by its byte count, not embedded in the report.
+- `workspace` source: the merge-base-to-current-workspace comparison, including committed, staged, unstaged, and untracked files.
 
 Do not infer evidence that is absent from these fields. A `pass` means the implemented deterministic checks passed; it does not mean arbitrary runtime, UX, security, or business behavior was executed.

@@ -101,6 +101,13 @@ describe("web validation workflow", () => {
       expect(result.headline).toBe("Change needs review before approval");
       expect(result.largestRisk?.title).toBe("Exported behavior changed without a test change");
       expect(result.report.metrics.graphEdgesInspected).toBeGreaterThan(0);
+      expect(result.patch).toContain("restoreSession");
+      expect(result.handoff).toContain("Address the Conclave review findings");
+      const history = await product.history(project.id);
+      expect(history[0]).toEqual(expect.objectContaining({
+        verdict: result.verdict,
+        objective: "Restore the session using the existing public API.",
+      }));
       expect(result.demo).toBe(false);
     } finally {
       await rm(parent, { recursive: true, force: true });

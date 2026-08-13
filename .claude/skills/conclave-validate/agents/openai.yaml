@@ -1,7 +1,7 @@
 interface:
   display_name: "Conclave Validate"
-  short_description: "Validate changes against repository evidence"
-  default_prompt: "Use $conclave-validate to validate this branch against its objective and show the evidence-backed verdict."
+  short_description: "Review changes against repository evidence"
+  default_prompt: "Use $conclave-validate to review the current workspace, return the evidence-backed result, and give me the correction handoff before merge."
 
 policy:
   allow_implicit_invocation: true

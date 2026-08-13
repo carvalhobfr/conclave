@@ -71,7 +71,7 @@ describe("GitChangeSetService parsers", () => {
       },
     ]);
   });
-  it("collects a real tracked working-tree diff and refuses silent untracked omissions", async () => {
+  it("collects tracked and untracked working-tree files without silently omitting either", async () => {
     const root = await gitFixture();
     const service = new GitChangeSetService();
 
@@ -87,9 +87,25 @@ describe("GitChangeSetService parsers", () => {
     expect(collected.patch).toContain('session = "restored"');
 
     await writeFile(join(root, "src", "untracked.ts"), "export const unsafeToIgnore = true;\n");
-    await expect(service.collect(root, { kind: "working" })).rejects.toThrow(
-      "Untracked files are not silently excluded",
-    );
+    const withUntracked = await service.collect(root, { kind: "working" });
+    expect(withUntracked.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "src/session.ts", status: "modified" }),
+      expect.objectContaining({ path: "src/untracked.ts", status: "added" }),
+    ]));
+    expect(withUntracked.patch).toContain("unsafeToIgnore");
+  });
+
+  it("compares a PR base with committed and local workspace changes together", async () => {
+    const root = await gitFixture();
+    const base = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await runGit(root, ["add", "--", "src/session.ts"]);
+    await runGit(root, ["commit", "-m", "feature"]);
+    await writeFile(join(root, "src", "local.ts"), "export const local = true;\n");
+    const collected = await new GitChangeSetService().collect(root, { kind: "workspace", base });
+    expect(collected.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "src/session.ts", status: "modified" }),
+      expect.objectContaining({ path: "src/local.ts", status: "added" }),
+    ]));
   });
 
   it("compares an explicit base and head without reading the current worktree", async () => {

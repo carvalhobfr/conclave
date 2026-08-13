@@ -2,16 +2,25 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
-import { TypeScriptCodeParser } from "./code-intelligence/typescript-parser.js";
+import { MultiLanguageCodeParser } from "./code-intelligence/multi-language-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
 import { loadReasoningConfiguration } from "./config/reasoning-config.js";
-import { loadTaskConfiguration } from "./config/task-config.js";
 import { loadConclaveEnvironment, writeConclaveEnvironment } from "./config/environment-file.js";
+import {
+  INTERFACE_LANGUAGES,
+  languageFromEnvironment,
+  loadUserPreferences,
+  parseInterfaceLanguage,
+  setInterfaceLanguage,
+  userPreferencesPath,
+  type InterfaceLanguage,
+  type LoadedUserPreferences,
+} from "./config/user-preferences.js";
 import {
   isGuidedProviderId,
   providerProfiles,
@@ -40,22 +49,19 @@ import {
   runReasoningEvaluation,
 } from "./evaluation/reasoning-evaluation.js";
 import { FileSystemCodeIndexStore } from "./indexing/file-system-index-store.js";
-import { InMemoryCodeIndexStore } from "./indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "./indexing/repository-indexer.js";
 import { createProvider } from "./providers/provider-factory.js";
 import { diagnoseProvider } from "./providers/provider-diagnostics.js";
 import { ConclaveMcpService } from "./mcp/conclave-mcp-service.js";
 import { runMcpStdio } from "./mcp/server.js";
 import { ConclaveProductService } from "./web/product-service.js";
+import { createConclaveWebServer } from "./web/server.js";
 import { LocalFolderRepository } from "./repositories/local-folder-repository.js";
 import { CodeRetrievalService } from "./retrieval/code-retrieval-service.js";
 import type { RetrievalStrategy } from "./retrieval/hybrid-retriever.js";
 import { StructuredAgentRuntime } from "./reasoning/agent-runtime.js";
 import { ReasoningEngine } from "./reasoning/reasoning-engine.js";
 import { DEFAULT_REASONING_LIMITS } from "./domain/reasoning.js";
-import { DEFAULT_TASK_EXECUTION_LIMITS } from "./domain/task-execution.js";
-import { StructuredTaskAgentRuntime } from "./execution/task-agent-runtime.js";
-import { TaskExecutionEngine } from "./execution/task-execution-engine.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
 import type { ChangeSource, ValidationContract, ValidationReport } from "./domain/validation.js";
 import { createValidationContract, parseValidationContract } from "./validation/contract-parser.js";
@@ -63,58 +69,32 @@ import { GitChangeSetService } from "./validation/git-change-set.js";
 import { createDeterministicValidationIndex } from "./validation/deterministic-index.js";
 import { SuperValidator } from "./validation/super-validator.js";
 import { createPullRequestSummary } from "./domain/pr-summary.js";
+import { createReviewHandoff } from "./domain/review-handoff.js";
 import { listReviewHistory, saveReviewHistory, type ReviewHistoryRecord } from "./storage/review-history.js";
+import { inferredReviewObjective, inspectRepository } from "./workflow/repository-inspector.js";
+import {
+  cliHelp,
+  guidedChoices,
+  interfaceCopy,
+  languageDisplayName,
+} from "./i18n/cli-copy.js";
 
-const HELP = `Conclave Code Intelligence CLI
-
-Usage:
-  conclave scan [path] [--json]
-  conclave index [path] [--json]
-  conclave search <path> <query> [--strategy hybrid|lexical|semantic] [--limit N] [--json]
-  conclave retrieve <path> <query> [--depth N] [--limit N] [--source-bytes N] [--tokens N] [--json]
-  conclave symbol <path> <symbol> [--json]
-  conclave text <path> <exact text> [--json]
-  conclave graph <path> <symbol-or-file> [--operation neighbors|callers|callees|imports|exports|references|containing|contained|related] [--depth N] [--limit N] [--json]
-  conclave path <path> <from-symbol> <to-symbol> [--depth N] [--limit N] [--json]
-  conclave ask <path> <question> [--json] [--debug]
-  conclave review <path> [--working|--staged|--base <ref> [--head <ref>]|--commit <sha>] --objective <goal> [--contract <file.json>] [--json]
-  conclave validate <path> [same options as review]
-  conclave pr <path> [--base <ref> [--head <ref>]|--working|--staged|--commit <sha>] --objective <goal> [--json]
-  conclave compare [path]                Guided branch comparison with selectable local/remote refs
-  conclave history [path] [--json]
-  conclave task <path> <objective> [--plan-only] [--allow-edits] [--allow-checks] [--allow-repository-scripts] [--allow-network] [--json] [--debug]
-  conclave eval <path> <cases.json> [--json]
-  conclave eval-graph <path> <phase2-cases.json> <graph-cases.json> [--json]
-  conclave eval-reasoning <path> <reasoning-cases.json> [--json]
-  conclave config [--json]
-  conclave models [--provider openai|openrouter|anthropic] [--json]
-  conclave init [--provider openai|openrouter|anthropic] [--profile id] [--model id] [--reasoning full|fast] [--api-key-stdin|--no-key] [--config-file path] [--json]
-  conclave update [--local|--global|--check]
-  conclave start [path]
-  conclave skill install [--target codex|claude|both|github-actions|portable] [--scope project|user] [--project path] [--destination path] [--force] [--dry-run]
-  conclave provider-check
-  conclave demo
-  conclave mcp <path>
-  conclave help
-
-Workflow shortcuts:
-  start      Guided menu for the complete PR workflow and common setup tasks
-  compare    Interactive branch comparison; choose base and target from Git refs
-  pr         Compare a Git source, summarize the PR, show evidence, and save local history
-  review     Low-level deterministic evidence report for scripts and CI
-  validate   Explicit alias for review
-  history    List previous local PR passes for a repository
-  update     Update the project or global CLI, or check the registry
-
-index is an optional persistent context cache for search/graph/Ask. It is not required before pr or review.
-
-Review sources are mutually exclusive: --working, --staged, --base <ref> [--head <ref>], or --commit <sha>.
-Use --base for the comparison base and --head for the branch/commit to inspect. --branch is kept as a backwards-compatible alias for --base.
-Use --objective to describe what the change should deliver. Use --json for machine-readable output.
-
-Retrieval returns repository Evidence and deterministic graph context only. It does not generate an answer or run agents.`;
-
+// User preferences are resolved before the repository .env is loaded so a project cannot
+// redirect or silently override global CLI settings.
+const userPreferenceEnvironment: NodeJS.ProcessEnv = { ...process.env };
 loadConclaveEnvironment();
+
+let cliLanguage: InterfaceLanguage = "en";
+let loadedUserPreferences: LoadedUserPreferences | undefined;
+
+async function loadCliLanguage(): Promise<void> {
+  loadedUserPreferences = await loadUserPreferences(userPreferencesPath(userPreferenceEnvironment));
+  cliLanguage = languageFromEnvironment(
+    loadedUserPreferences.preferences.language,
+    userPreferenceEnvironment,
+    loadedUserPreferences.exists,
+  ).language;
+}
 
 type GraphOperation =
   | "neighbors"
@@ -137,11 +117,6 @@ interface ParsedArguments {
   readonly tokens: number;
   readonly graphOperation: GraphOperation;
   readonly debug: boolean;
-  readonly planOnly: boolean;
-  readonly allowEdits: boolean;
-  readonly allowChecks: boolean;
-  readonly allowRepositoryScripts: boolean;
-  readonly allowNetwork: boolean;
   readonly working: boolean;
   readonly staged: boolean;
   readonly branch: string | undefined;
@@ -161,11 +136,6 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let tokens = 6_000;
   let graphOperation: GraphOperation = "neighbors";
   let debug = false;
-  let planOnly = false;
-  let allowEdits = false;
-  let allowChecks = false;
-  let allowRepositoryScripts = false;
-  let allowNetwork = false;
   let working = false;
   let staged = false;
   let branch: string | undefined;
@@ -181,26 +151,6 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     }
     if (argument === "--debug") {
       debug = true;
-      continue;
-    }
-    if (argument === "--plan-only") {
-      planOnly = true;
-      continue;
-    }
-    if (argument === "--allow-edits") {
-      allowEdits = true;
-      continue;
-    }
-    if (argument === "--allow-checks") {
-      allowChecks = true;
-      continue;
-    }
-    if (argument === "--allow-repository-scripts") {
-      allowRepositoryScripts = true;
-      continue;
-    }
-    if (argument === "--allow-network") {
-      allowNetwork = true;
       continue;
     }
     if (argument === "--working") {
@@ -298,11 +248,6 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     tokens,
     graphOperation,
     debug,
-    planOnly,
-    allowEdits,
-    allowChecks,
-    allowRepositoryScripts,
-    allowNetwork,
     working,
     staged,
     branch,
@@ -376,7 +321,7 @@ function createIndexer(): {
     embeddingProvider,
     indexer: new RepositoryIndexer({
       repositorySource: new LocalFolderRepository(),
-      parser: new TypeScriptCodeParser(),
+      parser: new MultiLanguageCodeParser(),
       embeddingProvider,
       indexStore: new FileSystemCodeIndexStore(),
     }),
@@ -387,18 +332,6 @@ async function updateIndex(requestedPath: string) {
   const rootPath = resolve(requestedPath);
   const { indexer, embeddingProvider } = createIndexer();
   const result = await indexer.index(rootPath);
-  return { ...result, embeddingProvider };
-}
-
-async function createEphemeralIndex(requestedPath: string) {
-  const rootPath = resolve(requestedPath);
-  const embeddingProvider = createEmbeddingProvider(process.env, new EnvironmentCredentialSource());
-  const result = await new RepositoryIndexer({
-    repositorySource: new LocalFolderRepository(),
-    parser: new TypeScriptCodeParser(),
-    embeddingProvider,
-    indexStore: new InMemoryCodeIndexStore(),
-  }).index(rootPath);
   return { ...result, embeddingProvider };
 }
 
@@ -661,12 +594,12 @@ async function evaluateGraphRetrieval(args: readonly string[]): Promise<void> {
   print(report, parsed.json);
 }
 
-async function askRepository(args: readonly string[]): Promise<void> {
+async function reasonAboutRepository(args: readonly string[], intent: "ask" | "investigate"): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
   const question = parsed.positionals.slice(1).join(" ").trim();
   if (requestedPath === undefined || question === "") {
-    throw new Error("ask requires a repository path and question");
+    throw new Error(`${intent} requires a repository path and question`);
   }
   const runtimeConfig = loadRuntimeConfig();
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
@@ -681,30 +614,36 @@ async function askRepository(args: readonly string[]): Promise<void> {
     retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
     runtime,
     preset: reasoningConfig.preset,
-  }).ask(question);
+  }).ask(question, intent === "ask" ? "investigator-judge" : "conclave");
   if (parsed.json) {
     print(parsed.debug ? result : { verdict: result.verdict, metrics: result.metrics, terminationReason: result.terminationReason }, true);
     return;
   }
   console.log(result.verdict.answer);
   console.log("");
+  const copy = interfaceCopy(cliLanguage);
+  const claimLabels = {
+    en: ["Supported claims", "Rejected claims", "Uncertain claims"],
+    "pt-BR": ["Claims sustentados", "Claims rejeitados", "Claims incertos"],
+    "es-ES": ["Afirmaciones sustentadas", "Afirmaciones rechazadas", "Afirmaciones inciertas"],
+  } as const;
   for (const [label, claims] of [
-    ["Supported claims", result.verdict.claims.supported],
-    ["Rejected claims", result.verdict.claims.rejected],
-    ["Uncertain claims", result.verdict.claims.uncertain],
+    [claimLabels[cliLanguage][0], result.verdict.claims.supported],
+    [claimLabels[cliLanguage][1], result.verdict.claims.rejected],
+    [claimLabels[cliLanguage][2], result.verdict.claims.uncertain],
   ] as const) {
     console.log(`${label}:`);
     for (const claim of claims) console.log(`- ${claim.statement}`);
   }
-  console.log("Evidence:");
+  console.log(`${copy.evidence}:`);
   for (const evidence of result.verdict.evidence) {
     console.log(
       `- ${evidence.path}:${String(evidence.startLine)}-${String(evidence.endLine)}${evidence.symbol === undefined ? "" : ` — ${evidence.symbol}`}`,
     );
   }
-  console.log(`Agents executed: ${result.verdict.traceSummary.agentsExecuted.join(", ")}`);
+  console.log(`${copy.agentsExecuted}: ${result.verdict.traceSummary.agentsExecuted.join(", ")}`);
   for (const skipped of result.verdict.traceSummary.agentsSkipped) {
-    console.log(`Agent skipped: ${skipped.role} — ${skipped.reason}`);
+    console.log(`${copy.agentSkipped}: ${skipped.role} — ${skipped.reason}`);
   }
   console.log(
     `Follow-ups: ${String(result.metrics.followUpRequests)}; retrieval rounds: ${String(result.metrics.retrievalRounds)}; model calls: ${String(result.metrics.modelCalls)}`,
@@ -713,7 +652,7 @@ async function askRepository(args: readonly string[]): Promise<void> {
     `Approximate model context: ${String(result.metrics.approximateInputTokens)} input / ${String(result.metrics.approximateOutputTokens)} output tokens`,
   );
   if (parsed.debug) {
-    console.log("Trace:");
+    console.log(`${copy.trace}:`);
     for (const event of result.trace) {
       console.log(`${String(event.sequence)} ${event.type}: ${event.detail}`);
     }
@@ -840,15 +779,21 @@ async function updateConclave(args: readonly string[]): Promise<void> {
   const currentVersion = current.version ?? "0.0.0";
   const latestVersion = latest.stdout.trim();
   if (compareVersions(currentVersion, latestVersion) >= 0) {
-    throw new Error(`Conclave já está na versão mais recente (${currentVersion}). Nenhuma atualização foi necessária.`);
+    const message = {
+      en: `Conclave is already on the latest version (${currentVersion}). No update was needed.`,
+      "pt-BR": `O Conclave já está na versão mais recente (${currentVersion}). Nenhuma atualização foi necessária.`,
+      "es-ES": `Conclave ya está en la versión más reciente (${currentVersion}). No ha sido necesario actualizar.`,
+    } as const;
+    throw new Error(message[cliLanguage]);
   }
   const commandArgs = mode === "--global"
     ? ["install", "--global", "conclave-ai@latest"]
     : ["install", "--save-dev", "conclave-ai@latest"];
-  console.log(`Updating Conclave ${mode === "--global" ? "globally" : "in this project"}...`);
+  const copy = interfaceCopy(cliLanguage);
+  console.log(mode === "--global" ? copy.updatingGlobal : copy.updatingProject);
   const code = await runExternalCommand("npm", commandArgs);
   if (code !== 0) process.exitCode = code;
-  else console.log("Conclave updated. Run `conclave --version` or `npm list conclave-ai` to confirm.");
+  else console.log(copy.updateComplete);
 }
 
 async function showVersion(): Promise<void> {
@@ -907,13 +852,18 @@ async function compareBranches(args: readonly string[]): Promise<void> {
   if ((base === undefined) !== (head === undefined)) {
     throw new Error("compare needs both --base and --head, or no flags for the interactive selector");
   }
+  const prompts = {
+    en: { base: "Choose the comparison base branch", head: "Choose the branch to inspect", objective: "What should this change deliver?" },
+    "pt-BR": { base: "Escolha a branch base da comparação", head: "Escolha a branch que será analisada", objective: "O que esta mudança deve entregar?" },
+    "es-ES": { base: "Elige la rama base de la comparación", head: "Elige la rama que se va a analizar", objective: "¿Qué debe conseguir este cambio?" },
+  } as const;
   if (base === undefined || head === undefined) {
-    base = await promptBranch(root, "Choose the comparison base branch");
-    head = await promptBranch(root, "Choose the branch to inspect", base);
+    base = await promptBranch(root, prompts[cliLanguage].base);
+    head = await promptBranch(root, prompts[cliLanguage].head, base);
   }
   if (base === head) throw new Error("Base and target must be different branches");
   const objective = parsed.objective?.trim() === "" || parsed.objective === undefined
-    ? await promptLine("What should this change deliver?")
+    ? await promptLine(prompts[cliLanguage].objective)
     : parsed.objective;
   const forwarded = [root, "--base", base, "--head", head, "--objective", objective];
   if (parsed.json) forwarded.push("--json");
@@ -921,19 +871,46 @@ async function compareBranches(args: readonly string[]): Promise<void> {
 }
 
 async function guidedChangeSource(root: string, color: boolean): Promise<readonly string[]> {
+  const copy = {
+    en: {
+      question: "Which change should Conclave check?",
+      branch: ["Compare two branches", "Choose a base and target branch without changing checkout (recommended for PRs)"],
+      working: ["Working tree", "Check tracked unstaged changes; stage or ignore untracked files first"],
+      staged: ["Staged files", "Check only what is in the Git index"],
+      commit: ["One commit", "Check a commit that already exists in Git"],
+      base: "Choose the comparison base branch", head: "Choose the branch to inspect", commitPrompt: "Commit",
+    },
+    "pt-BR": {
+      question: "Qual mudança o Conclave deve revisar?",
+      branch: ["Comparar duas branches", "Escolha base e destino sem trocar o checkout (recomendado para PRs)"],
+      working: ["Working tree", "Revisa mudanças rastreadas e unstaged; faça stage ou ignore arquivos untracked primeiro"],
+      staged: ["Arquivos staged", "Revisa somente o que está no índice do Git"],
+      commit: ["Um commit", "Revisa um commit que já existe no Git"],
+      base: "Escolha a branch base da comparação", head: "Escolha a branch que será analisada", commitPrompt: "Commit",
+    },
+    "es-ES": {
+      question: "¿Qué cambio debe revisar Conclave?",
+      branch: ["Comparar dos ramas", "Elige base y destino sin cambiar el checkout (recomendado para PRs)"],
+      working: ["Working tree", "Revisa cambios tracked y unstaged; añade o ignora antes los archivos untracked"],
+      staged: ["Archivos staged", "Revisa solo lo que está en el índice de Git"],
+      commit: ["Un commit", "Revisa un commit que ya existe en Git"],
+      base: "Elige la rama base de la comparación", head: "Elige la rama que se va a analizar", commitPrompt: "Commit",
+    },
+  } as const;
+  const text = copy[cliLanguage];
   const source = await promptChoice(
-    "Which change should Conclave check?",
+    text.question,
     [
-      { id: "branch", label: "Compare two branches", description: "Choose a base and target branch without changing checkout (recommended for PRs)" },
-      { id: "working", label: "Working tree", description: "Check tracked unstaged changes; stage or ignore untracked files first" },
-      { id: "staged", label: "Staged files", description: "Check only what is in the Git index" },
-      { id: "commit", label: "One commit", description: "Check a commit that already exists in Git" },
+      { id: "branch", label: text.branch[0], description: text.branch[1] },
+      { id: "working", label: text.working[0], description: text.working[1] },
+      { id: "staged", label: text.staged[0], description: text.staged[1] },
+      { id: "commit", label: text.commit[0], description: text.commit[1] },
     ],
     color,
   );
   if (source.id === "branch") {
-    const base = await promptBranch(root, "Choose the comparison base branch");
-    const head = await promptBranch(root, "Choose the branch to inspect", base);
+    const base = await promptBranch(root, text.base);
+    const head = await promptBranch(root, text.head, base);
     return [
       root,
       "--base",
@@ -943,42 +920,36 @@ async function guidedChangeSource(root: string, color: boolean): Promise<readonl
     ];
   }
   if (source.id === "commit") {
-    return [root, "--commit", await promptLine("Commit", "HEAD")];
+    return [root, "--commit", await promptLine(text.commitPrompt, "HEAD")];
   }
   return [root, `--${source.id}`];
 }
 
 async function startGuided(path = "."): Promise<void> {
   const root = resolve(path);
-  const choices: readonly GuidedChoice[] = [
-    { id: "pr", label: "Run a complete PR pass", description: "Compare a branch, summarize the change, show evidence, and save history" },
-    { id: "compare", label: "Compare branches", description: "Choose the base and target branch from a list, then run the PR pass" },
-    { id: "review", label: "Review evidence (advanced)", description: "Run the low-level deterministic report for a working tree, branch, staged change, or commit" },
-    { id: "understand", label: "Understand this repository", description: "Build a local index and inspect files, code units, and relationships" },
-    { id: "ask", label: "Ask about the code", description: "Use a configured provider to investigate a repository question" },
-    { id: "task", label: "Plan or execute a task", description: "Use a configured agent with explicit permissions and a final check" },
-    { id: "setup", label: "Configure a provider", description: "Choose OpenAI/Codex, OpenRouter, or Anthropic and a model" },
-    { id: "update", label: "Update Conclave", description: "Install the latest CLI version" },
-    { id: "history", label: "Show PR history", description: "List previous local PR passes for this repository" },
-    { id: "help", label: "Show all commands", description: "Print the complete CLI reference" },
-  ];
-  console.log("\nConclave — your PR companion\n");
-  console.log(`Repository: ${root}`);
-  const choice = await promptChoice("What do you want to do?", choices, terminalColorEnabled());
+  const copy = interfaceCopy(cliLanguage);
+  const choices: readonly GuidedChoice[] = guidedChoices(cliLanguage);
+  console.log(`\n${copy.guidedTitle}\n`);
+  console.log(`${copy.repository}: ${root}`);
+  const choice = await promptChoice(copy.guidedQuestion, choices, terminalColorEnabled());
   const color = terminalColorEnabled();
   switch (choice.id) {
+    case "check":
+      await checkRepository([root]);
+      return;
     case "compare":
       await compareBranches([root]);
       return;
-    case "pr": {
-      const source = await guidedChangeSource(root, color);
-      const objective = await promptLine("What should this change deliver?");
-      await pullRequestSummary([...source, "--objective", objective]);
+    case "open":
+      await openCockpit([root]);
       return;
-    }
     case "review": {
       const source = await guidedChangeSource(root, color);
-      const objective = await promptLine("What should this change deliver?");
+      const objective = await promptLine({
+        en: "What should this change deliver?",
+        "pt-BR": "O que esta mudança deve entregar?",
+        "es-ES": "¿Qué debe conseguir este cambio?",
+      }[cliLanguage]);
       await reviewChanges([...source, "--objective", objective]);
       return;
     }
@@ -987,17 +958,30 @@ async function startGuided(path = "."): Promise<void> {
       console.log("\nNext: use `conclave search`, `conclave graph`, or choose Ask from this menu.");
       return;
     case "ask": {
-      const question = await promptLine("Question");
-      await askRepository([root, question]);
+      const question = await promptLine({ en: "Question", "pt-BR": "Pergunta", "es-ES": "Pregunta" }[cliLanguage]);
+      await reasonAboutRepository([root, question], "ask");
       return;
     }
-    case "task": {
-      const objective = await promptLine("What should the agent do?");
-      await executeTask([root, objective, "--plan-only"]);
+    case "investigate": {
+      const question = await promptLine({
+        en: "What behavior should Conclave investigate?",
+        "pt-BR": "Qual comportamento o Conclave deve investigar?",
+        "es-ES": "¿Qué comportamiento debe investigar Conclave?",
+      }[cliLanguage]);
+      await reasonAboutRepository([root, question], "investigate");
       return;
     }
     case "setup":
+      await setupRepository([root]);
+      return;
+    case "provider":
       await initializeConclave([]);
+      return;
+    case "language":
+      await chooseInterfaceLanguage();
+      return;
+    case "doctor":
+      await doctorRepository([root]);
       return;
     case "update":
       await updateConclave([]);
@@ -1006,7 +990,7 @@ async function startGuided(path = "."): Promise<void> {
       await showReviewHistory([root]);
       return;
     default:
-      console.log(HELP);
+      console.log(cliHelp(cliLanguage));
   }
 }
 
@@ -1055,28 +1039,29 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
 }
 
 function printValidationReport(report: ValidationReport): void {
-    console.log("Validation verdict: " + report.verdict.toUpperCase());
+    const copy = interfaceCopy(cliLanguage);
+    console.log(copy.validationVerdict + ": " + report.verdict.toUpperCase());
     console.log(report.summary);
-    console.log("Objective: " + (report.objective === "" ? "<missing>" : report.objective));
+    console.log(copy.objective + ": " + (report.objective === "" ? "<missing>" : report.objective));
     if (report.changeSet.source.kind === "branch") {
       const head = report.changeSet.source.head ?? "HEAD (checked-out branch)";
-      console.log("Comparison: " + head + " against " + report.changeSet.source.base + " (base branch)");
+      console.log(copy.comparison + ": " + head + " against " + report.changeSet.source.base + ` (${copy.baseBranch})`);
     }
     console.log(
-      "Changed: " + String(report.metrics.filesChanged) + " files / " +
-      String(report.metrics.symbolsChanged) + " symbols",
+      copy.changed + ": " + String(report.metrics.filesChanged) + ` ${copy.files} / ` +
+      String(report.metrics.symbolsChanged) + ` ${copy.codeUnits}`,
     );
     console.log(
-      "Impact: " + String(report.metrics.impactedFiles) + " files / " +
-      String(report.metrics.impactedSymbols) + " symbols",
+      copy.impact + ": " + String(report.metrics.impactedFiles) + ` ${copy.files} / ` +
+      String(report.metrics.impactedSymbols) + ` ${copy.codeUnits}`,
     );
     if (report.changeSet.files.length > 0) {
-      console.log("Changed files:");
+      console.log(copy.changedFiles + ":");
       for (const file of report.changeSet.files) {
         const hunks = file.hunks.length === 0
-          ? "no hunks"
-          : String(file.hunks.length) + " hunk" + (file.hunks.length === 1 ? "" : "s");
-        const previous = file.previousPath === undefined ? "" : ` (from ${file.previousPath})`;
+          ? copy.noHunks
+          : String(file.hunks.length) + ` ${copy.hunk}` + (file.hunks.length === 1 ? "" : "s");
+        const previous = file.previousPath === undefined ? "" : ` (${copy.from} ${file.previousPath})`;
         console.log(`- ${file.status}: ${file.path}${previous} — ${hunks}`);
       }
     }
@@ -1091,68 +1076,96 @@ function printValidationReport(report: ValidationReport): void {
             (evidence.endLine === undefined ? "" : "-" + String(evidence.endLine));
         console.log("- " + evidence.path + range + " — " + evidence.reason);
       }
-      console.log("Next: " + item.remediation);
+      console.log(copy.next + ": " + item.remediation);
     }
     for (const result of report.claims) {
       console.log("");
-      console.log("CLAIM " + result.outcome.toUpperCase() + ": " + result.claim.statement);
+      console.log(copy.claim + " " + result.outcome.toUpperCase() + ": " + result.claim.statement);
       console.log(result.explanation);
     }
 }
 
-async function pullRequestSummary(args: readonly string[]): Promise<void> {
+async function pullRequestSummary(
+  args: readonly string[],
+  override?: { readonly source: ChangeSource; readonly objective: string },
+): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
   if (requestedPath === undefined || parsed.positionals.length !== 1) {
     throw new Error("pr requires exactly one repository path and an objective");
   }
-  requireObjective(parsed, "pr");
+  const effectiveParsed = override === undefined ? parsed : { ...parsed, objective: override.objective };
+  requireObjective(effectiveParsed, "pr");
   const repositoryRoot = resolve(requestedPath);
-  const contract = await loadValidationContract(parsed);
-  if (!parsed.json) progress("Collecting", "Git change");
+  const contract = await loadValidationContract(effectiveParsed);
+  const copy = interfaceCopy(cliLanguage);
+  if (!effectiveParsed.json) progress(copy.collecting, copy.gitChange);
   const changeService = new GitChangeSetService();
-  const source = selectedChangeSource(parsed);
+  const source = override?.source ?? selectedChangeSource(effectiveParsed);
   const changeSet = await changeService.collect(repositoryRoot, source);
-  if (!parsed.json) progress("Indexing", "local repository context");
+  if (!effectiveParsed.json) progress(copy.indexing, copy.localContext);
   const materialized = await changeService.materializeValidationRoot(repositoryRoot, source);
   try {
     const indexed = await createDeterministicValidationIndex(materialized.rootPath);
-    if (!parsed.json) progress("Validating", "objective, impact, and claims");
+    if (!effectiveParsed.json) progress(copy.validating, copy.objectiveImpactClaims);
     const report = new SuperValidator().validate(indexed.index, changeSet, contract);
-  const summary = createPullRequestSummary(report);
-  const record: ReviewHistoryRecord = {
-    id: createHash("sha256").update(JSON.stringify({ headSha: report.changeSet.headSha, source: report.changeSet.source, objective: report.objective })).digest("hex").slice(0, 24),
-    createdAt: new Date().toISOString(),
-    repository: repositoryRoot,
-    objective: report.objective,
-    headSha: report.changeSet.headSha,
-    summary,
-  };
-  await saveReviewHistory(repositoryRoot, record);
-    if (parsed.json) {
-      print({ summary, report }, true);
+    const summary = createPullRequestSummary(report);
+    const handoff = createReviewHandoff(report);
+    const record: ReviewHistoryRecord = {
+      id: createHash("sha256").update(JSON.stringify({ headSha: report.changeSet.headSha, source: report.changeSet.source, objective: report.objective })).digest("hex").slice(0, 24),
+      createdAt: new Date().toISOString(),
+      repository: repositoryRoot,
+      objective: report.objective,
+      headSha: report.changeSet.headSha,
+      summary,
+      report,
+      handoff,
+    };
+    await saveReviewHistory(repositoryRoot, record);
+    if (effectiveParsed.json) {
+      print({ summary, report, handoff }, true);
     } else {
-    console.log(`\nPR summary: ${summary.title}`);
-    console.log(`Comparison: ${summary.comparison}`);
+    console.log(`\n${copy.prSummary}: ${summary.title}`);
+    console.log(`${copy.comparison}: ${summary.comparison}`);
     console.log(summary.summary);
-    console.log(`Verdict: ${summary.verdict.toUpperCase()}`);
+    console.log(`${copy.verdict}: ${summary.verdict.toUpperCase()}`);
     if (summary.changedFiles.length > 0) {
-      console.log("\nChanged files:");
-      for (const file of summary.changedFiles) console.log(`- ${file.status}: ${file.path} (${String(file.hunks)} hunks)`);
+      console.log(`\n${copy.changedFiles}:`);
+      for (const file of summary.changedFiles) console.log(`- ${file.status}: ${file.path} (${String(file.hunks)} ${copy.hunk}${file.hunks === 1 ? "" : "s"})`);
     }
     if (summary.risks.length > 0) {
-      console.log("\nRisks:");
+      console.log(`\n${copy.risks}:`);
       for (const risk of summary.risks) console.log(`- ${risk}`);
     }
-    console.log("\nNext steps:");
+    console.log(`\n${copy.nextSteps}:`);
     for (const step of summary.nextSteps) console.log(`- ${step}`);
-    console.log("\nFull evidence: run the same command with --json.");
+      console.log(`\n${copy.nextForAgent}:`);
+      console.log(handoff.prompt);
+      console.log(`\n${copy.fullEvidence}`);
     }
     if (report.verdict === "block") process.exitCode = 1;
     else if (report.verdict === "inconclusive") process.exitCode = 2;
   } finally {
     await materialized.cleanup();
   }
+}
+
+async function checkRepository(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  const root = resolve(parsed.positionals[0] ?? ".");
+  if (parsed.positionals.length > 1) throw new Error("check accepts at most one repository path");
+  const inspection = await inspectRepository(root);
+  const hasExplicitSource = parsed.working || parsed.staged || parsed.commit !== undefined || parsed.head !== undefined;
+  const source: ChangeSource = hasExplicitSource
+    ? selectedChangeSource(parsed)
+    : { kind: "workspace", base: parsed.branch ?? inspection.defaultBase };
+  const objective = parsed.objective?.trim() || inferredReviewObjective(inspection);
+  if (!parsed.json) {
+    const copy = interfaceCopy(cliLanguage);
+    progress(copy.repository, `${inspection.currentBranch} → base ${source.kind === "workspace" ? source.base : copy.selectedSource}`);
+    if (inspection.status.untracked > 0) progress(copy.included, `${String(inspection.status.untracked)} ${copy.untrackedFiles}`);
+  }
+  await pullRequestSummary([inspection.root, ...(parsed.json ? ["--json"] : []), ...(parsed.contractPath === undefined ? [] : ["--contract", parsed.contractPath])], { source, objective });
 }
 
 async function showReviewHistory(args: readonly string[]): Promise<void> {
@@ -1164,111 +1177,114 @@ async function showReviewHistory(args: readonly string[]): Promise<void> {
     return;
   }
   if (records.length === 0) {
-    console.log("No Conclave PR reviews recorded for this repository yet.");
+    console.log(interfaceCopy(cliLanguage).noHistory);
     return;
   }
-  console.log(`Review history: ${repositoryRoot}`);
+  console.log(`${interfaceCopy(cliLanguage).reviewHistory}: ${repositoryRoot}`);
   for (const record of records) {
     console.log(`- ${record.createdAt} ${record.summary.verdict.toUpperCase()} ${record.summary.title} — ${record.objective}`);
   }
 }
 
-async function executeTask(args: readonly string[]): Promise<void> {
+async function showLatestHandoff(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
-  const requestedPath = parsed.positionals[0];
-  const objective = parsed.positionals.slice(1).join(" ").trim();
-  if (requestedPath === undefined || objective === "") {
-    throw new Error("task requires a repository path and explicit objective");
-  }
-  if (parsed.allowRepositoryScripts && !parsed.allowChecks) {
-    throw new Error("--allow-repository-scripts requires --allow-checks");
-  }
-  if (parsed.allowNetwork && !parsed.allowRepositoryScripts) {
-    throw new Error("--allow-network requires --allow-repository-scripts");
-  }
-  const runtimeConfig = loadRuntimeConfig();
-  const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
-  const taskConfig = loadTaskConfiguration(runtimeConfig);
-  const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
-  const indexed = await createEphemeralIndex(requestedPath);
-  const providers = new Map([[provider.id, provider]]);
-  const reasoning = new ReasoningEngine({
-    retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
-    runtime: new StructuredAgentRuntime(
-      providers,
-      reasoningConfig.assignments,
-      DEFAULT_REASONING_LIMITS,
-    ),
-    preset: reasoningConfig.preset,
-  });
-  const result = await new TaskExecutionEngine({
-    investigator: reasoning,
-    taskRuntime: new StructuredTaskAgentRuntime(
-      providers,
-      taskConfig.assignments,
-      DEFAULT_TASK_EXECUTION_LIMITS,
-    ),
-    permissions: {
-      allowFileEdits: parsed.allowEdits && !parsed.planOnly,
-      allowCommands: parsed.allowChecks && !parsed.planOnly,
-      allowRepositoryScripts: parsed.allowRepositoryScripts && !parsed.planOnly,
-      allowNetwork: parsed.allowNetwork && !parsed.planOnly,
-    },
-    limits: DEFAULT_TASK_EXECUTION_LIMITS,
-    allowedPackageScripts: taskConfig.allowedPackageScripts,
-  }).execute({
-    intent: "task",
-    repositoryRoot: requestedPath,
-    objective,
-    planOnly: parsed.planOnly,
-  });
-  if (parsed.json) {
-    print(
-      parsed.debug
-        ? result
-        : {
-            task: result.task,
-            diagnosisClaims: result.diagnosisClaims,
-            patchRecords: result.patchRecords,
-            review: result.review,
-            verdict: result.verdict,
-            metrics: result.metrics,
-          },
-      true,
-    );
-    return;
-  }
-  console.log(`Task verdict: ${result.verdict.status}`);
-  console.log(result.verdict.summary);
-  console.log(`Plan: ${result.task.plan.summary}`);
-  for (const requirement of result.verdict.requirements) {
-    console.log(`Requirement ${requirement.outcome}: ${requirement.requirementId} — ${requirement.explanation}`);
-  }
-  for (const file of result.verdict.changedFiles) {
-    console.log(
-      `Changed: ${file.path} (+${String(file.additions)}/-${String(file.deletions)})${file.expectedByPlan ? "" : " [unexpected]"}`,
-    );
-  }
-  for (const record of result.patchRecords) console.log(record.unifiedDiff);
-  for (const check of result.verdict.checks) {
-    console.log(`Check ${check.status}: ${check.requestId} (${check.command.kind})`);
-  }
-  for (const finding of result.review.findings) {
-    console.log(`Review ${finding.severity}: ${finding.statement}`);
-  }
-  console.log(
-    `Usage: investigation ${String(result.metrics.investigation.modelCalls)} calls; task ${String(result.metrics.taskModelCalls)} calls; ${String(result.metrics.commandCount)} commands; ${String(result.metrics.approximateInputTokens)} approximate task input tokens`,
-  );
-  if (parsed.debug) {
-    console.log("Trace:");
-    for (const event of result.trace) console.log(`${String(event.sequence)} ${event.type}: ${event.detail}`);
-  }
+  const repositoryRoot = resolve(parsed.positionals[0] ?? ".");
+  const latest = (await listReviewHistory(repositoryRoot))[0];
+  if (latest === undefined) throw new Error("No review history exists yet. Run `conclave check .` first.");
+  const handoff = latest.handoff ?? (latest.report === undefined ? undefined : createReviewHandoff(latest.report));
+  if (handoff === undefined) throw new Error("The latest legacy review has no complete report. Run `conclave check .` again.");
+  print(parsed.json ? { reviewId: latest.id, handoff } : handoff.prompt, parsed.json);
 }
 
-function showConfig(args: readonly string[]): void {
+async function chooseInterfaceLanguage(): Promise<void> {
+  const choices = INTERFACE_LANGUAGES.map((language) => ({
+    id: language,
+    label: languageDisplayName(language, cliLanguage),
+    description: language === cliLanguage
+      ? { en: "Current language", "pt-BR": "Idioma atual", "es-ES": "Idioma actual" }[cliLanguage]
+      : language,
+  }));
+  const selected = await promptChoice(
+    interfaceCopy(cliLanguage).interfaceLanguage,
+    choices,
+    terminalColorEnabled(),
+  );
+  await applyInterfaceLanguage(parseInterfaceLanguage(selected.id), false);
+}
+
+async function applyInterfaceLanguage(language: InterfaceLanguage, json: boolean): Promise<void> {
+  const saved = await setInterfaceLanguage(language, loadedUserPreferences?.path);
+  loadedUserPreferences = saved;
+  cliLanguage = language;
+  const report = {
+    language,
+    languageName: languageDisplayName(language, language),
+    preferencesFile: saved.path,
+    jsonFieldsLanguage: "en",
+  };
+  if (json) {
+    print(report, true);
+    return;
+  }
+  const copy = interfaceCopy(language);
+  console.log(`${copy.languageSaved}: ${report.languageName} (${language})`);
+  console.log(`${copy.preferencesFile}: ${saved.path}`);
+  console.log(copy.jsonStable);
+}
+
+async function showConfig(args: readonly string[]): Promise<void> {
+  let requestedLanguage: InterfaceLanguage | undefined;
+  let json = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
+    if (argument === "--language") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error("--language requires en, pt-BR, or es-ES");
+      }
+      requestedLanguage = parseInterfaceLanguage(value);
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown config option: ${argument ?? ""}`);
+  }
+  if (requestedLanguage !== undefined) {
+    await applyInterfaceLanguage(requestedLanguage, json);
+    return;
+  }
   const credentials = new EnvironmentCredentialSource();
-  const report = describeRuntimeConfig(loadRuntimeConfig(), credentials);
-  print(report, args.includes("--json"));
+  const provider = describeRuntimeConfig(loadRuntimeConfig(), credentials);
+  const preferences = loadedUserPreferences ?? await loadUserPreferences();
+  const effective = languageFromEnvironment(
+    preferences.preferences.language,
+    userPreferenceEnvironment,
+    preferences.exists,
+  );
+  const report = {
+    interface: {
+      language: effective.language,
+      languageName: languageDisplayName(effective.language, effective.language),
+      source: effective.source,
+      preferencesFile: preferences.path,
+      supportedLanguages: INTERFACE_LANGUAGES,
+      jsonFieldsLanguage: "en",
+    },
+    provider,
+  };
+  if (json) {
+    print(report, true);
+    return;
+  }
+  const copy = interfaceCopy(cliLanguage);
+  console.log(copy.configTitle);
+  console.log(`${copy.interfaceLanguage}: ${report.interface.languageName} (${report.interface.language})`);
+  console.log(`${copy.preferencesFile}: ${report.interface.preferencesFile}`);
+  console.log(`${copy.providerConfig}: ${provider.mode} · ${provider.provider}`);
+  console.log(copy.jsonStable);
 }
 
 interface InitArguments {
@@ -1352,7 +1368,7 @@ async function promptChoice<T extends { readonly id: string; readonly label: str
   for (const [index, choice] of choices.entries()) {
     console.log(renderSetupChoice(index + 1, choice, color));
   }
-  const answer = await promptLine("Choose", "1");
+  const answer = await promptLine(interfaceCopy(cliLanguage).choose, "1");
   const numeric = Number(answer);
   const selected = Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length
     ? choices[numeric - 1]
@@ -1420,17 +1436,17 @@ async function initializeConclave(args: readonly string[]): Promise<void> {
   const interactive = process.stdin.isTTY && process.stdout.isTTY;
   const color = terminalColorEnabled();
   const providerChoices = (["openai", "openrouter", "anthropic"] as const).map((id) => {
-    const guide = providerSetupGuide(id);
+    const guide = providerSetupGuide(id, cliLanguage);
     return { id, label: guide.label, description: guide.summary };
   });
-  if (interactive && !parsed.json) console.log(renderSetupBanner(color));
+  if (interactive && !parsed.json) console.log(renderSetupBanner(color, cliLanguage));
   const provider = parsed.provider ?? (await promptChoice(
-    renderSetupStep(1, 4, "Provider", "Choose who should power optional Ask and Task reasoning. Review never uses this key.", color),
+    renderSetupStep(1, 4, "Provider", "Choose who should power optional Ask and Investigate reasoning. Review never uses this key.", color),
     providerChoices,
     color,
   )).id;
   if (interactive && parsed.provider !== undefined && !parsed.json) {
-    console.log(renderSetupStep(1, 4, "Provider", `${providerSetupGuide(provider).label} selected from --provider.`, color));
+    console.log(renderSetupStep(1, 4, "Provider", `${providerSetupGuide(provider, cliLanguage).label} selected from --provider.`, color));
   }
   const selectedProfile = interactive && parsed.profile === undefined && parsed.model === undefined
     ? await promptChoice(
@@ -1449,7 +1465,7 @@ async function initializeConclave(args: readonly string[]): Promise<void> {
   let apiKey: string | undefined;
   if (interactive && !parsed.json) {
     console.log(renderSetupStep(4, 4, "Credentials", "The value is hidden and saved only in the local configuration file.", color));
-    console.log(renderProviderGuide(provider, color));
+    console.log(renderProviderGuide(provider, color, cliLanguage));
   }
   if (!parsed.noKey) {
     apiKey = parsed.apiKeyStdin
@@ -1480,7 +1496,7 @@ async function initializeConclave(args: readonly string[]): Promise<void> {
     print(report, true);
     return;
   }
-  console.log(renderSetupSuccess(report, color));
+  console.log(renderSetupSuccess(report, color, cliLanguage));
 }
 
 function showModels(args: readonly string[]): void {
@@ -1517,6 +1533,131 @@ async function installSkill(args: readonly string[]): Promise<void> {
   if (exitCode !== 0) throw new Error(`Skill installation failed with exit code ${String(exitCode)}`);
 }
 
+async function exists(path: string): Promise<boolean> {
+  try { await access(path); return true; } catch { return false; }
+}
+
+async function setupRepository(args: readonly string[]): Promise<void> {
+  let project = ".";
+  let agents: "codex" | "claude" | "both" | "none" | undefined;
+  let githubActions = false;
+  let force = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--github-actions") { githubActions = true; continue; }
+    if (argument === "--force") { force = true; continue; }
+    if (argument === "--agents") {
+      const value = args[index + 1];
+      if (value !== "codex" && value !== "claude" && value !== "both" && value !== "none") {
+        throw new Error("--agents must be codex, claude, both, or none");
+      }
+      agents = value;
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--") === true) throw new Error(`Unknown setup option: ${argument}`);
+    if (project !== ".") throw new Error("setup accepts at most one repository path");
+    project = argument ?? ".";
+  }
+  const inspection = await inspectRepository(project);
+  if (agents === undefined && process.stdin.isTTY && process.stdout.isTTY) {
+    agents = (await promptChoice(
+      "Which coding agents should receive the Conclave skill?",
+      [
+        { id: "both", label: "Codex + Claude", description: "Install project skills for both agents" },
+        { id: "codex", label: "Codex", description: "Install only .agents/skills" },
+        { id: "claude", label: "Claude Code", description: "Install only .claude/skills" },
+        { id: "none", label: "No agent skill", description: "Keep only the CLI" },
+      ] as const,
+      terminalColorEnabled(),
+    )).id;
+    const ci = await promptChoice(
+      "Add the GitHub Actions reviewer?",
+      [
+        { id: "yes", label: "Yes", description: "Review pull requests and publish a readable summary" },
+        { id: "no", label: "Not now", description: "You can add it later with conclave setup" },
+      ] as const,
+      terminalColorEnabled(),
+    );
+    githubActions = ci.id === "yes";
+  }
+  agents ??= "both";
+  const copy = interfaceCopy(cliLanguage);
+  console.log(`\n${copy.configTitle} — ${inspection.root}`);
+  if (agents !== "none") {
+    await installSkill(["--target", agents, "--scope", "project", "--project", inspection.root, ...(force ? ["--force"] : [])]);
+  }
+  if (githubActions) {
+    await installSkill(["--target", "github-actions", "--scope", "project", "--project", inspection.root, ...(force ? ["--force"] : [])]);
+  }
+  console.log(`\n${copy.ready}. ${copy.setupCompleteHint}`);
+  console.log(copy.providerOptional);
+}
+
+async function doctorRepository(args: readonly string[]): Promise<void> {
+  const parsed = parseArguments(args);
+  if (parsed.positionals.length > 1) throw new Error("doctor accepts at most one repository path");
+  const inspection = await inspectRepository(parsed.positionals[0] ?? ".");
+  const snapshot = await new LocalFolderRepository().load({ path: inspection.root });
+  const supported = new Set(["typescript", "javascript", "tsx", "jsx", "python", "java"]);
+  const languages = [...new Set(snapshot.files.map((file) => file.language))].sort();
+  const checks = [
+    { id: "git", status: "ok", detail: `${inspection.currentBranch}; base ${inspection.defaultBase}` },
+    { id: "node", status: Number(process.versions.node.split(".")[0]) >= 20 ? "ok" : "error", detail: process.version },
+    { id: "languages", status: languages.some((language) => supported.has(language)) ? "ok" : "warning", detail: languages.join(", ") || "no source language detected" },
+    { id: "codex-skill", status: await exists(resolve(inspection.root, ".agents/skills/conclave-validate/SKILL.md")) ? "ok" : "optional", detail: ".agents/skills/conclave-validate" },
+    { id: "claude-skill", status: await exists(resolve(inspection.root, ".claude/skills/conclave-validate/SKILL.md")) ? "ok" : "optional", detail: ".claude/skills/conclave-validate" },
+    { id: "github-actions", status: await exists(resolve(inspection.root, ".github/workflows/conclave-review.yml")) ? "ok" : "optional", detail: ".github/workflows/conclave-review.yml" },
+  ] as const;
+  const report = { repository: inspection, languages, checks, ready: !checks.some((check) => check.status === "error") };
+  if (parsed.json) { print(report, true); return; }
+  console.log(`Conclave doctor — ${inspection.name}`);
+  for (const check of checks) {
+    const mark = check.status === "ok" ? "✓" : check.status === "error" ? "×" : "○";
+    console.log(`${mark} ${check.id}: ${check.detail} (${check.status})`);
+  }
+  console.log(report.ready ? "\nReady for `conclave check .`." : "\nFix the errors above before reviewing.");
+  if (checks.some((check) => check.status === "optional")) console.log("Run `conclave setup .` to add agent and GitHub integrations.");
+}
+
+function launchBrowser(url: string): void {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  const child = spawn(command, args, { stdio: "ignore", detached: true, shell: false });
+  child.unref();
+}
+
+async function openCockpit(args: readonly string[]): Promise<void> {
+  let project = ".";
+  let port = 4317;
+  let browser = true;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--no-browser") { browser = false; continue; }
+    if (argument === "--port") {
+      port = Number(args[index + 1]);
+      if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("--port must be between 1 and 65535");
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--") === true) throw new Error(`Unknown open option: ${argument}`);
+    if (project !== ".") throw new Error("open accepts at most one repository path");
+    project = argument ?? ".";
+  }
+  const inspection = await inspectRepository(project);
+  const staticRoot = resolve(dirname(fileURLToPath(import.meta.url)), "web-client");
+  const product = new ConclaveProductService({ allowedRoot: inspection.root });
+  const server = createConclaveWebServer({ product, staticRoot });
+  await new Promise<void>((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolvePromise);
+  });
+  const url = `http://127.0.0.1:${String(port)}/?repository=${encodeURIComponent(inspection.root)}`;
+  console.log(`Conclave cockpit: ${url}`);
+  console.log(interfaceCopy(cliLanguage).readOnlyServer);
+  if (browser) launchBrowser(url);
+}
+
 async function providerCheck(): Promise<void> {
   const credentials = new EnvironmentCredentialSource();
   const config = loadRuntimeConfig();
@@ -1527,8 +1668,6 @@ async function startMcp(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
   if (requestedPath === undefined) throw new Error("mcp requires one repository path; clients cannot select arbitrary host paths");
-  const taskRequested = args.includes("--allow-task-mode");
-  if (taskRequested) throw new Error("MCP Task Mode is not exposed in this release; the MCP server is read-only");
   const createReasoning = (() => {
     try {
       const runtimeConfig = loadRuntimeConfig();
@@ -1556,11 +1695,11 @@ async function runDemo(): Promise<void> {
   const project = await product.openDemo();
   const ask = await product.run(project.id, "ask", "Where is bootstrapSession called?");
   const investigate = await product.run(project.id, "investigate", "Why might authentication disappear after refresh?");
-  const task = await product.task(project.id, "Fix authentication disappearing after refresh.", false, { allowFileEdits: true, allowCommands: false, allowRepositoryScripts: false, allowNetwork: false });
-  print({ deterministicDemo: true, project, ask, investigate, task }, true);
+  print({ deterministicDemo: true, project, ask, investigate }, true);
 }
 
 async function main(): Promise<void> {
+  await loadCliLanguage();
   const [command = "help", ...args] = process.argv.slice(2);
   if (process.argv.length === 2 && process.stdin.isTTY && process.stdout.isTTY) {
     await startGuided();
@@ -1596,7 +1735,13 @@ async function main(): Promise<void> {
       await queryPath(args);
       return;
     case "ask":
-      await askRepository(args);
+      await reasonAboutRepository(args, "ask");
+      return;
+    case "investigate":
+      await reasonAboutRepository(args, "investigate");
+      return;
+    case "check":
+      await checkRepository(args);
       return;
     case "review":
       await reviewChanges(args);
@@ -1613,14 +1758,23 @@ async function main(): Promise<void> {
     case "history":
       await showReviewHistory(args);
       return;
+    case "handoff":
+      await showLatestHandoff(args);
+      return;
+    case "doctor":
+      await doctorRepository(args);
+      return;
+    case "setup":
+      await setupRepository(args);
+      return;
+    case "open":
+      await openCockpit(args);
+      return;
     case "update":
       await updateConclave(args);
       return;
     case "start":
       await startGuided(args[0] ?? ".");
-      return;
-    case "task":
-      await executeTask(args);
       return;
     case "eval":
       await evaluateRetrieval(args);
@@ -1632,7 +1786,7 @@ async function main(): Promise<void> {
       await evaluateReasoning(args);
       return;
     case "config":
-      showConfig(args);
+      await showConfig(args);
       return;
     case "models":
       showModels(args);
@@ -1656,15 +1810,16 @@ async function main(): Promise<void> {
     case "help":
     case "--help":
     case "-h":
-      console.log(HELP);
+      console.log(cliHelp(cliLanguage, args.join(" ").trim() || undefined));
       return;
     default:
-      throw new Error(`Unknown command: ${command}\n\n${HELP}`);
+      throw new Error(`${interfaceCopy(cliLanguage).unknownCommand}: ${command}\n\n${cliHelp(cliLanguage)}`);
   }
 }
 
 await main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : "Unknown error";
-  console.error(`Conclave error: ${message}`);
+  const copy = interfaceCopy(cliLanguage);
+  const message = error instanceof Error ? error.message : copy.unknownError;
+  console.error(`${copy.errorPrefix}: ${message}`);
   process.exitCode = 1;
 });

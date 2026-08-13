@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { TypeScriptCodeParser } from "../src/code-intelligence/typescript-parser.js";
+import { MultiLanguageCodeParser } from "../src/code-intelligence/multi-language-parser.js";
 import type {
   ChangeSet,
   ValidationContract,
@@ -93,6 +94,25 @@ function contract(overrides: Partial<ValidationContract> = {}): ValidationContra
 }
 
 describe("SuperValidator", () => {
+  it.each([
+    ["python", "src/service.py", "def public_service():\n    return True\n", "tests/test_service.py"],
+    ["java", "src/main/java/Service.java", "public class Service { public boolean run() { return true; } }\n", "src/test/java/ServiceTest.java"],
+  ] as const)("recognizes %s production and test files", async (_language, sourcePath, source, testPath) => {
+    const root = await mkdtemp(join(tmpdir(), "conclave-multilanguage-validation-"));
+    await mkdir(join(root, sourcePath, ".."), { recursive: true });
+    await mkdir(join(root, testPath, ".."), { recursive: true });
+    await writeFile(join(root, sourcePath), source);
+    await writeFile(join(root, testPath), source);
+    const indexed = await new RepositoryIndexer({
+      repositorySource: new LocalFolderRepository(),
+      parser: new MultiLanguageCodeParser(),
+      embeddingProvider: new LocalHashEmbeddingProvider(),
+      indexStore: new InMemoryCodeIndexStore(),
+    }).index(root);
+    const report = new SuperValidator().validate(indexed.index, changeSet([sourcePath, testPath]), contract());
+    expect(report.findings.some((finding) => finding.kind === "exported-change-without-tests")).toBe(false);
+    expect(report.impact.changedSymbols.length).toBeGreaterThan(0);
+  });
   it("uses graph impact to surface unchanged callers outside the diff", async () => {
     const report = new SuperValidator({ impactDepth: 3 }).validate(
       await validationFixture(),

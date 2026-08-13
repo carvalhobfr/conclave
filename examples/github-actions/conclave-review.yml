@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: conclave-review-${{ github.event.pull_request.number }}
@@ -26,10 +27,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Run Conclave
         id: conclave
@@ -46,15 +43,69 @@ jobs:
             objective+=$'\n\n'
             objective+="${PR_BODY}"
           fi
-          npx --no-install conclave review . \
+          npx --yes --package=conclave-ai@0.6.0 conclave review . \
             --base "${BASE_REF}" \
             --head "${HEAD_REF}" \
             --objective "${objective}" \
             --json > conclave-validation.json
           status=$?
           set -e
-          node -e 'const fs=require("node:fs"); const report=JSON.parse(fs.readFileSync("conclave-validation.json","utf8")); const lines=["## Conclave PR review",`**Verdict:** ${report.verdict.toUpperCase()}`,report.summary,`**Changed files:** ${report.metrics.filesChanged}`,`**Impacted files:** ${report.metrics.impactedFiles}`]; if(report.findings.length) lines.push("", "### Findings", ...report.findings.map((f)=>`- **${f.severity}** ${f.title}: ${f.detail}`)); fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\\n")+"\\n"); console.log(lines.join("\\n"));'
-          exit "${status}"
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build readable review
+        if: always() && hashFiles('conclave-validation.json') != ''
+        id: summary
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync("conclave-validation.json", "utf8"));
+          const lines = [
+            "<!-- conclave-ai-review -->",
+            "## Conclave PR review",
+            `**Verdict:** ${report.verdict.toUpperCase()}`,
+            "",
+            report.summary,
+            `**Changed:** ${report.metrics.filesChanged} files · ${report.metrics.symbolsChanged} code units`,
+            `**Impact:** ${report.metrics.impactedFiles} files · ${report.metrics.impactedSymbols} code units`,
+          ];
+          if (report.findings.length) {
+            lines.push("", "### Findings");
+            for (const finding of report.findings) {
+              lines.push(`- **${finding.severity.toUpperCase()} — ${finding.title}:** ${finding.detail}`);
+              const evidence = finding.evidence[0];
+              if (evidence) {
+                const line = evidence.startLine ?? 1;
+                const level = finding.severity === "blocking" ? "error" : "warning";
+                console.log(`::${level} file=${evidence.path},line=${line},title=Conclave ${finding.severity}::${finding.title}`);
+              }
+            }
+          }
+          lines.push("", "A human still decides whether this PR may merge.");
+          const markdown = lines.join("\n") + "\n";
+          fs.writeFileSync("conclave-comment.md", markdown);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
+          NODE
+
+      - name: Update PR comment
+        if: always() && hashFiles('conclave-comment.md') != '' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("node:fs");
+            const marker = "<!-- conclave-ai-review -->";
+            const body = fs.readFileSync("conclave-comment.md", "utf8");
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const previous = comments.find((comment) => comment.user?.type === "Bot" && comment.body?.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
 
       - name: Upload Conclave report
         if: always()
@@ -63,3 +114,8 @@ jobs:
           name: conclave-validation-report
           path: conclave-validation.json
           if-no-files-found: ignore
+
+      - name: Enforce verdict
+        if: always()
+        shell: bash
+        run: exit "${{ steps.conclave.outputs.status || '3' }}"

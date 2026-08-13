@@ -2,6 +2,7 @@ import type {
   GraphView,
   ProductRunView,
   ProjectView,
+  ReviewHistoryView,
   RuntimeModeView,
   ValidationRequestView,
   ValidationRunView,
@@ -45,6 +46,6 @@ export const api = {
     return request("/api/validate", json(payload));
   },
   run: (projectId: string, intent: "ask" | "investigate", query: string): Promise<ProductRunView> => request("/api/run", json({ projectId, intent, query })),
-  task: (projectId: string, objective: string, planOnly: boolean, permissions: object): Promise<ProductRunView> => request("/api/task", json({ projectId, objective, planOnly, permissions })),
   graph: (projectId: string, symbol: string): Promise<GraphView> => request(`/api/graph?projectId=${encodeURIComponent(projectId)}&symbol=${encodeURIComponent(symbol)}`),
+  history: (projectId: string): Promise<readonly ReviewHistoryView[]> => request(`/api/history?projectId=${encodeURIComponent(projectId)}`),
 };

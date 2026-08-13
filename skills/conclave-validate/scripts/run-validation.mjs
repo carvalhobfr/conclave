@@ -11,7 +11,7 @@ const TIMEOUT_MS = 120_000;
 const VERDICT_EXIT = { pass: 0, warn: 0, block: 1, inconclusive: 2 };
 
 function parseArguments(argv) {
-  const parsed = { repository: ".", source: "working" };
+  const parsed = { repository: ".", source: "workspace" };
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
     if (!["--repository", "--source", "--ref", "--head", "--objective", "--contract", "--output"].includes(name)) {
@@ -22,11 +22,11 @@ function parseArguments(argv) {
     parsed[name.slice(2)] = value;
     index += 1;
   }
-  if (typeof parsed.objective !== "string" || parsed.objective.trim() === "") {
-    throw new Error("--objective is required; validation without an intended resolution is inconclusive");
+  if (!["workspace", "working", "staged", "branch", "commit"].includes(parsed.source)) {
+    throw new Error("--source must be workspace, working, staged, branch, or commit");
   }
-  if (!["working", "staged", "branch", "commit"].includes(parsed.source)) {
-    throw new Error("--source must be working, staged, branch, or commit");
+  if (parsed.source !== "workspace" && (typeof parsed.objective !== "string" || parsed.objective.trim() === "")) {
+    throw new Error("--objective is required for explicit working, staged, branch, and commit validation");
   }
   if ((parsed.source === "branch" || parsed.source === "commit") && parsed.ref === undefined) {
     throw new Error(`--ref is required for ${parsed.source} validation`);
@@ -66,10 +66,19 @@ async function resolveCommand(repository) {
   }
   const localBinary = resolve(repository, "node_modules/.bin/conclave");
   if (await executable(localBinary)) return { command: localBinary, prefix: [] };
-  return { command: process.env.CONCLAVE_BIN ?? "conclave", prefix: [] };
+  if (process.env.CONCLAVE_BIN !== undefined) return { command: process.env.CONCLAVE_BIN, prefix: [] };
+  return { command: "npx", prefix: ["--yes", "--package=conclave-ai@0.6.0", "conclave"] };
 }
 
 function commandArguments(parsed) {
+  if (parsed.source === "workspace") {
+    const args = ["check", resolve(parsed.repository)];
+    if (parsed.ref !== undefined) args.push("--base", parsed.ref);
+    if (typeof parsed.objective === "string" && parsed.objective.trim() !== "") args.push("--objective", parsed.objective.trim());
+    if (parsed.contract !== undefined) args.push("--contract", resolve(parsed.contract));
+    args.push("--json");
+    return args;
+  }
   const sourceFlag = parsed.source === "branch" ? "--base" : `--${parsed.source}`;
   const args = ["review", resolve(parsed.repository), sourceFlag];
   if (parsed.ref !== undefined) args.push(parsed.ref);
@@ -167,7 +176,8 @@ async function main() {
   const result = await execute(resolved.command, [...resolved.prefix, ...commandArguments(parsed)], repository);
   let report;
   try {
-    report = validateReport(JSON.parse(result.stdout.trim()));
+    const parsedOutput = JSON.parse(result.stdout.trim());
+    report = validateReport(parsedOutput.report ?? parsedOutput);
   } catch (error) {
     const detail = result.stderr.trim();
     throw new Error(

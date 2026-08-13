@@ -50,6 +50,9 @@ describe("portable Conclave agent skill", () => {
     expect(workflow).toContain("--head \"${HEAD_REF}\"");
     expect(workflow).toContain("GITHUB_STEP_SUMMARY");
     expect(workflow).toContain("actions/upload-artifact@v4");
+    expect(workflow).toContain("--package=conclave-ai@0.6.0");
+    expect(workflow).not.toContain("npm ci");
+    expect(workflow).toContain("actions/github-script@v7");
   });
 
   it.each([

@@ -2,6 +2,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type { PullRequestSummary } from "../domain/pr-summary.js";
+import type { ReviewHandoff } from "../domain/review-handoff.js";
+import type { ValidationReport } from "../domain/validation.js";
 
 export interface ReviewHistoryRecord {
   readonly id: string;
@@ -10,6 +12,8 @@ export interface ReviewHistoryRecord {
   readonly objective: string;
   readonly headSha: string;
   readonly summary: PullRequestSummary;
+  readonly report?: ValidationReport;
+  readonly handoff?: ReviewHandoff;
 }
 
 const HISTORY_LIMIT = 50;

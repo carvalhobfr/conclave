@@ -1,8 +1,0 @@
-[
-  {
-    "id": "auth-refresh-task",
-    "repositoryPath": "tests/fixtures/task-auth",
-    "objective": "Fix authentication disappearing after refresh across the auth modules",
-    "expectedChangedFiles": ["src/auth/AuthProvider.ts"]
-  }
-]

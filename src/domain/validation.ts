@@ -2,6 +2,7 @@ import type { GraphRelation } from "./code-index.js";
 
 export type ChangeSource =
   | { readonly kind: "working" }
+  | { readonly kind: "workspace"; readonly base: string }
   | { readonly kind: "staged" }
   | { readonly kind: "branch"; readonly base: string; readonly head?: string }
   | { readonly kind: "commit"; readonly commit: string };

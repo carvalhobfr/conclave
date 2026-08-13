@@ -60,6 +60,8 @@ const validation: ValidationRunView = {
       },
     },
   },
+  patch: "diff --git a/src/auth/AuthProvider.ts b/src/auth/AuthProvider.ts",
+  handoff: "Review the Conclave evidence before merging.",
   demo: true,
 };
 
@@ -79,7 +81,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function mockFetch(): void {
   vi.stubGlobal("fetch", vi.fn((url: string) => {
-    const body = url === "/api/runtime" ? runtime : url === "/api/projects/demo" ? project : url === "/api/validate" ? validation : run;
+    const body = url === "/api/runtime" ? runtime : url === "/api/projects/demo" ? project : url === "/api/validate" ? validation : url.startsWith("/api/history") ? [] : run;
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
   }));
 }
@@ -90,8 +92,8 @@ describe("Conclave product UI", () => {
     render(<App />);
     await screen.findByText("auth-repository");
 
-    expect(screen.getByRole("heading", { name: "Independent change verdict" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Validate change" }));
+    expect(screen.getByRole("heading", { name: "Review this change" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Review change" }));
 
     expect(await screen.findByRole("region", { name: "Validation summary" })).toBeTruthy();
     expect(screen.getByText("Change is consistent with the objective")).toBeTruthy();
@@ -104,15 +106,12 @@ describe("Conclave product UI", () => {
     expect(screen.getByText(/"verdict": "pass"/i)).toBeTruthy();
   });
 
-  it("keeps Task explicit and repository-script permission default-deny", async () => {
+  it("keeps the product read-only and does not expose Task Mode", async () => {
     mockFetch();
     render(<App />);
     await screen.findByText("auth-repository");
-    fireEvent.click(within(screen.getByRole("navigation", { name: "Workspace navigation" })).getByRole("button", { name: "Task" }));
-
-    expect(screen.getByRole<HTMLInputElement>("checkbox", { name: /Plan only/i }).checked).toBe(true);
-    expect(screen.getByRole<HTMLInputElement>("checkbox", { name: /Allow scoped file edits/i }).disabled).toBe(true);
-    expect(screen.getByText(/Repository scripts execute repository code and are not fully sandboxed/i)).toBeTruthy();
+    expect(within(screen.getByRole("navigation", { name: "Workspace navigation" })).queryByRole("button", { name: "Task" })).toBeNull();
+    expect(screen.queryByText(/Allow scoped file edits/i)).toBeNull();
   });
 
   it("shows supported, rejected, and uncertain claims without hiding disagreement", async () => {

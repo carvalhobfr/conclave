@@ -2,391 +2,243 @@
 
 # Conclave
 
-### Simplify and protect every PR.
+### A PR companion that turns code changes into reviewable evidence.
 
-**Conclave is a PR companion: it gives your team context, evidence, and a safer path from code change to merge.**
+**Conclave simplifies and protects the path from changed code to human-approved merge.**
 
 [English](README.md) · [Português (Brasil)](README.pt-BR.md)
 
-[![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![npm](https://img.shields.io/npm/v/conclave-ai?logo=npm&color=CB3837)](https://www.npmjs.com/package/conclave-ai)
-[![License: MIT](https://img.shields.io/badge/license-MIT-4C1?logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4C1)](LICENSE)
+[![Changelog](https://img.shields.io/badge/changelog-release%20history-8B5CF6)](CHANGELOG.md)
 
-[Quick start](#quick-start) · [PR workflow](#the-recommended-pr-workflow) · [Agent skill](#use-it-from-codex-or-claude-code) · [Configuration](#optional-ai-configuration)
+[Quick start](#quick-start) · [CLI and languages](#cli-help-and-languages) · [How it works](#how-review-works-without-ai) · [Agent skill](#codex-and-claude-code-skill) · [Visual cockpit](#visual-review-cockpit) · [Changelog](CHANGELOG.md)
 
 </div>
 
 ---
 
-## A PR companion, not another black box
+Conclave sits after a code change and before approval. It compares the real Git change, maps the code around it, points to risks and evidence, and gives the next action to a developer, coding agent, or human reviewer.
 
-Conclave sits between **code changed** and **ready to merge**. It compares the change with its objective, follows the affected code, shows evidence and next actions, then leaves the decision with a human reviewer.
-
-<p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/master/docs/assets/conclave-pr-flow.svg" alt="A code change is checked by Conclave, produces context and evidence, and then goes to human approval before merge" width="900"></p>
-
-The shortest explanation is:
+<p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/master/docs/assets/conclave-pr-flow.svg" alt="A code change passes through Conclave context and evidence before human approval and merge" width="920"></p>
 
 ```text
-change → Conclave explains and checks it → agent/developer corrects open issues → human approves → merge
+change → Conclave review → coding agent fixes findings → Conclave rechecks → human approves → merge
 ```
 
-Conclave has two layers:
+Conclave is deliberately read-only. It does not edit files, apply patches, execute repository scripts, commit, push, approve, or merge.
 
-| Layer | What it does | Needs an API key? |
-| --- | --- | ---: |
-| PR pass (`pr`, `review`, `validate`) | Compares Git changes, builds a local code map, traces impact, checks claims, and reports evidence | No |
-| Optional reasoning (`ask`, `task`, local web UI) | Uses a configured provider to investigate questions or plan/execute a bounded task | Only when you choose a hosted provider |
+## Choose the shortest path
 
-The PR pass is deliberately independent from the agent that wrote the code. It is not a test runner, a compiler, a production monitor, or an automatic approval. A `PASS` means that the available structural checks found no blocker; tests, runtime checks, security review, and human judgment still matter.
+| I want to… | Start here |
+| --- | --- |
+| Review my current branch and every local change | `conclave check .` |
+| Compare two branches without switching checkout | `conclave compare .` |
+| Let Codex or Claude run Conclave naturally | `conclave setup .` |
+| Read the result in a browser | `conclave open .` |
+| Explore commands without memorizing flags | `conclave help` |
 
 ## Quick start
 
-Requirements: Node.js 20+ and Git. The repository being reviewed can be TypeScript, JavaScript, Python, Java, or another language; Node.js is only Conclave's CLI runtime.
-
-### Install in a project (recommended)
+Requirements: Node.js 20+ and Git. Node is Conclave's runtime; the repository itself does not need to be a Node project.
 
 ```bash
 npm install --save-dev conclave-ai
-npx --no-install conclave start
+npx conclave check .
 ```
 
-The package exposes one binary: `conclave`. There is no `conclave-ai` shell command.
+That is enough for the normal workflow. No API key and no prior index are required.
 
-Yarn and pnpm are also supported:
+`check` is the recommended command. It automatically:
 
-```bash
-yarn add --dev conclave-ai
-yarn conclave start
+- finds the repository and likely PR base;
+- includes committed branch changes, staged files, unstaged files, and new untracked files;
+- infers a transparent fallback objective from the latest commit when none is supplied;
+- builds a fresh local code map—no prior `index` command is required;
+- prints a PR summary, findings, affected code, evidence, and next steps;
+- creates a prompt that your coding agent can act on; and
+- saves the full report in local review history.
 
-pnpm add --save-dev conclave-ai
-pnpm exec conclave start
-```
-
-### Try it without changing `package.json`
-
-```bash
-npx --yes --package=conclave-ai conclave start
-```
-
-### Install globally (optional)
+Be explicit whenever you want to:
 
 ```bash
-npm install --global conclave-ai
-conclave start
-```
+# Compare the current workspace with a chosen base
+npx conclave check . --base origin/main \
+  --objective "Add passwordless login without breaking session restore"
 
-Global installation is convenient for a personal CLI. A project install is usually better for teams and CI because everyone runs the version recorded in the repository.
-
-## The guided CLI
-
-Run `conclave` with no arguments in an interactive terminal, or run:
-
-```bash
-conclave start [path]
-```
-
-The menu is designed for the normal workflow. It lets you:
-
-1. run a complete PR pass;
-2. choose the source to check: branch, working tree, staged files, or one commit;
-3. enter the change objective;
-4. see progress while Conclave collects, indexes, and validates;
-5. read the summary, evidence, risks, and next actions; and
-6. inspect history, configure optional models, update Conclave, or open the full help.
-
-The first option, **Run a complete PR pass**, is the recommended starting point. **Review evidence (advanced)** is the lower-level report for CI, contracts, and scripts.
-
-### Compare branches without memorizing refs
-
-For a branch-first workflow, run:
-
-```bash
-conclave compare .
-```
-
-Conclave lists local and remote-tracking branches, marks the checked-out branch, lets you select a comparison base and target, and then asks for the change objective. It never switches branches. You can type a ref manually when it is not in the list. The same selector is available from `conclave start` → **Compare branches**.
-
-For scripts and CI, keep using the explicit form:
-
-```bash
-conclave compare . --base origin/main --head feature/login \
-  --objective "Add passwordless login" --json
-```
-
-You do not need to run `conclave index` before a PR pass. The guided **Understand this repository** option and the `conclave index` command intentionally create a reusable local `.conclave/code-index-v2.json` for search, graph, and Ask workflows. `conclave pr` and `conclave review` build the exact target snapshot they need in memory (or in a temporary folder for an explicit `--head`) and do not use that persisted index as the change source.
-
-## The recommended PR workflow
-
-From the feature branch you want to inspect:
-
-```bash
-git fetch origin
-git switch feature/login
-git status --short
-
-conclave pr . --base origin/main --head feature/login \
+# Compare two committed refs without switching branches
+npx conclave compare . --base origin/main --head feature/login \
   --objective "Add passwordless login"
+
+# Produce machine-readable output for an agent or CI
+npx conclave check . --base origin/main --json > conclave-review.json
 ```
 
-`--base` is the **comparison base** and `--head` is the **branch/commit being inspected**. Conclave never switches your checkout. If `--head` is omitted, it uses the checked-out `HEAD`:
-
-- collects the Git comparison;
-- builds a safe local map of files and code units;
-- follows the local impact of changed code;
-- checks the objective and optional contract claims;
-- prints a human-readable PR summary with progress, changed files, risks, verdict, and next steps; and
-- saves an owner-only record in `.conclave/review-history.json`.
-
-This also works when your checkout is another branch or contains untracked files: Conclave reads the target ref into a temporary snapshot. The normal correction loop is explicit and easy to repeat:
-
-```text
-change → conclave pr → read evidence → correct → conclave pr again → human approval → merge
-```
-
-After `BLOCK` or `WARN`, open the cited files and lines, make the correction with your editor or coding agent, and run the same command again. Conclave does not post GitHub comments, apply patches, merge, or approve a PR in this release.
-
-### Compare branches and understand what changed
-
-The branch mode is also a concise local PR summary:
+Yarn and pnpm work too:
 
 ```bash
-conclave pr . --base origin/main --head feature/login \
-  --objective "Describe the behavior this branch must deliver"
+yarn add --dev conclave-ai && yarn conclave check .
+pnpm add --save-dev conclave-ai && pnpm exec conclave check .
 ```
 
-For a machine-readable result, use `--json`. JSON mode contains only JSON, so it is safe for CI and agent integrations:
+Try it without adding a dependency:
 
 ```bash
-conclave pr . --base origin/main --head feature/login \
-  --objective "Add passwordless login" --json > /tmp/conclave-pr.json
+npx --yes --package=conclave-ai@latest conclave check .
 ```
 
-The local history is useful when iterating on a branch:
+Prefer a guided flow? Run plain `npx conclave`. Prefer to understand a command first? Run `npx conclave help check`.
+
+## How review works without AI
+
+Review is a deterministic code-analysis pipeline, not a chat completion.
+
+<p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/master/docs/assets/conclave-review-pipeline.svg" alt="Git comparison goes through a local structural index, impact graph, checks and an evidence-backed verdict" width="900"></p>
+
+1. Git supplies the exact comparison and patch.
+2. Local parsers identify files and **code units**—named functions, methods, classes, interfaces, and modules. Older docs called these “symbols.”
+3. A relationship graph follows imports, exports, calls, references, containers, and consumers.
+4. Deterministic checks challenge scope, changed public code without changed tests, parser-visible errors, impact outside the diff, deletions, and optional completion claims.
+5. Conclave reports `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE`, always with traceable file and line evidence where available.
+
+No source is sent to an LLM during review. No API key is required. This is useful evidence, not a compiler, test runner, security scanner, runtime proof, or automatic approval. A human remains the merge authority.
+
+### Language support
+
+Conclave's structural parsers currently understand:
+
+| Language | Functions/classes | Imports | Graph impact | Test-file detection |
+| --- | ---: | ---: | ---: | ---: |
+| TypeScript / JavaScript / TSX / JSX | Yes | Yes | Yes | Yes |
+| Python | Yes | Yes | Yes | Yes |
+| Java | Yes | Yes | Yes | Yes |
+
+Other text languages still appear in Git change and scope evidence, but do not yet receive the same code-unit graph depth. See [ROADMAP.md](ROADMAP.md).
+
+## CLI help and languages
+
+You do not need to memorize the CLI. Run `conclave` or `conclave start .` for the guided menu. `conclave help` shows every command grouped by purpose; `conclave help <command>` explains what one command does, when to use it, its boundaries, syntax, and practical examples:
 
 ```bash
-conclave history .
-conclave history . --json
+conclave help
+conclave help check
+conclave help symbol
 ```
 
-If the result says **No code change was collected**, check the comparison before changing anything:
+The help is part of the CLI itself, so it always matches the installed version.
+
+The main commands are:
+
+| Command | Purpose |
+| --- | --- |
+| `conclave check .` | Review the current branch and all local changes together |
+| `conclave compare .` | Select two local or remote refs interactively |
+| `conclave open .` | Open the visual review cockpit in your browser |
+| `conclave setup .` | Install project skills and optional GitHub workflow |
+| `conclave doctor .` | Diagnose Git, languages, skills, and CI readiness |
+| `conclave history .` | See local review passes |
+| `conclave handoff .` | Print the latest correction prompt for an agent |
+| `conclave review ... --json` | Low-level deterministic report for scripts |
+| `conclave ask ...` / `investigate` | Optional provider-backed repository reasoning |
+
+`conclave index` is only an optional reusable cache for search, graph, and Ask. It creates `.conclave/code-index-v2.json`; review never treats that cache as the change.
+
+### English, Portuguese, or Spanish
+
+English is the default CLI language. Save a global user preference for Brazilian Portuguese or European Spanish from any repository:
 
 ```bash
-git diff --stat origin/main...HEAD
-git diff --name-status origin/main...HEAD
-git merge-base origin/main HEAD
+conclave config --language pt-BR
+conclave config --language es-ES
+conclave config --language en       # return to the default
+conclave config                     # show language and provider configuration
 ```
 
-Fetch the remote or choose the correct base ref when those Git commands do not show the expected work. A merged `main` compared with `origin/main` normally has no diff because both refs point to the same commit.
+The choice applies to the guided menu, help, prompts, progress, review labels, update messages, and provider setup. It is stored in the user's Conclave config directory (`~/.config/conclave/config.json` on macOS/Linux, with XDG and Windows equivalents), not in the repository. `CONCLAVE_LANGUAGE=es-ES conclave help` overrides it for one process. JSON keys remain stable in English so skills, CI, and other integrations do not break.
 
-## `review` and `validate`: the evidence report
+## Codex and Claude Code skill
 
-`pr` is the friendly, complete workflow. `review` is the lower-level command; `validate` is its explicit alias. They use the same deterministic engine and return a JSON report when `--json` is supplied.
+The skill is the agent workflow; the CLI is its local review engine. The skill tells Codex or Claude Code how to select the change, preserve the verdict, cite evidence, return a readable result, hand findings back for correction, and recheck. It never grants mutation authority to Conclave.
+
+Install it in a repository with an interactive setup:
 
 ```bash
-# Tracked unstaged working-tree changes (untracked files must be staged or ignored)
-conclave review . --working --objective "..."
-
-# Only staged changes
-conclave review . --staged --objective "..."
-
-# Branch/commit against an explicit base
-conclave review . --base origin/main --head feature/login --objective "..."
-
-# One existing commit
-conclave validate . --commit HEAD --objective "..." --json
+npx --yes --package=conclave-ai@latest conclave setup .
 ```
 
-The source options are mutually exclusive. An objective is required because Conclave can check a change only against an intended outcome.
-
-Internally, the report follows this pipeline:
-
-<p align="center"><img src="https://raw.githubusercontent.com/carvalhobfr/conclave-ai/master/docs/assets/conclave-review-pipeline.svg" alt="Git snapshot, local index, impact graph, checks, and evidence-backed verdict" width="900"></p>
-
-It collects the selected Git snapshot, ignores unsafe or irrelevant files, parses supported source, maps changed lines to named code units, traces callers/imports/references, and evaluates optional contracts. A **symbol** is simply a named code unit such as a function, class, method, interface, or component.
-
-| Verdict | Exit code | Meaning |
-| --- | ---: | --- |
-| `PASS` | `0` | No deterministic blocker was found in the available evidence |
-| `WARN` | `0` | The result needs human attention before approval |
-| `BLOCK` | `1` | A deterministic problem contradicts the objective or claim |
-| `INCONCLUSIVE` | `2` | There is not enough evidence to make the structural check |
-
-Review is local and independent: it does not send repository content anywhere, use provider credentials, call a model, execute repository scripts, or require network access.
-
-## Make important PR claims checkable
-
-An objective describes the goal. A contract adds explicit, machine-readable claims:
-
-```json
-{
-  "objective": "Restore authentication after refresh",
-  "claims": [
-    {
-      "id": "restore-exists",
-      "statement": "bootstrapSession exists",
-      "check": {
-        "kind": "symbol-exists",
-        "symbol": "bootstrapSession",
-        "expectation": "present"
-      }
-    }
-  ]
-}
-```
+Or install both agent adapters non-interactively:
 
 ```bash
-conclave pr . --base origin/main --head feature/login \
-  --contract .conclave/review-contract.json \
-  --objective "Restore authentication after refresh"
+npx --yes --package=conclave-ai@latest conclave skill install \
+  --target both --scope project --project .
 ```
 
-Contracts support symbol, caller, reference, text, and changed-file checks. See the [report schema](schemas/validation-report.v1.schema.json).
+This downloads the npm package only for the command and copies the small skill into `.agents/skills/conclave-validate` and `.claude/skills/conclave-validate`; it does not add Conclave to `package.json`. Use `--scope user` to install for your user account, or `--target portable --destination ...` for another agent.
 
-## Use it from Codex or Claude Code
+Once installed, ask the agent naturally: “Use Conclave to review the current change before we merge.” The human-readable answer appears in the agent conversation; the exact JSON remains available when needed.
 
-Conclave ships a portable `conclave-validate` agent skill. The skill is not the whole package: the package contains the CLI and the skill installer; the skill is an adapter that asks the agent to run the same independent report.
+## GitHub Actions
 
-Install the skill in the current repository:
+Add the ready-to-use workflow:
 
 ```bash
-npm install --save-dev conclave-ai
-npx --no-install conclave skill install
+npx --yes --package=conclave-ai@latest conclave setup . \
+  --agents none --github-actions
 ```
 
-This creates:
+The workflow is repository-language-independent: it checks out the PR and runs a pinned Conclave package without `npm ci` or project-specific build assumptions. It writes the job summary, creates file annotations, updates one PR comment, uploads the JSON report, and fails only for `BLOCK` or `INCONCLUSIVE`. Fork PRs still get summary and artifacts when GitHub withholds comment permission.
 
-```text
-.agents/skills/conclave-validate/  # Codex
-.claude/skills/conclave-validate/  # Claude Code
-```
-
-Then invoke `$conclave-validate` in Codex or `/conclave-validate` in Claude Code. The skill asks for an objective, selects the requested working/staged/branch/commit source, runs the bundled validator, and presents verdict, claims, impact, evidence, limitations, and next action.
-
-To install only the skill files without adding a dependency to `package.json`:
+## Visual review cockpit
 
 ```bash
-npx --yes --package=conclave-ai conclave skill install
+npx conclave open .
 ```
 
-That one-shot command installs the adapters, but the validator still needs a Conclave CLI available in the repository, globally, or through `CONCLAVE_CLI_PATH` when the skill runs. Preview first with `--dry-run`; use `--force` only after reviewing a replacement.
+Conclave starts a loopback-only server, opens your browser, and loads the repository automatically. The cockpit includes the summary, findings, completion claims, affected code, exact Git diff, copyable agent handoff, raw report, and local history. Ask and Investigate are available when a provider is configured.
 
-The skill is the agent-facing layer: it tells Codex or Claude how to select the correct change, run the independent validator, preserve its verdict, and explain the evidence. It does not replace the CLI and it does not approve, edit, or merge a pull request. Keep it installed in the repository when you want the workflow to be visible and versioned with the team.
-
-For a user-wide installation:
-
-```bash
-conclave skill install --scope user
-```
-
-To add a ready-to-run GitHub Actions check to the current repository:
-
-```bash
-conclave skill install --target github-actions
-```
-
-This creates `.github/workflows/conclave-review.yml`. It compares the pull request base with the actual head SHA, writes a readable result to the GitHub job summary, uploads the JSON report as an artifact, and fails the check only when Conclave returns a blocking or inconclusive verdict. It requires `conclave-ai` in the repository's dev dependencies (`npm install --save-dev conclave-ai`). The workflow is deterministic and does not need an API key.
+The UI is another view of the same engine. It cannot edit the repository or perform the correction. Stop it with `Ctrl+C`.
 
 ## Optional AI configuration
 
-You do **not** need a key for `pr`, `review`, `validate`, CI, or the validation skill. Those paths are deterministic and local.
-
-Configure a provider only for `ask`, `task`, or the optional local web interface:
+Review never needs a key. A provider is used only for the read-only `ask` and `investigate` modes:
 
 ```bash
-conclave models
 conclave init
 conclave provider-check
 ```
 
-`conclave init` is an interactive four-step setup: provider, model profile, reasoning style, and hidden key input. It writes only the managed `CONCLAVE_*` block to a Git-ignored `.env` with owner-only permissions. Run `conclave config` to inspect safe metadata without printing the key.
+The guided setup supports OpenAI/Codex-compatible keys, OpenRouter—including OpenRouter Go plan keys—and Anthropic, with maintained model profiles and custom model IDs. Hidden input is stored only in the local Git-ignored `.env`. Browser code never receives it.
 
-| Provider choice | What to use |
-| --- | --- |
-| OpenAI Platform / Codex API | An OpenAI Platform API key. It can call Codex API models available to the project. A ChatGPT/Codex subscription login token is not an API key. |
-| OpenRouter | An OpenRouter inference key. Requests use that account's credits, limits, and free-model allowance. |
-| Anthropic | An Anthropic Console API key. A Claude app subscription is separate from API access. |
-
-Choose one of the four maintained profiles or pass an exact model ID:
+## Update and diagnose
 
 ```bash
-conclave init --provider openai --profile coding
-conclave init --provider openrouter --profile claude-sonnet-latest
-conclave init --provider anthropic --profile deep
-conclave init --provider openrouter --model "provider/custom-model"
+conclave update --check   # show the latest registry version
+conclave update --local   # update a project dependency
+conclave update --global  # update a global install
+conclave doctor .         # verify this repository's integration
 ```
 
-The configured provider is never used by the deterministic PR pass.
+If already current, `conclave update` says so clearly and exits without running a missing local binary.
 
-## Updating Conclave
+## Verdicts and boundaries
 
-For a project install:
+| Verdict | Meaning | Next action |
+| --- | --- | --- |
+| `PASS` | No deterministic blocker or warning was found | Run relevant tests and request human review |
+| `WARN` | Reviewable risk remains | Inspect or correct it, then recheck |
+| `BLOCK` | Evidence contradicts scope, claims, or structural safety | Send the handoff to a coding agent, then recheck |
+| `INCONCLUSIVE` | Available evidence cannot support a safe conclusion | Improve the baseline, objective, contract, or parser evidence |
+
+No changed files is reported as “Nothing to review,” not as a fake failure.
+
+See the [changelog](CHANGELOG.md) for released and upcoming changes, the [roadmap](ROADMAP.md) for direction, [security boundaries](docs/security.md), and the [validation report schema](schemas/validation-report.v1.schema.json).
+
+## Development
 
 ```bash
-conclave update
+npm install
+npm run verify
 ```
 
-For a global install:
-
-```bash
-conclave update --global
-```
-
-Check the registry without installing:
-
-```bash
-conclave update --check
-```
-
-If the installed version is already current, the command exits with an explicit “already on the latest release” message. You can also use `npm install --save-dev conclave-ai@latest` or `npm install --global conclave-ai@latest`. After a skill update, refresh a project copy with `npx --no-install conclave skill install --force`.
-
-## CI and GitHub Actions
-
-The agent skill is for an interactive coding agent; GitHub Actions is the unattended version of the same evidence gate. Both use the same CLI report and keep the human approval step intact. The recommended setup is to install the workflow template:
-
-```bash
-npx --no-install conclave skill install --target github-actions
-```
-
-Commit the generated workflow so every pull request runs the check. Do not use `--working` in CI: compare an explicit base and head so local files and the checkout state cannot change what is reviewed.
-
-Run the same check on a pull request's actual base branch:
-
-```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-- uses: actions/setup-node@v4
-  with:
-    node-version: 20
-    cache: npm
-- run: npm ci
-- run: >-
-    npx --no-install conclave review .
-    --base origin/${{ github.base_ref }}
-    --head ${{ github.event.pull_request.head.sha }}
-    --contract .conclave/review-contract.json
-    --objective "Validate the pull request objective"
-    --json
-```
-
-For pull requests, pass the base and head explicitly when possible. For a push workflow, use the event's previous SHA as the base and the pushed SHA as `--head`.
-
-## Interfaces and language support
-
-- **CLI:** complete guided workflow plus scriptable commands.
-- **Agent skill:** Codex and Claude Code adapters for the independent report.
-- **MCP:** `conclave mcp /absolute/path/to/repository` starts a read-only stdio server.
-- **Web UI:** from a source checkout, run `npm run build && npm run start:web`, then open `http://127.0.0.1:4317`.
-
-Deep structural analysis currently supports TypeScript, JavaScript, Python, and Java. Other languages still receive Git comparison, file/text checks, and repository-level contracts. Conclave does not run repository tests or scripts during review.
-
-## Documentation
-
-- [Portuguese guide](README.pt-BR.md)
-- [SuperValidator design](docs/super-validator.md)
-- [Security and trust boundaries](docs/security.md)
-- [Validation report schema](schemas/validation-report.v1.schema.json)
-- [Portable agent skill](skills/conclave-validate/SKILL.md)
-- [Contributing](CONTRIBUTING.md)
-
-Conclave is released under the [MIT License](LICENSE).
+Contributions are welcome under the [MIT license](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md).

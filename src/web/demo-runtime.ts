@@ -1,14 +1,8 @@
-import { createHash } from "node:crypto";
-
-import { TypeScriptCodeParser } from "../code-intelligence/typescript-parser.js";
+import { MultiLanguageCodeParser } from "../code-intelligence/multi-language-parser.js";
 import type { GenerateRequest, GenerateResponse } from "../domain/provider.js";
 import type { AgentRole } from "../domain/reasoning.js";
 import { DEFAULT_REASONING_LIMITS } from "../domain/reasoning.js";
-import type { ExecutionPermissions, TaskAgentRole } from "../domain/task-execution.js";
-import { DEFAULT_TASK_EXECUTION_LIMITS } from "../domain/task-execution.js";
 import { LocalHashEmbeddingProvider } from "../embeddings/local-hash-embedding.js";
-import { TaskExecutionEngine } from "../execution/task-execution-engine.js";
-import { StructuredTaskAgentRuntime } from "../execution/task-agent-runtime.js";
 import { InMemoryCodeIndexStore } from "../indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "../indexing/repository-indexer.js";
 import { FakeProvider } from "../providers/fake-provider.js";
@@ -36,24 +30,6 @@ function response(request: GenerateRequest, value: object): GenerateResponse {
     usage: { inputTokens: 20, outputTokens: 10 },
   };
 }
-
-function hash(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
-const correctedProvider = `import { getStoredToken } from "./storage";
-
-export type Session = { token: string };
-
-export function bootstrapSession(setSession: (session: Session | null) => void): void {
-  const persistedToken = getStoredToken();
-  setSession(persistedToken === null ? null : { token: persistedToken });
-}
-
-export function initializeAuth(setSession: (session: Session | null) => void): void {
-  bootstrapSession(setSession);
-}
-`;
 
 export function createDemoReasoningEngine(root: string): Promise<ReasoningEngine> {
   const provider = new FakeProvider((request) => {
@@ -101,7 +77,7 @@ export function createDemoReasoningEngine(root: string): Promise<ReasoningEngine
 
 async function createReasoning(root: string, provider: FakeProvider): Promise<ReasoningEngine> {
   const embedding = new LocalHashEmbeddingProvider();
-  const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new TypeScriptCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
+  const indexed = await new RepositoryIndexer({ repositorySource: new LocalFolderRepository(), parser: new MultiLanguageCodeParser(), embeddingProvider: embedding, indexStore: new InMemoryCodeIndexStore() }).index(root);
   const roles: readonly AgentRole[] = ["investigator", "skeptic", "architect", "verifier", "judge"];
   return new ReasoningEngine({
     retrieval: new CodeRetrievalService(indexed.index, embedding),
@@ -109,68 +85,4 @@ async function createReasoning(root: string, provider: FakeProvider): Promise<Re
     preset: "full",
     limits: DEFAULT_REASONING_LIMITS,
   });
-}
-
-export async function createDemoTaskEngine(
-  root: string,
-  permissions: ExecutionPermissions,
-): Promise<TaskExecutionEngine> {
-  const investigator = await createDemoReasoningEngine(root);
-  const provider = new FakeProvider((request) => {
-    const system = message(request, "system");
-    const prompt = message(request, "user");
-    if (system.includes("You are the Planner")) {
-      const trusted = jsonBetween(prompt, "BEGIN TRUSTED TASK", "END TRUSTED TASK");
-      const claims = trusted["supportedDiagnosisClaims"] as { id: string }[];
-      const evidence = jsonBetween(prompt, "BEGIN UNTRUSTED REPOSITORY EVIDENCE", "END UNTRUSTED REPOSITORY EVIDENCE")["evidence"] as { id: string }[];
-      return response(request, {
-        id: "plan_restore_auth", summary: "Restore persisted authentication during bootstrap without changing login persistence.",
-        requirements: [
-          { id: "req_restore", statement: "bootstrapSession reads the persisted token.", required: true, verification: { kind: "source-contains", path: "src/auth/AuthProvider.ts", text: "const persistedToken = getStoredToken();", expectation: "present" } },
-          { id: "req_persistence", statement: "persistToken remains called by login.", required: true, verification: { kind: "callers", symbol: "persistToken", minimum: 1 } },
-        ],
-        constraints: [{ id: "constraint_scope", statement: "Only AuthProvider should require a product change.", kind: "scope" }],
-        steps: [{ id: "step_restore", description: "Restore the stored token in bootstrapSession.", targetFiles: ["src/auth/AuthProvider.ts"], rationaleClaimIds: [claims[0]?.id], requirementIds: ["req_restore", "req_persistence"], expectedOutcome: "Refresh initializes a session from persisted authentication." }],
-        evidenceIds: [evidence[0]?.id],
-      });
-    }
-    if (system.includes("You are the Implementer")) {
-      const trusted = jsonBetween(prompt, "BEGIN TRUSTED IMPLEMENTATION TASK", "END TRUSTED IMPLEMENTATION TASK");
-      const round = Number(trusted["round"]);
-      const files = (jsonBetween(prompt, "BEGIN UNTRUSTED REPOSITORY FILES", "END UNTRUSTED REPOSITORY FILES")["files"] as { path: string; content: string; hash: string }[]);
-      const auth = files.find((file) => file.path === "src/auth/AuthProvider.ts");
-      if (auth === undefined) throw new Error("Demo implementer did not receive AuthProvider");
-      const patch = round === 1
-        ? { id: "patch_wrong", implementationStepId: "step_restore", path: auth.path, expectedHash: auth.hash, replacements: [{ oldText: "// Refresh currently starts from an empty session instead of restoring storage.", newText: "// Authentication will be restored by a later initialization stage.", expectedOccurrences: 1 }] }
-        : { id: "patch_correct", implementationStepId: "step_restore", path: auth.path, expectedHash: auth.hash, replacements: [{ oldText: auth.content, newText: correctedProvider, expectedOccurrences: 1 }] };
-      return response(request, {
-        summary: round === 1 ? "Implemented an initial hypothesis." : "Applied the scoped correction.",
-        patches: [patch],
-        claims: [{ id: `claim_restore_${String(round)}`, statement: "bootstrapSession restores persisted authentication.", requirementIds: ["req_restore"], evidenceIds: [], verification: { kind: "source-contains", path: "src/auth/AuthProvider.ts", text: "const persistedToken = getStoredToken();", expectation: "present" } }],
-        capabilityRequests: [{ id: `apply_${String(round)}`, kind: "apply-patches", patchIds: [patch.id], reason: "Apply the exact scoped patch." }],
-      });
-    }
-    if (system.includes("You are the Reviewer")) {
-      const uncertain = prompt.includes("Keep runtime behavior uncertain");
-      return response(request, {
-        status: uncertain ? "uncertain" : "approved",
-        summary: uncertain
-          ? "Source requirements are supported, but runtime behavior remains intentionally unexecuted."
-          : "Review is advisory; deterministic verification is authoritative.",
-        findings: [],
-      });
-    }
-    throw new Error("Unexpected Demo task role");
-  });
-  const roles: readonly TaskAgentRole[] = ["planner", "implementer", "reviewer"];
-  return new TaskExecutionEngine({
-    investigator,
-    taskRuntime: new StructuredTaskAgentRuntime(new Map([["fake", provider]]), roles.map((role) => ({ role, providerId: "fake", modelId: `demo-${role}` })), DEFAULT_TASK_EXECUTION_LIMITS),
-    permissions,
-    limits: DEFAULT_TASK_EXECUTION_LIMITS,
-  });
-}
-
-export function expectedDemoProviderHash(): string {
-  return hash(correctedProvider);
 }

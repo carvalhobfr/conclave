@@ -29,11 +29,11 @@ function nodeKey(node: GraphNodeReference): string {
 }
 
 function isSourceFile(path: string): boolean {
-  return /\.[cm]?[jt]sx?$/u.test(path);
+  return /\.(?:[cm]?[jt]sx?|pyw?|java)$/iu.test(path);
 }
 
 function isTestFile(path: string): boolean {
-  return /(^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path);
+  return /(^|\/)(?:tests?|__tests__|src\/test)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(^|\/)(?:test_.*|.*_test)\.py$|(?:Test|Tests|TestCase)\.java$/iu.test(path);
 }
 
 function pathMatchesPrefix(path: string, prefix: string): boolean {
@@ -241,7 +241,7 @@ function verdictFor(
 ): ValidationVerdict {
   if (findings.some((item) => item.severity === "blocking")) return "block";
   if (
-    findings.some((item) => item.kind === "missing-objective" || item.kind === "head-only-deletion") ||
+    findings.some((item) => item.kind === "missing-objective") ||
     claims.some((item) => item.outcome === "inconclusive")
   ) {
     return "inconclusive";
@@ -281,10 +281,10 @@ export class SuperValidator {
     if (changeSet.files.length === 0) {
       findings.push(finding(
         "no-change",
-        "blocking",
-        "No code change was collected",
-        "The requested resolution has no diff to validate.",
-        "Collect the intended working, staged, branch, or commit change before requesting validation.",
+        "info",
+        "Nothing to review in this comparison",
+        "Git found no changed files between the selected inputs.",
+        "Choose another base or source only if you expected a change; otherwise no action is needed.",
       ));
     }
 
@@ -293,7 +293,7 @@ export class SuperValidator {
         "missing-objective",
         "warning",
         "The resolution objective is missing",
-        "Conclave can inspect structural impact but cannot prove that the change resolves the intended task.",
+        "Conclave can inspect structural impact but cannot compare it with an intended outcome.",
         "Provide --objective or a validation contract with an explicit objective.",
       ));
     }
@@ -328,24 +328,24 @@ export class SuperValidator {
               path: changed.path,
               startLine: diagnostic.line,
               endLine: diagnostic.line,
-              reason: "TypeScript parser diagnostic",
+              reason: "Language parser diagnostic",
             }],
           ));
         }
       }
-      if (
-        isSourceFile(changed.path) &&
-        isDeletionOnly(changed)
-      ) {
-        findings.push(finding(
-          "head-only-deletion",
-          "warning",
-          "Deleted behavior requires baseline evidence",
-          "The current index describes HEAD. Deleted-only code cannot be fully reconstructed from that index.",
-          "Validate against a base-and-head index before treating removal impact as proven safe.",
-          [{ path: changed.path, reason: "Git reports deleted source or deleted-only lines" }],
-        ));
-      }
+    }
+
+    const deletedSource = changeSet.files.filter((changed) =>
+      isSourceFile(changed.path) && !isTestFile(changed.path) && isDeletionOnly(changed));
+    if (deletedSource.length > 0) {
+      findings.push(finding(
+        "head-only-deletion",
+        "warning",
+        "Deleted behavior deserves baseline review",
+        `${String(deletedSource.length)} source file(s) were deleted. The current structural map describes the resulting tree, while the Git patch remains the baseline evidence for removed behavior.`,
+        "Confirm that no remaining caller, import, public contract, or required behavior depends on the deleted code.",
+        deletedSource.slice(0, 20).map((changed) => ({ path: changed.path, reason: "Git reports deleted source or deleted-only lines" })),
+      ));
     }
 
     const startingKeys = new Set<string>();
