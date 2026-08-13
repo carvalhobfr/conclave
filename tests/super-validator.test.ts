@@ -8,6 +8,7 @@ import { TypeScriptCodeParser } from "../src/code-intelligence/typescript-parser
 import { MultiLanguageCodeParser } from "../src/code-intelligence/multi-language-parser.js";
 import type {
   ChangeSet,
+  EvidenceReceiptInput,
   ValidationContract,
 } from "../src/domain/validation.js";
 import { LocalHashEmbeddingProvider } from "../src/embeddings/local-hash-embedding.js";
@@ -127,6 +128,196 @@ describe("SuperValidator", () => {
     expect(report.impact.impactedFiles).toContain("src/flow.ts");
     expect(report.impact.changedSymbols).toContain("persistToken");
     expect(report.metrics.symbolsChanged).toBe(report.impact.changedSymbols.length);
+  });
+
+  it("emits a digest-bound review lineage and deterministic risk challenges", async () => {
+    const report = new SuperValidator({ impactDepth: 3 }).validate(
+      await validationFixture(),
+      changeSet(),
+      contract(),
+    );
+
+    expect(report.schemaVersion).toBe(2);
+    expect(report.lineage).toEqual(expect.objectContaining({
+      contractStatus: "initial",
+      baselineTrust: "none",
+      rebaselineRequired: false,
+    }));
+    expect(report.lineage.reportDigest).toMatch(/^report_[a-f0-9]{64}$/u);
+    expect(report.findings.every((item) => /^fingerprint_[a-f0-9]{20}$/u.test(item.fingerprint))).toBe(true);
+    expect(report.challengePlan.map((item) => item.strategy)).toEqual([
+      "baseline",
+      "security",
+      "test-gap",
+      "data-integrity",
+    ]);
+  });
+
+  it("requires an explicit rebaseline when the objective changes between reviews", async () => {
+    const validator = new SuperValidator({ impactDepth: 3 });
+    const index = await validationFixture();
+    const previous = validator.validate(index, changeSet(), contract());
+    const current = validator.validate(
+      index,
+      { ...changeSet(), patch: "second patch" },
+      contract({ objective: "Remove token persistence entirely" }),
+      { previousReport: previous },
+    );
+
+    expect(current.verdict).toBe("inconclusive");
+    expect(current.lineage).toEqual(expect.objectContaining({
+      seriesId: previous.lineage.seriesId,
+      previousReviewId: previous.lineage.reviewId,
+      baselineTrust: "unattested",
+      contractStatus: "rebaseline-required",
+      rebaselineRequired: true,
+    }));
+    expect(current.lineage.contractDelta.objectiveChanged).toBe(true);
+    expect(current.findings.some((item) => item.kind === "contract-drift")).toBe(true);
+  });
+
+  it("allows a review contract to be strengthened with added claims", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+    const previous = validator.validate(index, changeSet(), contract());
+    const current = validator.validate(index, { ...changeSet(), patch: "claim-strengthening patch" }, contract({
+      claims: [{
+        id: "storage-changed",
+        statement: "Token storage changed.",
+        check: { kind: "file-changed", path: "src/storage.ts", expectation: "present" },
+      }],
+    }), { previousReport: previous });
+
+    expect(current.lineage.contractStatus).toBe("strengthened");
+    expect(current.lineage.rebaselineRequired).toBe(false);
+    expect(current.lineage.contractDelta.addedClaimIds).toEqual(["storage-changed"]);
+    expect(current.claims[0]?.outcome).toBe("supported");
+  });
+
+  it("refuses lineage trust when the previous report content was changed", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+    const previous = validator.validate(index, changeSet(), contract());
+    const tampered = { ...previous, summary: "tampered after validation" };
+    const current = validator.validate(
+      index,
+      { ...changeSet(), patch: "next patch" },
+      contract(),
+      { previousReport: tampered },
+    );
+
+    expect(current.verdict).toBe("inconclusive");
+    expect(current.lineage.baselineTrust).toBe("invalid");
+    expect(current.lineage.rebaselineRequired).toBe(true);
+    expect(current.findingLifecycle.progress).toBe("initial");
+  });
+
+  it("opens a distinct lineage when an intentional new series is requested", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+    const previous = validator.validate(index, changeSet(), contract());
+    const current = validator.validate(
+      index,
+      { ...changeSet(), patch: "intentional rebaseline patch" },
+      contract(),
+      { previousReport: previous, newSeries: true },
+    );
+
+    expect(current.lineage.seriesId).not.toBe(previous.lineage.seriesId);
+    expect(current.lineage.contractStatus).toBe("initial");
+    expect(current.lineage.previousReviewId).toBeUndefined();
+  });
+
+  it("rejects a malformed previous report before it can influence comparison", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+
+    expect(() => validator.validate(index, changeSet(), contract(), {
+      previousReport: { schemaVersion: 2, lineage: {} } as never,
+    })).toThrow("Previous report is not a comparable Conclave schema v2 report");
+  });
+
+  it("rejects duplicate claim identities before creating lineage", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+    const duplicateClaim = {
+      id: "same-claim",
+      statement: "Storage changed.",
+      check: { kind: "file-changed" as const, path: "src/storage.ts", expectation: "present" as const },
+    };
+
+    expect(() => validator.validate(index, changeSet(), contract({
+      claims: [duplicateClaim, duplicateClaim],
+    }))).toThrow("Validation contract contains a duplicate claim id");
+  });
+
+  it("classifies bound, stale, failed, and HEAD-only mutable-worktree receipts", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+    const baseline = validator.validate(index, changeSet(), contract());
+    const outputDigest = "f".repeat(64);
+    const receipt = (overrides: Partial<EvidenceReceiptInput>): EvidenceReceiptInput => ({
+      id: "test-receipt",
+      type: "test",
+      artifactDigest: baseline.lineage.artifactDigest,
+      outputDigest,
+      command: "npm test",
+      exitCode: 0,
+      startedAt: "2026-08-13T10:00:00.000Z",
+      finishedAt: "2026-08-13T10:01:00.000Z",
+      runner: "test-runner",
+      ...overrides,
+    });
+    const current = validator.validate(index, changeSet(), contract(), {
+      receipts: [
+        receipt({ id: "current" }),
+        receipt({ id: "stale", artifactDigest: "artifact_" + "0".repeat(64) }),
+        receipt({ id: "failed", exitCode: 1 }),
+        {
+          id: "head-only",
+          type: "test",
+          outputDigest,
+          command: "npm test",
+          exitCode: 0,
+          startedAt: "2026-08-13T10:00:00.000Z",
+          finishedAt: "2026-08-13T10:01:00.000Z",
+          runner: "test-runner",
+          headSha: changeSet().headSha,
+        },
+      ],
+    });
+
+    expect(current.receipts.items.map((item) => [item.id, item.status])).toEqual([
+      ["current", "current"],
+      ["stale", "stale"],
+      ["failed", "failed"],
+      ["head-only", "unbound"],
+    ]);
+    expect(current.verdict).toBe("warn");
+  });
+
+  it("distinguishes duplicate rechecks from stagnating review loops", async () => {
+    const validator = new SuperValidator();
+    const index = await validationFixture();
+    const first = validator.validate(index, changeSet(), contract());
+    const duplicate = validator.validate(index, changeSet(), contract(), { previousReport: first, stagnationThreshold: 3 });
+    const second = validator.validate(
+      index,
+      { ...changeSet(), patch: "iteration two" },
+      contract(),
+      { previousReport: duplicate, stagnationThreshold: 3 },
+    );
+    const third = validator.validate(
+      index,
+      { ...changeSet(), patch: "iteration three" },
+      contract(),
+      { previousReport: second, stagnationThreshold: 3 },
+    );
+
+    expect(duplicate.findingLifecycle.progress).toBe("duplicate-recheck");
+    expect(second.findingLifecycle.progress).toBe("mixed");
+    expect(third.findingLifecycle.progress).toBe("stagnant");
+    expect(third.findingLifecycle.stagnating.length).toBeGreaterThan(0);
   });
 
   it("blocks a completion claim contradicted by deterministic graph evidence", async () => {

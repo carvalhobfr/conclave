@@ -15,7 +15,7 @@ Review needs no API key. `conclave check` is the recommended complete PR pass: i
 
 1. Resolve the repository root and requested comparison. Default to `workspace` when the user did not name a branch, commit, staged change, or base. This includes the current branch and all local files without changing checkout.
 2. Use a concrete objective when supplied. Otherwise `conclave check` derives a transparent review objective from the latest commit; do not claim that inference came from the user.
-3. Use a supplied validation contract when available. Do not invent completion claims and present them as user claims.
+3. Use a supplied validation contract when available. Do not invent completion claims and present them as user claims. When continuing a correction loop, pass the last raw report through `--previous-report`; this freezes the objective and contract comparison instead of trusting a rewritten prompt.
 4. Run the bundled runner from this skill directory:
 
    ```bash
@@ -27,8 +27,22 @@ Review needs no API key. `conclave check` is the recommended complete PR pass: i
    ```
 
    Valid sources are `workspace`, `working`, `staged`, `branch`, and `commit`. Workspace automatically detects the base unless `--ref` is supplied. For a branch source, `--ref` is the base and optional `--head` names the target. Use `--contract /path/to/contract.json` when a contract exists.
+
+   For a correction-loop recheck, preserve lineage and attach any external evidence receipts:
+
+   ```bash
+   node scripts/run-validation.mjs \
+     --repository /absolute/path/to/repository \
+     --source workspace \
+     --contract /absolute/path/to/contract.json \
+     --previous-report /tmp/conclave-previous.json \
+     --receipt /tmp/test-receipt.json \
+     --output /tmp/conclave-current.json
+   ```
+
+   `--receipt` is repeatable. Use `--series <id>` only to assert the expected series. Use `--new-series` only for an intentional, human-visible rebaseline and never combine it with `--previous-report`.
 5. Read the complete report. Consult [references/report-schema.md](references/report-schema.md) when interpreting fields or exit codes.
-6. Present the decision in this order: verdict and summary; largest blocking or warning finding; claim outcomes; impacted files and symbols; evidence; next action; limitations.
+6. Present the decision in this order: verdict and summary; contract status and lineage; review progress; largest blocking or warning finding; claim outcomes; receipt status; selected challenge strategies; impacted files and symbols; evidence; next action; limitations.
 7. Provide the raw report path or exact JSON when the user asks for raw output. A `PASS` is evidence that the structural checks found no blocker, not human approval; tests, runtime checks, and the reviewer still matter.
 
 When the user names two refs, use an explicit `branch` source with both base and head. Otherwise prefer `workspace`: local edits are intentional review inputs, not a reason to fail or silently omit files. The `.conclave/code-index-v2.json` cache is never the change source.
@@ -38,6 +52,9 @@ When the user names two refs, use an explicit `branch` source with both base and
 - Never turn `BLOCK` or `INCONCLUSIVE` into approval.
 - Never describe `WARN` as fully proven. State what still requires human attention.
 - Never use agent confidence, prose, or a completion message as validation evidence.
+- Never approve `rebaseline-required` as ordinary progress. The objective or contract changed, or the previous report digest is invalid; require an intentional new series at a trusted boundary.
+- Treat all receipt trust claims as self-reported unless a future Conclave version explicitly verifies their attestation. A matching receipt proves binding and reported outcome, not that Conclave executed the command.
+- Call out `duplicate-recheck`, `stagnant`, and `regression` explicitly. Repeating the same diff is not another correction attempt.
 - Distinguish Conclave findings from any additional commentary.
 - Stop with an actionable error if the runner cannot locate Conclave, parse the report, or reconcile the report verdict with the process exit code.
 - Do not run repository scripts unless the user separately authorizes them. This workflow is read-only and deterministic by default.

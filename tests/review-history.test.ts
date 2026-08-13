@@ -30,4 +30,30 @@ describe("review history", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("keeps legacy summaries readable without exposing an incompatible v1 report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conclave-review-history-legacy-"));
+    const legacy = {
+      id: "legacy-review",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      repository: root,
+      objective: "Legacy",
+      headSha: "abc",
+      summary,
+      report: { schemaVersion: 1, verdict: "pass" },
+    };
+    try {
+      await saveReviewHistory(root, legacy as never);
+      expect(await listReviewHistory(root)).toEqual([{
+        id: legacy.id,
+        createdAt: legacy.createdAt,
+        repository: root,
+        objective: legacy.objective,
+        headSha: legacy.headSha,
+        summary,
+      }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

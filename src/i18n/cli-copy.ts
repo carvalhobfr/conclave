@@ -26,7 +26,7 @@ const GROUPS: Readonly<Record<CommandGroup, LocalizedText>> = {
 const COMMANDS: readonly CommandHelp[] = [
   {
     id: "check",
-    usage: "conclave check [path] [--base <ref>] [--objective <goal>] [--json]",
+    usage: "conclave check [path] [--base <ref>] [--objective <goal>] [--previous-report <file>] [--receipt <file>] [--json]",
     group: "workflow",
     description: localized("Review the current branch and all local changes in one pass.", "Revisa a branch atual e todas as mudanças locais em uma passagem.", "Revisa la rama actual y todos los cambios locales en una pasada."),
     details: localized("Recommended day-to-day command. It detects the repository, comparison base, committed branch changes, staged, unstaged, and untracked files.", "Comando recomendado no dia a dia. Detecta o repositório, a base de comparação, commits da branch e arquivos staged, unstaged e untracked.", "Comando recomendado para el día a día. Detecta el repositorio, la base de comparación, los commits de la rama y los archivos staged, unstaged y untracked."),
@@ -50,10 +50,10 @@ const COMMANDS: readonly CommandHelp[] = [
   },
   {
     id: "review",
-    usage: "conclave review <path> --objective <goal> [change source] [--contract <file>] [--json]",
+    usage: "conclave review <path> --objective <goal> [change source] [--contract <file>] [--previous-report <file>] [--receipt <file>] [--series <id>|--new-series] [--json]",
     group: "workflow",
     description: localized("Produce the low-level deterministic evidence report for scripts and CI.", "Produz o relatório determinístico de evidências para scripts e CI.", "Genera el informe determinista de evidencias para scripts y CI."),
-    details: localized("This is the evidence engine behind the PR summary. It does not call an LLM or run repository scripts. `validate` is an explicit alias.", "Este é o motor de evidências por trás do resumo de PR. Não chama LLM nem executa scripts do repositório. `validate` é um alias explícito.", "Este es el motor de evidencias tras el resumen de PR. No llama a un LLM ni ejecuta scripts del repositorio. `validate` es un alias explícito."),
+    details: localized("This is the evidence engine behind the PR summary. It tracks contract and finding lineage across explicit previous reports, imports artifact-bound receipts without running their commands, and never calls an LLM. `validate` is an explicit alias.", "Este é o motor de evidências por trás do resumo de PR. Acompanha contrato e findings por relatórios anteriores explícitos, importa receipts ligados ao artefato sem executar seus comandos e nunca chama LLM. `validate` é um alias explícito.", "Este es el motor de evidencias tras el resumen de PR. Sigue el contrato y los hallazgos mediante informes anteriores explícitos, importa recibos ligados al artefacto sin ejecutar sus comandos y nunca llama a un LLM. `validate` es un alias explícito."),
     examples: ["conclave review . --working --objective \"Keep session restore compatible\" --json"],
   },
   {

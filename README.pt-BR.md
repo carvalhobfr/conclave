@@ -73,7 +73,14 @@ npx conclave compare . --base origin/main --head feature/login \
 
 # Saída para agent ou CI
 npx conclave check . --base origin/main --json > conclave-review.json
+
+# Conferir a correção sem mudar silenciosamente o objetivo ou contrato
+npx conclave check . --base origin/main \
+  --objective "Adicionar login sem senha sem quebrar a restauração da sessão" \
+  --previous-report conclave-review.json --json > conclave-recheck.json
 ```
+
+A nova conferência continua na mesma série. O Conclave verifica o digest do relatório anterior, compara objetivo e contrato, cria fingerprints dos findings recorrentes e diferencia repetição idêntica de progresso, estagnação ou regressão. Use `--new-series` somente quando quiser aceitar deliberadamente uma nova baseline. Testes e builds executados externamente podem entrar com `--receipt` repetível; o vínculo com o artefato é verificado, mas a evidência continua autorrelatada até existir verificação de attestations. Veja [linhagem de review e recibos](docs/review-lineage.md).
 
 Yarn e pnpm também funcionam:
 
@@ -226,7 +233,7 @@ Se já estiver na última versão, `conclave update` explica isso claramente e n
 
 Quando não há diff, o resultado é “Nothing to review”, não uma falha inventada.
 
-Veja o [changelog](CHANGELOG.pt-BR.md) para mudanças publicadas e futuras, o [roadmap](ROADMAP.md), os [limites de segurança](docs/security.md) e o [schema do relatório](schemas/validation-report.v1.schema.json).
+Veja o [changelog](CHANGELOG.pt-BR.md) para mudanças publicadas e futuras, o [roadmap](ROADMAP.md), os [limites de segurança](docs/security.md), a [linhagem de review e os recibos](docs/review-lineage.md) e o [schema do relatório](schemas/validation-report.v2.schema.json).
 
 ## Desenvolvimento
 

@@ -82,7 +82,11 @@ export type ValidationFindingKind =
   | "exported-change-without-tests"
   | "head-only-deletion"
   | "claim-contradicted"
-  | "claim-inconclusive";
+  | "claim-inconclusive"
+  | "contract-drift"
+  | "receipt-invalid"
+  | "receipt-stale"
+  | "receipt-failed";
 
 export interface ValidationEvidence {
   readonly path: string;
@@ -95,6 +99,7 @@ export interface ValidationEvidence {
 
 export interface ValidationFinding {
   readonly id: string;
+  readonly fingerprint: string;
   readonly kind: ValidationFindingKind;
   readonly severity: ValidationFindingSeverity;
   readonly title: string;
@@ -137,8 +142,140 @@ export interface ValidationTrustBoundary {
   };
 }
 
+export interface ValidationContractSnapshot {
+  readonly allowedPathPrefixes: readonly string[];
+  readonly claims: readonly {
+    readonly id: string;
+    readonly digest: string;
+  }[];
+}
+
+export type ValidationContractStatus =
+  | "initial"
+  | "preserved"
+  | "strengthened"
+  | "rebaseline-required";
+
+export interface ValidationContractDelta {
+  readonly objectiveChanged: boolean;
+  readonly addedClaimIds: readonly string[];
+  readonly removedClaimIds: readonly string[];
+  readonly changedClaimIds: readonly string[];
+  readonly allowedPathPrefixesAdded: readonly string[];
+  readonly allowedPathPrefixesRemoved: readonly string[];
+}
+
+export type ValidationBaselineTrust = "none" | "unattested" | "invalid";
+
+export interface ValidationLineage {
+  readonly seriesId: string;
+  readonly reviewId: string;
+  readonly previousReviewId?: string;
+  readonly previousReportDigest?: string;
+  readonly baselineTrust: ValidationBaselineTrust;
+  readonly objectiveDigest: string;
+  readonly contractDigest: string;
+  readonly diffDigest: string;
+  readonly artifactDigest: string;
+  readonly reportDigest: string;
+  readonly contractStatus: ValidationContractStatus;
+  readonly rebaselineRequired: boolean;
+  readonly contractDelta: ValidationContractDelta;
+  readonly contractSnapshot: ValidationContractSnapshot;
+}
+
+export type ValidationFindingLifecycleStatus = "new" | "persistent" | "regressed";
+export type ValidationReviewProgress =
+  | "initial"
+  | "duplicate-recheck"
+  | "progress"
+  | "stagnant"
+  | "regression"
+  | "mixed";
+
+export interface ValidationFindingOccurrence {
+  readonly fingerprint: string;
+  readonly status: ValidationFindingLifecycleStatus;
+  readonly occurrences: number;
+  readonly consecutive: number;
+}
+
+export interface ValidationFindingLifecycle {
+  readonly progress: ValidationReviewProgress;
+  readonly current: readonly ValidationFindingOccurrence[];
+  readonly resolved: readonly string[];
+  readonly seen: readonly string[];
+  readonly stagnating: readonly string[];
+}
+
+export type EvidenceReceiptType = "test" | "build" | "lint" | "typecheck" | "benchmark" | "runtime" | "other";
+export type EvidenceReceiptClaimedTrust = "self-reported" | "locally-observed" | "ci-attested";
+export type EvidenceReceiptStatus = "current" | "stale" | "invalid" | "failed" | "unbound";
+
+export interface EvidenceReceiptInput {
+  readonly id: string;
+  readonly type: EvidenceReceiptType;
+  readonly command?: string;
+  readonly exitCode?: number;
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
+  readonly headSha?: string;
+  readonly artifactDigest?: string;
+  readonly diffDigest?: string;
+  readonly outputDigest?: string;
+  readonly artifactDigests?: readonly string[];
+  readonly runner?: string;
+  readonly claimedTrustLevel?: EvidenceReceiptClaimedTrust;
+  readonly summary?: string;
+  readonly validationErrors?: readonly string[];
+}
+
+export interface ValidatedEvidenceReceipt {
+  readonly id: string;
+  readonly receiptDigest: string;
+  readonly type: EvidenceReceiptType;
+  readonly status: EvidenceReceiptStatus;
+  readonly claimedTrustLevel: EvidenceReceiptClaimedTrust;
+  readonly effectiveTrustLevel: "self-reported";
+  readonly command?: string;
+  readonly exitCode?: number;
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
+  readonly headSha?: string;
+  readonly artifactDigest?: string;
+  readonly diffDigest?: string;
+  readonly outputDigest?: string;
+  readonly artifactDigests?: readonly string[];
+  readonly runner?: string;
+  readonly summary?: string;
+  readonly reasons: readonly string[];
+}
+
+export interface ValidationReceiptSummary {
+  readonly items: readonly ValidatedEvidenceReceipt[];
+  readonly counts: Readonly<Record<EvidenceReceiptStatus, number>>;
+}
+
+export type ValidationChallengeStrategy =
+  | "baseline"
+  | "security"
+  | "data-integrity"
+  | "lifecycle-state"
+  | "public-api-compatibility"
+  | "blast-radius"
+  | "performance"
+  | "ux-accessibility"
+  | "test-gap";
+
+export interface ValidationChallenge {
+  readonly strategy: ValidationChallengeStrategy;
+  readonly reason: string;
+  readonly evidenceIds: readonly string[];
+  readonly suggestedProbes: readonly string[];
+}
+
 export interface ValidationReport {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly verdict: ValidationVerdict;
   readonly summary: string;
   readonly objective: string;
@@ -152,4 +289,8 @@ export interface ValidationReport {
   };
   readonly metrics: ValidationMetrics;
   readonly trustBoundary: ValidationTrustBoundary;
+  readonly lineage: ValidationLineage;
+  readonly findingLifecycle: ValidationFindingLifecycle;
+  readonly receipts: ValidationReceiptSummary;
+  readonly challengePlan: readonly ValidationChallenge[];
 }

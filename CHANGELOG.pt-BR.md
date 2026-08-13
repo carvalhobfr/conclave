@@ -4,12 +4,16 @@ Todas as mudanças relevantes do Conclave são documentadas aqui. O projeto segu
 
 [English](CHANGELOG.md) · [Português (Brasil)](CHANGELOG.pt-BR.md)
 
-## [Não publicado] — planejado para 0.6.0
+## [Não publicado] — planejado para 0.7.0
 
 Esta é a próxima versão atualmente presente no repositório. A versão mais recente publicada no npm ainda é a `0.2.8`.
 
 ### Adicionado
 
+- Linhagem de review no schema v2 com digests de objetivo, contrato, diff, artefato, relatório anterior e relatório atual.
+- Gates contra mudança silenciosa do contrato, séries explícitas de rebaseline, fingerprints estáveis e acompanhamento de progresso/estagnação no ciclo de correção.
+- Recibos de evidência externa vinculados ao artefato revisado e planos determinísticos de desafios selecionados pelo risco.
+- Suporte a `--previous-report`, `--receipt` repetível, `--series` e `--new-series` na CLI e na skill portável.
 - `conclave check`, a passagem recomendada para PRs. Detecta a provável base e inclui commits da branch, arquivos staged, unstaged e untracked.
 - `conclave compare`, com seletor interativo de branches locais e remotas sem trocar o checkout.
 - Catálogo completo em `conclave help`, organizado por objetivo, além de guias como `conclave help check` e `conclave help symbol`.
@@ -33,6 +37,8 @@ Esta é a próxima versão atualmente presente no repositório. A versão mais r
 
 ### Segurança
 
+- Claims de confiança dos recibos são tratados conservadoramente como autorrelatados; o Conclave nunca diz que executou um comando reportado externamente.
+- Recibos de worktree mutável precisam do digest do artefato ou do diff e não podem depender apenas do `HEAD`.
 - A preferência de idioma fica fora do repositório e usa permissão de arquivo somente para o dono.
 - O `.env` do repositório não pode redirecionar nem substituir silenciosamente as preferências globais da CLI.
 - O review de PR continua local e determinístico: não usa chave de API, não chama modelo e não executa scripts do repositório.

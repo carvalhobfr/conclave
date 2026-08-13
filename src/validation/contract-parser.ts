@@ -66,9 +66,14 @@ export function parseValidationContract(
   if (!Array.isArray(rawPrefixes)) throw new Error("allowedPathPrefixes must be an array");
   const objectiveValue = objectiveOverride ?? parsed["objective"] ?? "";
   if (typeof objectiveValue !== "string") throw new Error("objective must be a string");
+  const claims = rawClaims.map((item, index) => claim(item, index));
+  const duplicateClaimId = claims.find((item, index) =>
+    claims.findIndex((candidate) => candidate.id === item.id) !== index,
+  )?.id;
+  if (duplicateClaimId !== undefined) throw new Error("claims contain a duplicate id: " + duplicateClaimId);
   return {
     objective: objectiveValue.trim(),
-    claims: rawClaims.map((item, index) => claim(item, index)),
+    claims,
     allowedPathPrefixes: rawPrefixes.map((item, index) =>
       string(item, "allowedPathPrefixes[" + String(index) + "]"),
     ),

@@ -73,7 +73,14 @@ npx conclave compare . --base origin/main --head feature/login \
 
 # Produce machine-readable output for an agent or CI
 npx conclave check . --base origin/main --json > conclave-review.json
+
+# Recheck after a correction without moving the objective or contract silently
+npx conclave check . --base origin/main \
+  --objective "Add passwordless login without breaking session restore" \
+  --previous-report conclave-review.json --json > conclave-recheck.json
 ```
+
+The recheck belongs to the same review series. Conclave verifies the previous report digest, compares the objective and contract, fingerprints recurring findings, and distinguishes a duplicate rerun from progress, stagnation, or regression. Use `--new-series` only when you intentionally accept a new baseline. Externally run tests or builds can be attached with repeatable `--receipt`; receipts are checked against the exact artifact but remain self-reported until attestation verification is added. See [review lineage and receipts](docs/review-lineage.md).
 
 Yarn and pnpm work too:
 
@@ -232,7 +239,7 @@ If already current, `conclave update` says so clearly and exits without running 
 
 No changed files is reported as “Nothing to review,” not as a fake failure.
 
-See the [changelog](CHANGELOG.md) for released and upcoming changes, the [roadmap](ROADMAP.md) for direction, [security boundaries](docs/security.md), and the [validation report schema](schemas/validation-report.v1.schema.json).
+See the [changelog](CHANGELOG.md) for released and upcoming changes, the [roadmap](ROADMAP.md) for direction, [security boundaries](docs/security.md), [review lineage and receipts](docs/review-lineage.md), and the [validation report schema](schemas/validation-report.v2.schema.json).
 
 ## Development
 

@@ -5,7 +5,7 @@ import type { ValidationReport } from "../src/domain/validation.js";
 
 function report(overrides: Partial<ValidationReport> = {}): ValidationReport {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     verdict: "pass",
     summary: "PASS",
     objective: "Restore the session",
@@ -26,6 +26,23 @@ function report(overrides: Partial<ValidationReport> = {}): ValidationReport {
       repositoryScriptsExecuted: false,
       knowledge: { parser: "test", graph: "syntax-aware", embedding: { id: "test", kind: "deterministic-feature-hash", remoteCalls: 0 } },
     },
+    lineage: {
+      seriesId: "series_test",
+      reviewId: "review_test",
+      baselineTrust: "none",
+      objectiveDigest: "objective_test",
+      contractDigest: "contract_test",
+      diffDigest: "diff_test",
+      artifactDigest: "artifact_test",
+      reportDigest: "report_test",
+      contractStatus: "initial",
+      rebaselineRequired: false,
+      contractDelta: { objectiveChanged: false, addedClaimIds: [], removedClaimIds: [], changedClaimIds: [], allowedPathPrefixesAdded: [], allowedPathPrefixesRemoved: [] },
+      contractSnapshot: { allowedPathPrefixes: [], claims: [] },
+    },
+    findingLifecycle: { progress: "initial", current: [], resolved: [], seen: [], stagnating: [] },
+    receipts: { items: [], counts: { current: 0, stale: 0, invalid: 0, failed: 0, unbound: 0 } },
+    challengePlan: [],
     ...overrides,
   };
 }
@@ -44,6 +61,7 @@ describe("pull request summaries", () => {
       verdict: "block",
       findings: [{
         id: "finding-1",
+        fingerprint: "fingerprint-1",
         kind: "claim-contradicted",
         severity: "blocking",
         title: "Claim contradicted",

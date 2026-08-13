@@ -59,5 +59,8 @@ export * from "./domain/review-handoff.js";
 export * from "./validation/contract-parser.js";
 export * from "./validation/git-change-set.js";
 export * from "./validation/deterministic-index.js";
+export * from "./validation/review-lineage.js";
+export * from "./validation/evidence-receipts.js";
+export * from "./validation/challenge-router.js";
 export * from "./validation/super-validator.js";
 export * from "./workflow/repository-inspector.js";

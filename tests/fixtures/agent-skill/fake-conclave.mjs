@@ -4,9 +4,9 @@ const verdict = objective.includes("BLOCK") ? "block" : objective.includes("INCO
 const exit = { pass: 0, block: 1, inconclusive: 2 }[verdict];
 const outcome = verdict === "block" ? "rejected" : verdict === "inconclusive" ? "inconclusive" : "supported";
 const severity = verdict === "block" ? "blocking" : "warning";
-const findings = verdict === "pass" ? [] : [{ id: "finding", kind: verdict === "block" ? "claim-contradicted" : "claim-inconclusive", severity, title: verdict, detail: verdict, evidence: [], remediation: "Fix or add evidence." }];
+const findings = verdict === "pass" ? [] : [{ id: "finding", fingerprint: "fingerprint", kind: verdict === "block" ? "claim-contradicted" : "claim-inconclusive", severity, title: verdict, detail: verdict, evidence: [], remediation: "Fix or add evidence." }];
 process.stdout.write(JSON.stringify({
-  schemaVersion: 1,
+  schemaVersion: 2,
   verdict,
   summary: verdict.toUpperCase(),
   objective,
@@ -25,5 +25,35 @@ process.stdout.write(JSON.stringify({
       embedding: { id: "local-hash", kind: "deterministic-feature-hash", remoteCalls: 0 },
     },
   },
+  lineage: {
+    seriesId: "series",
+    reviewId: "review",
+    baselineTrust: "none",
+    objectiveDigest: "objective",
+    contractDigest: "contract",
+    diffDigest: "diff",
+    artifactDigest: "artifact",
+    reportDigest: "report",
+    contractStatus: "initial",
+    rebaselineRequired: false,
+    contractDelta: {
+      objectiveChanged: false,
+      addedClaimIds: [],
+      removedClaimIds: [],
+      changedClaimIds: [],
+      allowedPathPrefixesAdded: [],
+      allowedPathPrefixesRemoved: [],
+    },
+    contractSnapshot: { allowedPathPrefixes: [], claims: [] },
+  },
+  findingLifecycle: {
+    progress: "initial",
+    current: findings.map((finding) => ({ fingerprint: finding.fingerprint, status: "new", occurrences: 1, consecutive: 1 })),
+    resolved: [],
+    seen: findings.map((finding) => finding.fingerprint),
+    stagnating: [],
+  },
+  receipts: { items: [], counts: { current: 0, stale: 0, invalid: 0, failed: 0, unbound: 0 } },
+  challengePlan: [{ strategy: "baseline", reason: "Baseline", evidenceIds: [], suggestedProbes: [] }],
 }));
 process.exitCode = exit;

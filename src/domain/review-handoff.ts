@@ -23,13 +23,37 @@ export function createReviewHandoff(report: ValidationReport): ReviewHandoff {
     `Objective: ${report.objective}`,
     `Verdict: ${report.verdict.toUpperCase()}`,
     `Comparison: ${report.changeSet.source.kind}`,
+    `Review series: ${report.lineage.seriesId}`,
+    `Contract status: ${report.lineage.contractStatus}`,
+    `Finding progress: ${report.findingLifecycle.progress}`,
     "",
+    ...(report.lineage.rebaselineRequired ? [
+      "REBASELINE REQUIRED: the objective, claims, allowed scope, or previous report integrity changed.",
+      "Do not treat this as a completed correction until a human or trusted CI boundary confirms the new baseline.",
+      "",
+    ] : []),
     ...(findings.length === 0 ? ["No deterministic blocker or warning was found."] : findings.flatMap((finding) => [
       `${finding.severity.toUpperCase()}: ${finding.title}`,
       finding.detail,
       `Requested correction: ${finding.remediation}`,
     ])),
     ...evidenceLines({ ...report, findings }),
+    ...(report.findingLifecycle.stagnating.length === 0 ? [] : [
+      "",
+      `Stagnation: ${String(report.findingLifecycle.stagnating.length)} finding(s) survived repeated changed artifacts. Revisit the cause or architecture instead of repeating the same patch strategy.`,
+    ]),
+    ...(report.receipts.items.length === 0 ? [] : [
+      "",
+      "External evidence: " + report.receipts.items.map((receipt) => `${receipt.id}=${receipt.status}`).join(", "),
+    ]),
+    ...(report.challengePlan.length === 0 ? [] : [
+      "",
+      "Suggested independent challenges:",
+      ...report.challengePlan.filter((challenge) => challenge.strategy !== "baseline").flatMap((challenge) => [
+        `- ${challenge.strategy}: ${challenge.reason}`,
+        ...challenge.suggestedProbes.map((probe) => `  - ${probe}`),
+      ]),
+    ]),
     ...(report.findings.filter((finding) => finding.severity !== "info").length > findings.length
       ? [`\n${String(report.findings.filter((finding) => finding.severity !== "info").length - findings.length)} additional findings remain in the full report.`]
       : []),

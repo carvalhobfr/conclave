@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -63,11 +62,12 @@ import { StructuredAgentRuntime } from "./reasoning/agent-runtime.js";
 import { ReasoningEngine } from "./reasoning/reasoning-engine.js";
 import { DEFAULT_REASONING_LIMITS } from "./domain/reasoning.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
-import type { ChangeSource, ValidationContract, ValidationReport } from "./domain/validation.js";
+import type { ChangeSource, EvidenceReceiptInput, ValidationContract, ValidationReport } from "./domain/validation.js";
 import { createValidationContract, parseValidationContract } from "./validation/contract-parser.js";
 import { GitChangeSetService } from "./validation/git-change-set.js";
 import { createDeterministicValidationIndex } from "./validation/deterministic-index.js";
 import { SuperValidator } from "./validation/super-validator.js";
+import { parseEvidenceReceiptEnvelope } from "./validation/evidence-receipts.js";
 import { createPullRequestSummary } from "./domain/pr-summary.js";
 import { createReviewHandoff } from "./domain/review-handoff.js";
 import { listReviewHistory, saveReviewHistory, type ReviewHistoryRecord } from "./storage/review-history.js";
@@ -124,6 +124,10 @@ interface ParsedArguments {
   readonly commit: string | undefined;
   readonly objective: string | undefined;
   readonly contractPath: string | undefined;
+  readonly previousReportPath: string | undefined;
+  readonly receiptPaths: readonly string[];
+  readonly seriesId: string | undefined;
+  readonly newSeries: boolean;
 }
 
 function parseArguments(args: readonly string[]): ParsedArguments {
@@ -143,6 +147,10 @@ function parseArguments(args: readonly string[]): ParsedArguments {
   let commit: string | undefined;
   let objective: string | undefined;
   let contractPath: string | undefined;
+  let previousReportPath: string | undefined;
+  const receiptPaths: string[] = [];
+  let seriesId: string | undefined;
+  let newSeries = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
@@ -161,7 +169,11 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       staged = true;
       continue;
     }
-    if (argument === "--base" || argument === "--branch" || argument === "--head" || argument === "--commit" || argument === "--objective" || argument === "--contract") {
+    if (argument === "--new-series") {
+      newSeries = true;
+      continue;
+    }
+    if (argument === "--base" || argument === "--branch" || argument === "--head" || argument === "--commit" || argument === "--objective" || argument === "--contract" || argument === "--previous-report" || argument === "--receipt" || argument === "--series") {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--")) {
         throw new Error(argument + " requires a value");
@@ -170,7 +182,10 @@ function parseArguments(args: readonly string[]): ParsedArguments {
       else if (argument === "--head") head = value;
       else if (argument === "--commit") commit = value;
       else if (argument === "--objective") objective = value;
-      else contractPath = value;
+      else if (argument === "--contract") contractPath = value;
+      else if (argument === "--previous-report") previousReportPath = value;
+      else if (argument === "--receipt") receiptPaths.push(value);
+      else seriesId = value;
       index += 1;
       continue;
     }
@@ -255,6 +270,10 @@ function parseArguments(args: readonly string[]): ParsedArguments {
     commit,
     objective,
     contractPath,
+    previousReportPath,
+    receiptPaths,
+    seriesId,
+    newSeries,
   };
 }
 
@@ -1008,6 +1027,55 @@ async function loadValidationContract(parsed: ParsedArguments): Promise<Validati
   return parseValidationContract(value, parsed.objective);
 }
 
+async function loadPreviousValidationReport(parsed: ParsedArguments): Promise<ValidationReport | undefined> {
+  if (parsed.previousReportPath === undefined) return undefined;
+  if (parsed.newSeries) throw new Error("--new-series cannot be combined with --previous-report");
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(resolve(parsed.previousReportPath), "utf8"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown previous report error";
+    throw new Error("Could not load previous validation report: " + message, { cause: error });
+  }
+  const candidate = typeof value === "object" && value !== null && !Array.isArray(value) &&
+    "report" in value
+    ? (value as { report?: unknown }).report
+    : value;
+  if (
+    typeof candidate !== "object" || candidate === null || Array.isArray(candidate) ||
+    (candidate as { schemaVersion?: unknown }).schemaVersion !== 2 ||
+    typeof (candidate as { lineage?: unknown }).lineage !== "object"
+  ) {
+    throw new Error("Previous report must be a Conclave schema v2 report or a check JSON object containing one");
+  }
+  return candidate as ValidationReport;
+}
+
+async function loadEvidenceReceipts(parsed: ParsedArguments): Promise<readonly EvidenceReceiptInput[]> {
+  const receipts: EvidenceReceiptInput[] = [];
+  for (const path of parsed.receiptPaths) {
+    let value: unknown;
+    try {
+      value = JSON.parse(await readFile(resolve(path), "utf8"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown receipt error";
+      throw new Error("Could not load evidence receipt " + path + ": " + message, { cause: error });
+    }
+    receipts.push(...parseEvidenceReceiptEnvelope(value, resolve(path)));
+  }
+  return receipts;
+}
+
+function validationProtocolArguments(parsed: ParsedArguments): readonly string[] {
+  return [
+    ...(parsed.contractPath === undefined ? [] : ["--contract", parsed.contractPath]),
+    ...(parsed.previousReportPath === undefined ? [] : ["--previous-report", parsed.previousReportPath]),
+    ...parsed.receiptPaths.flatMap((path) => ["--receipt", path]),
+    ...(parsed.seriesId === undefined ? [] : ["--series", parsed.seriesId]),
+    ...(parsed.newSeries ? ["--new-series"] : []),
+  ];
+}
+
 async function reviewChanges(args: readonly string[]): Promise<void> {
   const parsed = parseArguments(args);
   const requestedPath = parsed.positionals[0];
@@ -1017,13 +1085,20 @@ async function reviewChanges(args: readonly string[]): Promise<void> {
   requireObjective(parsed, "review");
   const repositoryRoot = resolve(requestedPath);
   const contract = await loadValidationContract(parsed);
+  const previousReport = await loadPreviousValidationReport(parsed);
+  const receipts = await loadEvidenceReceipts(parsed);
   const changeService = new GitChangeSetService();
   const source = selectedChangeSource(parsed);
   const changeSet = await changeService.collect(repositoryRoot, source);
   const materialized = await changeService.materializeValidationRoot(repositoryRoot, source);
   try {
     const indexed = await createDeterministicValidationIndex(materialized.rootPath);
-    const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+    const report = new SuperValidator().validate(indexed.index, changeSet, contract, {
+      ...(previousReport === undefined ? {} : { previousReport }),
+      receipts,
+      ...(parsed.seriesId === undefined ? {} : { seriesId: parsed.seriesId }),
+      newSeries: parsed.newSeries,
+    });
 
     if (parsed.json) {
       print(report, true);
@@ -1055,6 +1130,12 @@ function printValidationReport(report: ValidationReport): void {
       copy.impact + ": " + String(report.metrics.impactedFiles) + ` ${copy.files} / ` +
       String(report.metrics.impactedSymbols) + ` ${copy.codeUnits}`,
     );
+    console.log("Series: " + report.lineage.seriesId + " / review " + report.lineage.reviewId);
+    console.log("Contract: " + report.lineage.contractStatus + (report.lineage.rebaselineRequired ? " (human rebaseline required)" : ""));
+    console.log(
+      "Finding lifecycle: " + report.findingLifecycle.progress +
+      ` (${String(report.findingLifecycle.resolved.length)} resolved, ${String(report.findingLifecycle.stagnating.length)} stagnating)`,
+    );
     if (report.changeSet.files.length > 0) {
       console.log(copy.changedFiles + ":");
       for (const file of report.changeSet.files) {
@@ -1083,6 +1164,19 @@ function printValidationReport(report: ValidationReport): void {
       console.log(copy.claim + " " + result.outcome.toUpperCase() + ": " + result.claim.statement);
       console.log(result.explanation);
     }
+    if (report.receipts.items.length > 0) {
+      console.log("\nEvidence receipts:");
+      for (const receipt of report.receipts.items) {
+        console.log(`- ${receipt.status.toUpperCase()} ${receipt.id} (${receipt.effectiveTrustLevel}) — ${receipt.reasons.join("; ")}`);
+      }
+    }
+    if (report.challengePlan.length > 0) {
+      console.log("\nChallenge plan:");
+      for (const challenge of report.challengePlan) {
+        console.log(`- ${challenge.strategy}: ${challenge.reason}`);
+        for (const probe of challenge.suggestedProbes) console.log("  - " + probe);
+      }
+    }
 }
 
 async function pullRequestSummary(
@@ -1098,6 +1192,8 @@ async function pullRequestSummary(
   requireObjective(effectiveParsed, "pr");
   const repositoryRoot = resolve(requestedPath);
   const contract = await loadValidationContract(effectiveParsed);
+  const previousReport = await loadPreviousValidationReport(effectiveParsed);
+  const receipts = await loadEvidenceReceipts(effectiveParsed);
   const copy = interfaceCopy(cliLanguage);
   if (!effectiveParsed.json) progress(copy.collecting, copy.gitChange);
   const changeService = new GitChangeSetService();
@@ -1108,11 +1204,16 @@ async function pullRequestSummary(
   try {
     const indexed = await createDeterministicValidationIndex(materialized.rootPath);
     if (!effectiveParsed.json) progress(copy.validating, copy.objectiveImpactClaims);
-    const report = new SuperValidator().validate(indexed.index, changeSet, contract);
+    const report = new SuperValidator().validate(indexed.index, changeSet, contract, {
+      ...(previousReport === undefined ? {} : { previousReport }),
+      receipts,
+      ...(effectiveParsed.seriesId === undefined ? {} : { seriesId: effectiveParsed.seriesId }),
+      newSeries: effectiveParsed.newSeries,
+    });
     const summary = createPullRequestSummary(report);
     const handoff = createReviewHandoff(report);
     const record: ReviewHistoryRecord = {
-      id: createHash("sha256").update(JSON.stringify({ headSha: report.changeSet.headSha, source: report.changeSet.source, objective: report.objective })).digest("hex").slice(0, 24),
+      id: report.lineage.reviewId,
       createdAt: new Date().toISOString(),
       repository: repositoryRoot,
       objective: report.objective,
@@ -1165,7 +1266,11 @@ async function checkRepository(args: readonly string[]): Promise<void> {
     progress(copy.repository, `${inspection.currentBranch} → base ${source.kind === "workspace" ? source.base : copy.selectedSource}`);
     if (inspection.status.untracked > 0) progress(copy.included, `${String(inspection.status.untracked)} ${copy.untrackedFiles}`);
   }
-  await pullRequestSummary([inspection.root, ...(parsed.json ? ["--json"] : []), ...(parsed.contractPath === undefined ? [] : ["--contract", parsed.contractPath])], { source, objective });
+  await pullRequestSummary([
+    inspection.root,
+    ...(parsed.json ? ["--json"] : []),
+    ...validationProtocolArguments(parsed),
+  ], { source, objective });
 }
 
 async function showReviewHistory(args: readonly string[]): Promise<void> {
@@ -1182,7 +1287,8 @@ async function showReviewHistory(args: readonly string[]): Promise<void> {
   }
   console.log(`${interfaceCopy(cliLanguage).reviewHistory}: ${repositoryRoot}`);
   for (const record of records) {
-    console.log(`- ${record.createdAt} ${record.summary.verdict.toUpperCase()} ${record.summary.title} — ${record.objective}`);
+    const lifecycle = record.report?.findingLifecycle.progress;
+    console.log(`- ${record.createdAt} ${record.summary.verdict.toUpperCase()} ${record.summary.title} — ${record.objective}${lifecycle === undefined ? "" : ` [${lifecycle}]`}`);
   }
 }
 

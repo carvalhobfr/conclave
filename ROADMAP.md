@@ -35,7 +35,17 @@ Conclave is a read-only PR companion. The product gathers context and evidence, 
 - Shared CLI/UI local review history.
 - Read-only interface boundary; no patch application, repository scripts, commits, pushes, approvals, or merges.
 
-## After 0.6
+## 0.7 — Trustworthy correction protocol — implemented
+
+- Digest-bound review lineage across correction-loop rechecks.
+- Contract drift detection: changed objectives, claims, or allowed scope require an explicit rebaseline instead of silently moving the finish line.
+- Stable finding fingerprints and lifecycle states for duplicate rechecks, progress, stagnation, and regression.
+- External evidence receipts bound to the exact artifact or diff, with stale, failed, invalid, and unbound states.
+- Deterministic risk routing: the baseline plus at most three focused challenge strategies.
+- Agent protocol through `--previous-report`, repeatable `--receipt`, `--series`, `--new-series`, and schema-v2 JSON.
+- Correction handoffs that expose lineage, progress, receipts, selected challenges, and rebaseline requirements.
+
+## After 0.7
 
 Candidates are tracked by evidence rather than dates:
 
@@ -43,6 +53,8 @@ Candidates are tracked by evidence rather than dates:
 - Go, Rust, C#, Kotlin, and PHP structural parsers;
 - a reusable first-party GitHub Action release and GitLab/Bitbucket adapters;
 - SARIF and GitHub Checks output;
-- configurable team policy files and baseline-aware regression tracking;
+- configurable team policy files and protected baselines;
 - richer large-repository graph summaries and incremental review performance;
-- signed reports and optional hosted collaboration, only after a dedicated security design.
+- CI-verified and signed receipt/report attestations;
+- permissioned local check execution with sandboxing and output capture;
+- optional hosted collaboration, only after a dedicated security design.

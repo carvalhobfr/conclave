@@ -18,7 +18,15 @@ import type {
   ValidationFindingSeverity,
   ValidationReport,
   ValidationVerdict,
+  EvidenceReceiptInput,
 } from "../domain/validation.js";
+import { createChallengePlan } from "./challenge-router.js";
+import { evaluateEvidenceReceipts } from "./evidence-receipts.js";
+import {
+  createFindingLifecycle,
+  createValidationLineage,
+  finalizeReportDigest,
+} from "./review-lineage.js";
 
 function stableId(kind: string, ...parts: readonly string[]): string {
   return kind + "_" + createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 20);
@@ -83,9 +91,24 @@ function finding(
   detail: string,
   remediation: string,
   evidence: readonly ValidationEvidence[] = [],
+  fingerprintKey?: string,
 ): ValidationFinding {
+  const evidenceIdentity = evidence.map((item) => [
+    item.path,
+    item.symbol ?? "",
+    item.relation ?? "",
+    item.reason,
+  ].join(":"));
+  const fingerprint = stableId(
+    "fingerprint",
+    kind,
+    title,
+    fingerprintKey ?? detail.replace(/\b\d+\b/gu, "#"),
+    ...evidenceIdentity,
+  );
   return {
     id: stableId("finding", kind, title, ...evidence.map((item) => item.path + ":" + (item.symbol ?? ""))),
+    fingerprint,
     kind,
     severity,
     title,
@@ -242,6 +265,7 @@ function verdictFor(
   if (findings.some((item) => item.severity === "blocking")) return "block";
   if (
     findings.some((item) => item.kind === "missing-objective") ||
+    findings.some((item) => item.kind === "contract-drift") ||
     claims.some((item) => item.outcome === "inconclusive")
   ) {
     return "inconclusive";
@@ -252,6 +276,14 @@ function verdictFor(
 
 export interface SuperValidatorOptions {
   readonly impactDepth?: number;
+}
+
+export interface ValidationRunContext {
+  readonly previousReport?: ValidationReport;
+  readonly receipts?: readonly EvidenceReceiptInput[];
+  readonly seriesId?: string;
+  readonly newSeries?: boolean;
+  readonly stagnationThreshold?: number;
 }
 
 export class SuperValidator {
@@ -265,6 +297,7 @@ export class SuperValidator {
     index: RepositoryCodeIndex,
     changeSet: ChangeSet,
     contract: ValidationContract,
+    context: ValidationRunContext = {},
   ): ValidationReport {
     if (index.embedding.kind !== "deterministic-feature-hash") {
       throw new Error("SuperValidator requires deterministic local embeddings for evidence-backed review");
@@ -431,6 +464,7 @@ export class SuperValidator {
           result.claim.statement + " — " + result.explanation,
           "Correct the implementation or remove the false completion claim.",
           result.evidence,
+          "claim:" + result.claim.id,
         ));
       } else if (result.outcome === "inconclusive") {
         findings.push(finding(
@@ -440,8 +474,67 @@ export class SuperValidator {
           result.claim.statement + " — " + result.explanation,
           "Add a deterministic check or more precise evidence for this claim.",
           result.evidence,
+          "claim:" + result.claim.id,
         ));
       }
+    }
+
+    const effectivePrevious = context.newSeries === true ? undefined : context.previousReport;
+    const lineage = createValidationLineage({
+      changeSet,
+      contract,
+      ...(effectivePrevious === undefined ? {} : { previousReport: effectivePrevious }),
+      ...(context.seriesId === undefined ? {} : { requestedSeriesId: context.seriesId }),
+      ...(context.newSeries === undefined ? {} : { newSeries: context.newSeries }),
+    });
+    if (lineage.rebaselineRequired) {
+      const changes = [
+        ...(lineage.contractDelta.objectiveChanged ? ["objective changed"] : []),
+        ...(lineage.contractDelta.removedClaimIds.length > 0
+          ? ["removed claims: " + lineage.contractDelta.removedClaimIds.join(", ")]
+          : []),
+        ...(lineage.contractDelta.changedClaimIds.length > 0
+          ? ["changed claims: " + lineage.contractDelta.changedClaimIds.join(", ")]
+          : []),
+        ...(lineage.contractDelta.allowedPathPrefixesAdded.length > 0 || lineage.contractDelta.allowedPathPrefixesRemoved.length > 0
+          ? ["allowed path prefixes changed"]
+          : []),
+        ...(lineage.baselineTrust === "invalid" ? ["previous report digest is invalid"] : []),
+      ];
+      findings.push(finding(
+        "contract-drift",
+        "warning",
+        "The review contract requires a deliberate rebaseline",
+        changes.length === 0 ? "The previous review cannot be compared safely." : changes.join("; ") + ".",
+        "Confirm the changed objective or contract at a trusted boundary, then start a new review series explicitly.",
+      ));
+    }
+    const mutableSource = changeSet.source.kind === "working" ||
+      changeSet.source.kind === "workspace" ||
+      changeSet.source.kind === "staged";
+    const receipts = evaluateEvidenceReceipts(context.receipts ?? [], lineage, changeSet.headSha, mutableSource);
+    for (const receipt of receipts.items) {
+      if (receipt.status === "current") continue;
+      const receiptKind = receipt.status === "stale"
+        ? "receipt-stale" as const
+        : receipt.status === "failed"
+          ? "receipt-failed" as const
+          : "receipt-invalid" as const;
+      findings.push(finding(
+        receiptKind,
+        "warning",
+        receipt.status === "failed"
+          ? "An external check reports failure"
+          : receipt.status === "stale"
+            ? "External evidence is stale"
+            : "External evidence cannot support this review",
+        receipt.id + ": " + receipt.reasons.join("; "),
+        receipt.status === "failed"
+          ? "Correct the failing behavior and produce a new receipt bound to the reviewed artifact."
+          : "Produce a valid receipt whose artifact, diff, or HEAD binding matches this review.",
+        [],
+        "receipt:" + receipt.id,
+      ));
     }
 
     const verdict = verdictFor(findings, claims);
@@ -449,8 +542,21 @@ export class SuperValidator {
       blocking: findings.filter((item) => item.severity === "blocking").length,
       warning: findings.filter((item) => item.severity === "warning").length,
     };
-    return {
-      schemaVersion: 1,
+    const findingLifecycle = createFindingLifecycle(
+      findings,
+      lineage,
+      lineage.baselineTrust === "invalid" || lineage.rebaselineRequired ? undefined : effectivePrevious,
+      context.stagnationThreshold,
+    );
+    const challengePlan = createChallengePlan(
+      changeSet,
+      contract,
+      changedUnits,
+      impactedFiles,
+      findings,
+    );
+    const report: ValidationReport = {
+      schemaVersion: 2,
       verdict,
       summary:
         verdict.toUpperCase() + ": " + String(counts.blocking) + " blocking, " +
@@ -499,6 +605,11 @@ export class SuperValidator {
           },
         },
       },
+      lineage,
+      findingLifecycle,
+      receipts,
+      challengePlan,
     };
+    return finalizeReportDigest(report);
   }
 }

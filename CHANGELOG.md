@@ -4,12 +4,16 @@ All notable changes to Conclave are documented here. The project follows [Semant
 
 [English](CHANGELOG.md) · [Português (Brasil)](CHANGELOG.pt-BR.md)
 
-## [Unreleased] — planned for 0.6.0
+## [Unreleased] — planned for 0.7.0
 
 This is the next release currently present in the repository. The latest version published to npm is `0.2.8`.
 
 ### Added
 
+- Schema-v2 review lineage with objective, contract, diff, artifact, previous-report, and report digests.
+- Contract drift gates, explicit rebaseline series, stable finding fingerprints, and correction-loop progress/stagnation tracking.
+- External evidence receipts bound to the reviewed artifact plus deterministic risk-selected challenge plans.
+- `--previous-report`, repeatable `--receipt`, `--series`, and `--new-series` support in the CLI and portable validation skill.
 - `conclave check`, the recommended one-command PR pass. It detects the likely base and includes branch commits, staged, unstaged, and untracked files.
 - `conclave compare`, with an interactive local and remote branch selector that does not change the current checkout.
 - A complete `conclave help` catalog grouped by purpose, plus detailed guides such as `conclave help check` and `conclave help symbol`.
@@ -33,6 +37,8 @@ This is the next release currently present in the repository. The latest version
 
 ### Security
 
+- Receipt trust claims are conservatively treated as self-reported; Conclave never claims to have run an externally reported command.
+- Mutable-worktree receipts require an artifact or diff digest and cannot rely on `HEAD` alone.
 - User language preferences are stored outside the repository with owner-only file permissions.
 - A repository `.env` cannot redirect or silently replace global CLI preferences.
 - PR review remains local and deterministic: it does not use an API key, call a model, or run repository scripts.

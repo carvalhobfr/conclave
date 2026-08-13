@@ -11,15 +11,20 @@ const TIMEOUT_MS = 120_000;
 const VERDICT_EXIT = { pass: 0, warn: 0, block: 1, inconclusive: 2 };
 
 function parseArguments(argv) {
-  const parsed = { repository: ".", source: "workspace" };
+  const parsed = { repository: ".", source: "workspace", receipts: [], newSeries: false };
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
-    if (!["--repository", "--source", "--ref", "--head", "--objective", "--contract", "--output"].includes(name)) {
+    if (name === "--new-series") {
+      parsed.newSeries = true;
+      continue;
+    }
+    if (!["--repository", "--source", "--ref", "--head", "--objective", "--contract", "--previous-report", "--receipt", "--series", "--output"].includes(name)) {
       throw new Error(`Unknown option: ${name ?? ""}`);
     }
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) throw new Error(`${name} requires a value`);
-    parsed[name.slice(2)] = value;
+    if (name === "--receipt") parsed.receipts.push(value);
+    else parsed[name.slice(2)] = value;
     index += 1;
   }
   if (!["workspace", "working", "staged", "branch", "commit"].includes(parsed.source)) {
@@ -36,6 +41,7 @@ function parseArguments(argv) {
   }
   if (parsed.source !== "branch" && parsed.head !== undefined) throw new Error("--head is only valid for branch validation");
   if (parsed.head !== undefined && parsed.ref === undefined) throw new Error("--head requires --ref as the branch comparison base");
+  if (parsed.newSeries && parsed["previous-report"] !== undefined) throw new Error("--new-series cannot be combined with --previous-report");
   return parsed;
 }
 
@@ -67,15 +73,21 @@ async function resolveCommand(repository) {
   const localBinary = resolve(repository, "node_modules/.bin/conclave");
   if (await executable(localBinary)) return { command: localBinary, prefix: [] };
   if (process.env.CONCLAVE_BIN !== undefined) return { command: process.env.CONCLAVE_BIN, prefix: [] };
-  return { command: "npx", prefix: ["--yes", "--package=conclave-ai@0.6.0", "conclave"] };
+  return { command: "npx", prefix: ["--yes", "--package=conclave-ai@0.7.0", "conclave"] };
 }
 
 function commandArguments(parsed) {
+  const protocol = [];
+  if (parsed["previous-report"] !== undefined) protocol.push("--previous-report", resolve(parsed["previous-report"]));
+  for (const receipt of parsed.receipts) protocol.push("--receipt", resolve(receipt));
+  if (parsed.series !== undefined) protocol.push("--series", parsed.series);
+  if (parsed.newSeries) protocol.push("--new-series");
   if (parsed.source === "workspace") {
     const args = ["check", resolve(parsed.repository)];
     if (parsed.ref !== undefined) args.push("--base", parsed.ref);
     if (typeof parsed.objective === "string" && parsed.objective.trim() !== "") args.push("--objective", parsed.objective.trim());
     if (parsed.contract !== undefined) args.push("--contract", resolve(parsed.contract));
+    args.push(...protocol);
     args.push("--json");
     return args;
   }
@@ -85,6 +97,7 @@ function commandArguments(parsed) {
   args.push("--objective", parsed.objective.trim());
   if (parsed.head !== undefined) args.push("--head", parsed.head);
   if (parsed.contract !== undefined) args.push("--contract", resolve(parsed.contract));
+  args.push(...protocol);
   args.push("--json");
   return args;
 }
@@ -144,7 +157,7 @@ function execute(command, args, cwd) {
 
 function validateReport(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Conclave did not return a JSON object");
-  if (value.schemaVersion !== 1) throw new Error("Unsupported Conclave validation schema version");
+  if (value.schemaVersion !== 2) throw new Error("Unsupported Conclave validation schema version");
   if (!Object.hasOwn(VERDICT_EXIT, value.verdict)) throw new Error("Conclave returned an unknown verdict");
   for (const field of ["summary", "objective"]) {
     if (typeof value[field] !== "string") throw new Error(`Conclave report is missing ${field}`);
@@ -158,6 +171,12 @@ function validateReport(value) {
   if (typeof value.trustBoundary !== "object" || value.trustBoundary === null || Array.isArray(value.trustBoundary)) {
     throw new Error("Conclave report is missing trustBoundary");
   }
+  for (const field of ["lineage", "findingLifecycle", "receipts"]) {
+    if (typeof value[field] !== "object" || value[field] === null || Array.isArray(value[field])) {
+      throw new Error(`Conclave report is missing ${field}`);
+    }
+  }
+  if (!Array.isArray(value.challengePlan)) throw new Error("Conclave report is missing challengePlan");
   const trustBoundary = value.trustBoundary;
   if (
     trustBoundary.deterministic !== true ||

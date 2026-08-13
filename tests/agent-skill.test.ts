@@ -39,18 +39,24 @@ describe("portable Conclave agent skill", () => {
       await expect(readFile(resolve(".agents/skills/conclave-validate", file), "utf8")).resolves.toBe(canonical);
       await expect(readFile(resolve(".claude/skills/conclave-validate", file), "utf8")).resolves.toBe(canonical);
     }
-    const schema = JSON.parse(await readFile(resolve("schemas/validation-report.v1.schema.json"), "utf8")) as Record<string, unknown>;
-    expect(schema["$id"]).toBe("https://conclave.dev/schemas/validation-report.v1.schema.json");
+    const schema = JSON.parse(await readFile(resolve("schemas/validation-report.v2.schema.json"), "utf8")) as Record<string, unknown>;
+    expect(schema["$id"]).toBe("https://conclave.dev/schemas/validation-report.v2.schema.json");
   });
 
   it("ships a GitHub Actions template that compares the actual PR refs", async () => {
+    const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {
+      readonly version: string;
+      readonly files: readonly string[];
+    };
     const workflow = await readFile(resolve("examples/github-actions/conclave-review.yml"), "utf8");
+    expect(packageJson.version).toBe("0.7.0");
+    expect(packageJson.files).toContain("docs/review-lineage.md");
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("--base \"${BASE_REF}\"");
     expect(workflow).toContain("--head \"${HEAD_REF}\"");
     expect(workflow).toContain("GITHUB_STEP_SUMMARY");
     expect(workflow).toContain("actions/upload-artifact@v4");
-    expect(workflow).toContain("--package=conclave-ai@0.6.0");
+    expect(workflow).toContain("--package=conclave-ai@0.7.0");
     expect(workflow).not.toContain("npm ci");
     expect(workflow).toContain("actions/github-script@v7");
   });
@@ -62,6 +68,6 @@ describe("portable Conclave agent skill", () => {
   ] as const)("preserves the engine decision for %s", async (_label, verdict, exitCode) => {
     const result = await runRunner(_label);
     expect(result.code, result.stderr).toBe(exitCode);
-    expect(JSON.parse(result.stdout)).toEqual(expect.objectContaining({ schemaVersion: 1, verdict }));
+    expect(JSON.parse(result.stdout)).toEqual(expect.objectContaining({ schemaVersion: 2, verdict }));
   });
 });

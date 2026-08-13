@@ -14,11 +14,13 @@ A model statement is never completion evidence. A successful model call is never
 
 ## Inputs
 
-A validation run has three explicit inputs:
+A validation run has three required inputs and two optional protocol inputs:
 
 - a Git change source: working tree, staged index, an explicit base/head branch range, or a checked-out commit;
 - an objective describing the behavior the resolution is meant to deliver;
-- an optional validation contract containing scope and deterministic completion claims.
+- a validation contract containing scope and deterministic completion claims (an empty contract is valid);
+- an optional previous schema-v2 report for lineage and contract comparison; and
+- optional external evidence receipts bound to the reviewed artifact.
 
 The collected patch remains local in the deterministic gate. Reports expose patch byte size, changed files, hunks, and evidence, but not the complete patch. Snapshot alignment is mandatory: untracked files are never silently omitted from working/staged validation, staged validation rejects unstaged contamination, and an explicit branch base/head is materialized from Git so the current checkout and untracked files cannot contaminate the comparison.
 
@@ -57,11 +59,19 @@ Claims use typed checks instead of free-form model agreement. A contradicted cla
 4. Graph impact outside the diff.
 5. Public/exported behavior and test evidence.
 6. Deterministic completion claims.
-7. Bounded semantic challenge, once patch redaction and base/head evidence are available.
+7. Deterministically select the baseline plus at most three risk-specific challenge strategies.
 
 Deterministic findings must be preserved if a later semantic pass fails or times out.
 
-The schema-v1 `trustBoundary` records the work actually used to reach a validation verdict: the syntax-aware parser and graph, deterministic local feature-hash embeddings, zero reasoning-model calls, zero remote embedding calls, and no repository-script execution. Configured remote embeddings remain outside this validation gate.
+The schema-v2 `trustBoundary` records the work actually used to reach a validation verdict: the syntax-aware parser and graph, deterministic local feature-hash embeddings, zero reasoning-model calls, zero remote embedding calls, and no repository-script execution. Configured remote embeddings remain outside this validation gate. Receipt trust claims do not alter that boundary: externally reported checks are never described as executed by Conclave.
+
+## Review lineage
+
+Every report contains a digest-bound lineage envelope. Rechecks can supply the previous report so Conclave can verify its digest, preserve the review series, compare the objective and contract structurally, and classify recurring findings. A semantic objective change, removed or changed claim, changed allowed scope, or invalid previous digest produces `rebaseline-required` and an `INCONCLUSIVE` result. Added claims strengthen the existing contract.
+
+Finding fingerprints omit volatile line positions and numeric counters. The lifecycle distinguishes identical reruns, meaningful progress, persistent stagnation, and regressions. Duplicate diffs do not advance the stagnation counter.
+
+See [review-lineage.md](review-lineage.md) for the CLI protocol and receipt format.
 
 ## Verdict semantics
 
@@ -92,7 +102,7 @@ For code validation:
 
 1. Index both base and head so removed symbols and call paths are first-class evidence.
 2. Add type-checker and `tsconfig` resolution.
-3. Run safe, permissioned checks and bind their results to the report.
-4. Add redacted, bounded semantic challenges with fresh context.
-5. Fingerprint findings across reruns and preserve deterministic findings.
+3. Add permissioned, sandboxed local check execution and verifiable output capture.
+4. Verify CI attestations and signed reports at protected trust boundaries.
+5. Add redacted, bounded semantic challenges with fresh context.
 6. Measure finding precision, false positives, wall time, model usage, and termination reason on real PRs.
