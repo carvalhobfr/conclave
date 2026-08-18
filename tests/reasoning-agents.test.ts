@@ -5,8 +5,9 @@ import { loadRuntimeConfig } from "../src/config/runtime-config.js";
 import { DEFAULT_REASONING_LIMITS } from "../src/domain/reasoning.js";
 import { FakeProvider } from "../src/providers/fake-provider.js";
 import { StructuredAgentRuntime } from "../src/reasoning/agent-runtime.js";
-import { investigatorPrompt } from "../src/reasoning/role-prompts.js";
+import { investigatorPrompt, roleSystemPrompt } from "../src/reasoning/role-prompts.js";
 import {
+  parseArchitectOutput,
   parseInvestigatorOutput,
   StructuredOutputError,
 } from "../src/reasoning/structured-outputs.js";
@@ -31,6 +32,75 @@ describe("reasoning configuration", () => {
       expect.objectContaining({ providerId: "openrouter", modelId: "critical-model" }),
     );
   });
+
+  it("refuses a hosted role provider in Local Mode and names what to change", () => {
+    const environment = {
+      CONCLAVE_MODE: "local",
+      CONCLAVE_PROVIDER: "ollama",
+      CONCLAVE_MODEL: "qwen2.5-coder:3b",
+      CONCLAVE_BASE_URL: "http://127.0.0.1:11434/v1",
+      CONCLAVE_REASONING_PRESET: "local",
+      // A leftover hosted assignment, which is what a project .env usually still carries.
+      CONCLAVE_INVESTIGATOR_PROVIDER: "opencode-go",
+      CONCLAVE_INVESTIGATOR_MODEL: "deepseek-v4-flash",
+    };
+
+    expect(() => loadReasoningConfiguration(loadRuntimeConfig(environment), environment))
+      .toThrow(/CONCLAVE_INVESTIGATOR_PROVIDER=opencode-go/u);
+    // The message has to name the model variable too: fixing only the provider leaves the role
+    // asking a local server for a model it does not serve.
+    expect(() => loadReasoningConfiguration(loadRuntimeConfig(environment), environment))
+      .toThrow(/CONCLAVE_INVESTIGATOR_MODEL/u);
+  });
+
+  it("accepts Local Mode when every role names the local provider", () => {
+    const environment = {
+      CONCLAVE_MODE: "local",
+      CONCLAVE_PROVIDER: "ollama",
+      CONCLAVE_MODEL: "qwen2.5-coder:3b",
+      CONCLAVE_BASE_URL: "http://127.0.0.1:11434/v1",
+      CONCLAVE_REASONING_PRESET: "local",
+      CONCLAVE_JUDGE_PROVIDER: "ollama",
+      CONCLAVE_JUDGE_MODEL: "qwen2.5-coder:7b",
+    };
+    const config = loadReasoningConfiguration(loadRuntimeConfig(environment), environment);
+
+    expect(config.preset).toBe("local");
+    expect(config.assignments.every((assignment) => assignment.providerId === "ollama")).toBe(true);
+    expect(config.assignments.find((assignment) => assignment.role === "judge")?.modelId)
+      .toBe("qwen2.5-coder:7b");
+  });
+
+  it("leaves hosted modes free to mix providers across roles", () => {
+    const environment = {
+      CONCLAVE_MODE: "api",
+      CONCLAVE_PROVIDER: "opencode-go",
+      CONCLAVE_MODEL: "deepseek-v4-flash",
+      CONCLAVE_BASE_URL: "https://opencode.ai/zen/go/v1",
+      CONCLAVE_JUDGE_PROVIDER: "openai",
+      CONCLAVE_JUDGE_MODEL: "gpt-5.6-luna",
+    };
+    const config = loadReasoningConfiguration(loadRuntimeConfig(environment), environment);
+
+    expect(config.assignments.find((assignment) => assignment.role === "judge")?.providerId)
+      .toBe("openai");
+  });
+
+  it("loads a secondary model without replacing the cheap primary model", () => {
+    const environment = {
+      CONCLAVE_MODE: "api",
+      CONCLAVE_PROVIDER: "opencode-go",
+      CONCLAVE_MODEL: "deepseek-v4-flash",
+      CONCLAVE_BASE_URL: "https://opencode.ai/zen/go/v1",
+      CONCLAVE_FALLBACK_MODEL: "gpt-5.6-luna",
+    };
+    const config = loadReasoningConfiguration(loadRuntimeConfig(environment), environment);
+
+    expect(config.assignments[0]).toMatchObject({
+      modelId: "deepseek-v4-flash",
+      fallbackModelId: "gpt-5.6-luna",
+    });
+  });
 });
 
 describe("structured reasoning agents", () => {
@@ -44,6 +114,14 @@ describe("structured reasoning agents", () => {
       },
     ],
     retrievalRequests: [],
+  });
+
+  it("spells out provider-agnostic structured retrieval fields", () => {
+    const prompt = roleSystemPrompt("investigator");
+    expect(prompt).toContain('kind "text" uses a "text" field');
+    expect(prompt).toContain('kind "search" uses a "query" field');
+    expect(prompt).toContain('kind "symbol-exists" uses a "symbol" field (never "name")');
+    expect(prompt).toContain('Never substitute "query" for the "text" field.');
   });
 
   it("rejects fabricated evidence and unrestricted reasoning fields", () => {
@@ -93,6 +171,53 @@ describe("structured reasoning agents", () => {
     expect(execution.calls).toHaveLength(2);
     expect(execution.calls[1]?.repaired).toBe(true);
     expect(provider.requests.every((request) => request.responseFormat === "json")).toBe(true);
+  });
+
+  it("falls back after a provider failure without failing the agent role", async () => {
+    const provider = new FakeProvider((request) => {
+      if (request.model === "cheap-model") throw new Error("gateway closed");
+      return { provider: "fake", model: request.model, text: validInvestigator };
+    });
+    const runtime = new StructuredAgentRuntime(
+      new Map([["fake", provider]]),
+      [{
+        role: "investigator",
+        providerId: "fake",
+        modelId: "cheap-model",
+        fallbackModelId: "reliable-model",
+      }],
+      DEFAULT_REASONING_LIMITS,
+    );
+
+    const execution = await runtime.execute("investigator", "task", (raw) =>
+      parseInvestigatorOutput(raw, new Set(["evidence_1"])),
+    );
+
+    expect(execution.output.claims).toHaveLength(1);
+    expect(execution.calls).toEqual([
+      expect.objectContaining({ modelId: "cheap-model", failed: true }),
+      expect.objectContaining({ modelId: "reliable-model", failed: false }),
+    ]);
+  });
+
+  it("keeps valid architect advice while counting malformed optional items", () => {
+    const output = parseArchitectOutput(JSON.stringify({
+      summary: "One valid challenge and one malformed suggestion.",
+      challenges: [
+        {
+          claimId: "claim_1",
+          type: "alternative-explanation",
+          explanation: "Check a second explanation.",
+          retrievalRequests: [],
+          assessment: "unsupported extra field",
+        },
+        "free-form challenge",
+      ],
+      retrievalRequests: [],
+    }), new Set(["claim_1"]));
+
+    expect(output.challenges).toHaveLength(1);
+    expect(output.discardedItems).toBe(1);
   });
 
   it("fails cleanly when the provider fails or times out", async () => {

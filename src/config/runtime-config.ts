@@ -13,6 +13,7 @@ const PROVIDER_IDS = new Set<ProviderId>([
   "openrouter",
   "anthropic",
   "gemini",
+  "opencode-go",
   "opencode-zen",
   "ollama",
   "lm-studio",
@@ -81,9 +82,12 @@ function defaultBaseUrl(provider: Exclude<ProviderId, "fake">): string | undefin
     case "anthropic":
       return "https://api.anthropic.com";
     case "gemini":
-    case "opencode-zen":
     case "openai-compatible":
       return undefined;
+    case "opencode-go":
+      return "https://opencode.ai/zen/go/v1";
+    case "opencode-zen":
+      return "https://opencode.ai/zen/v1";
   }
 }
 

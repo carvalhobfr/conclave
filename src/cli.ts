@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
+import { parseArguments, type ParsedArguments } from "./cli-arguments.js";
 import { MultiLanguageCodeParser } from "./code-intelligence/multi-language-parser.js";
 import { describeRuntimeConfig, loadRuntimeConfig } from "./config/runtime-config.js";
 import { loadReasoningConfiguration } from "./config/reasoning-config.js";
@@ -57,8 +58,8 @@ import { ConclaveProductService } from "./web/product-service.js";
 import { createConclaveWebServer } from "./web/server.js";
 import { LocalFolderRepository } from "./repositories/local-folder-repository.js";
 import { CodeRetrievalService } from "./retrieval/code-retrieval-service.js";
-import type { RetrievalStrategy } from "./retrieval/hybrid-retriever.js";
 import { StructuredAgentRuntime } from "./reasoning/agent-runtime.js";
+import { inferReasoningChangeContext } from "./reasoning/change-context.js";
 import { ReasoningEngine } from "./reasoning/reasoning-engine.js";
 import { DEFAULT_REASONING_LIMITS } from "./domain/reasoning.js";
 import { EnvironmentCredentialSource } from "./storage/environment-credential-source.js";
@@ -82,7 +83,7 @@ import {
 // User preferences are resolved before the repository .env is loaded so a project cannot
 // redirect or silently override global CLI settings.
 const userPreferenceEnvironment: NodeJS.ProcessEnv = { ...process.env };
-loadConclaveEnvironment();
+const conclaveEnvironmentFile = loadConclaveEnvironment();
 
 let cliLanguage: InterfaceLanguage = "en";
 let loadedUserPreferences: LoadedUserPreferences | undefined;
@@ -94,187 +95,6 @@ async function loadCliLanguage(): Promise<void> {
     userPreferenceEnvironment,
     loadedUserPreferences.exists,
   ).language;
-}
-
-type GraphOperation =
-  | "neighbors"
-  | "callers"
-  | "callees"
-  | "imports"
-  | "exports"
-  | "references"
-  | "containing"
-  | "contained"
-  | "related";
-
-interface ParsedArguments {
-  readonly positionals: readonly string[];
-  readonly json: boolean;
-  readonly strategy: RetrievalStrategy;
-  readonly limit: number;
-  readonly depth: number;
-  readonly sourceBytes: number;
-  readonly tokens: number;
-  readonly graphOperation: GraphOperation;
-  readonly debug: boolean;
-  readonly working: boolean;
-  readonly staged: boolean;
-  readonly branch: string | undefined;
-  readonly head: string | undefined;
-  readonly commit: string | undefined;
-  readonly objective: string | undefined;
-  readonly contractPath: string | undefined;
-  readonly previousReportPath: string | undefined;
-  readonly receiptPaths: readonly string[];
-  readonly seriesId: string | undefined;
-  readonly newSeries: boolean;
-}
-
-function parseArguments(args: readonly string[]): ParsedArguments {
-  const positionals: string[] = [];
-  let json = false;
-  let strategy: RetrievalStrategy = "hybrid";
-  let limit = 10;
-  let depth = 2;
-  let sourceBytes = 24_000;
-  let tokens = 6_000;
-  let graphOperation: GraphOperation = "neighbors";
-  let debug = false;
-  let working = false;
-  let staged = false;
-  let branch: string | undefined;
-  let head: string | undefined;
-  let commit: string | undefined;
-  let objective: string | undefined;
-  let contractPath: string | undefined;
-  let previousReportPath: string | undefined;
-  const receiptPaths: string[] = [];
-  let seriesId: string | undefined;
-  let newSeries = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-    if (argument === "--json") {
-      json = true;
-      continue;
-    }
-    if (argument === "--debug") {
-      debug = true;
-      continue;
-    }
-    if (argument === "--working") {
-      working = true;
-      continue;
-    }
-    if (argument === "--staged") {
-      staged = true;
-      continue;
-    }
-    if (argument === "--new-series") {
-      newSeries = true;
-      continue;
-    }
-    if (argument === "--base" || argument === "--branch" || argument === "--head" || argument === "--commit" || argument === "--objective" || argument === "--contract" || argument === "--previous-report" || argument === "--receipt" || argument === "--series") {
-      const value = args[index + 1];
-      if (value === undefined || value.startsWith("--")) {
-        throw new Error(argument + " requires a value");
-      }
-      if (argument === "--base" || argument === "--branch") branch = value;
-      else if (argument === "--head") head = value;
-      else if (argument === "--commit") commit = value;
-      else if (argument === "--objective") objective = value;
-      else if (argument === "--contract") contractPath = value;
-      else if (argument === "--previous-report") previousReportPath = value;
-      else if (argument === "--receipt") receiptPaths.push(value);
-      else seriesId = value;
-      index += 1;
-      continue;
-    }
-    if (argument === "--strategy") {
-      const value = args[index + 1];
-      if (value !== "hybrid" && value !== "lexical" && value !== "semantic") {
-        throw new Error("--strategy must be hybrid, lexical, or semantic");
-      }
-      strategy = value;
-      index += 1;
-      continue;
-    }
-    if (argument === "--limit") {
-      const value = Number(args[index + 1]);
-      if (!Number.isInteger(value) || value <= 0 || value > 100) {
-        throw new Error("--limit must be an integer between 1 and 100");
-      }
-      limit = value;
-      index += 1;
-      continue;
-    }
-    if (argument === "--depth") {
-      const value = Number(args[index + 1]);
-      if (!Number.isInteger(value) || value <= 0 || value > 10) {
-        throw new Error("--depth must be an integer between 1 and 10");
-      }
-      depth = value;
-      index += 1;
-      continue;
-    }
-    if (argument === "--source-bytes" || argument === "--tokens") {
-      const value = Number(args[index + 1]);
-      if (!Number.isInteger(value) || value <= 0) {
-        throw new Error(`${argument} must be a positive integer`);
-      }
-      if (argument === "--source-bytes") sourceBytes = value;
-      else tokens = value;
-      index += 1;
-      continue;
-    }
-    if (argument === "--operation") {
-      const value = args[index + 1];
-      const operations: readonly GraphOperation[] = [
-        "neighbors",
-        "callers",
-        "callees",
-        "imports",
-        "exports",
-        "references",
-        "containing",
-        "contained",
-        "related",
-      ];
-      if (value === undefined || !operations.includes(value as GraphOperation)) {
-        throw new Error(`--operation must be one of: ${operations.join(", ")}`);
-      }
-      graphOperation = value as GraphOperation;
-      index += 1;
-      continue;
-    }
-    if (argument?.startsWith("--") === true) {
-      throw new Error(`Unknown option: ${argument}`);
-    }
-    if (argument !== undefined) {
-      positionals.push(argument);
-    }
-  }
-  return {
-    positionals,
-    json,
-    strategy,
-    limit,
-    depth,
-    sourceBytes,
-    tokens,
-    graphOperation,
-    debug,
-    working,
-    staged,
-    branch,
-    head,
-    commit,
-    objective,
-    contractPath,
-    previousReportPath,
-    receiptPaths,
-    seriesId,
-    newSeries,
-  };
 }
 
 function print(value: unknown, json: boolean): void {
@@ -624,15 +444,18 @@ async function reasonAboutRepository(args: readonly string[], intent: "ask" | "i
   const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
   const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
   const indexed = await updateIndex(requestedPath);
+  const retrieval = new CodeRetrievalService(indexed.index, indexed.embeddingProvider);
   const runtime = new StructuredAgentRuntime(
     new Map([[provider.id, provider]]),
     reasoningConfig.assignments,
     DEFAULT_REASONING_LIMITS,
   );
   const result = await new ReasoningEngine({
-    retrieval: new CodeRetrievalService(indexed.index, indexed.embeddingProvider),
+    retrieval,
     runtime,
     preset: reasoningConfig.preset,
+    ...await inferReasoningChangeContext(indexed.index.repository.rootPath, retrieval).then((changeContext) =>
+      changeContext === undefined ? {} : { changeContext }),
   }).ask(question, intent === "ask" ? "investigator-judge" : "conclave");
   if (parsed.json) {
     print(parsed.debug ? result : { verdict: result.verdict, metrics: result.metrics, terminationReason: result.terminationReason }, true);
@@ -1380,6 +1203,10 @@ async function showConfig(args: readonly string[]): Promise<void> {
       jsonFieldsLanguage: "en",
     },
     provider,
+    environmentFile: {
+      path: conclaveEnvironmentFile.path,
+      duplicateKeys: conclaveEnvironmentFile.duplicateKeys,
+    },
   };
   if (json) {
     print(report, true);
@@ -1390,6 +1217,14 @@ async function showConfig(args: readonly string[]): Promise<void> {
   console.log(`${copy.interfaceLanguage}: ${report.interface.languageName} (${report.interface.language})`);
   console.log(`${copy.preferencesFile}: ${report.interface.preferencesFile}`);
   console.log(`${copy.providerConfig}: ${provider.mode} · ${provider.provider}`);
+  if (conclaveEnvironmentFile.duplicateKeys.length > 0) {
+    // The last definition wins silently, so an earlier block that still reads as active is
+    // the usual reason a provider or model refuses to change.
+    console.log(
+      `\nWarning: ${conclaveEnvironmentFile.path} defines ${String(conclaveEnvironmentFile.duplicateKeys.length)} key(s) more than once; the last definition wins: ` +
+      conclaveEnvironmentFile.duplicateKeys.join(", "),
+    );
+  }
   console.log(copy.jsonStable);
 }
 
@@ -1433,7 +1268,7 @@ function parseInitArguments(args: readonly string[]): InitArguments {
     const value = args[index + 1];
     if (value === undefined || value.startsWith("--")) throw new Error(`${argument} requires a value`);
     if (argument === "--provider") {
-      if (!isGuidedProviderId(value)) throw new Error("--provider must be openai, openrouter, or anthropic");
+      if (!isGuidedProviderId(value)) throw new Error("--provider must be openai, openrouter, anthropic, or opencode-go");
       provider = value;
     } else if (argument === "--profile") {
       profile = value;
@@ -1609,7 +1444,7 @@ function showModels(args: readonly string[]): void {
   const providerFlagIndex = args.indexOf("--provider");
   const requested = providerFlagIndex === -1 ? undefined : args[providerFlagIndex + 1];
   if (providerFlagIndex !== -1 && (requested === undefined || !isGuidedProviderId(requested))) {
-    throw new Error("models --provider must be openai, openrouter, or anthropic");
+    throw new Error("models --provider must be openai, openrouter, anthropic, or opencode-go");
   }
   if (args.some((argument, index) => argument.startsWith("--") && argument !== "--json" && !(argument === "--provider" && index === providerFlagIndex))) {
     throw new Error("models accepts only --provider and --json");
@@ -1779,11 +1614,15 @@ async function startMcp(args: readonly string[]): Promise<void> {
       const runtimeConfig = loadRuntimeConfig();
       const reasoningConfig = loadReasoningConfiguration(runtimeConfig);
       const provider = createProvider(runtimeConfig, new EnvironmentCredentialSource());
-      return (retrieval: CodeRetrievalService) => new ReasoningEngine({
-        retrieval,
-        runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoningConfig.assignments, DEFAULT_REASONING_LIMITS),
-        preset: reasoningConfig.preset,
-      });
+      return async (retrieval: CodeRetrievalService, repositoryRoot: string) => {
+        const changeContext = await inferReasoningChangeContext(repositoryRoot, retrieval);
+        return new ReasoningEngine({
+          retrieval,
+          runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoningConfig.assignments, DEFAULT_REASONING_LIMITS),
+          preset: reasoningConfig.preset,
+          ...(changeContext === undefined ? {} : { changeContext }),
+        });
+      };
     } catch {
       return undefined;
     }

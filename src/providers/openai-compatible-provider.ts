@@ -6,6 +6,12 @@ import type {
   TokenUsage,
 } from "../domain/provider.js";
 import { ProviderError } from "../domain/provider.js";
+import {
+  isRetriableNetworkError,
+  prefersJsonObject,
+  providerCapabilities,
+  type ProviderCapabilities,
+} from "./provider-capabilities.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -111,6 +117,21 @@ function redactSecret(message: string, secret: string | undefined): string {
   return secret === undefined || secret === "" ? message : message.replaceAll(secret, "[REDACTED]");
 }
 
+function structuredOutputUnsupported(payload: unknown): boolean {
+  const message = errorMessage(payload)?.toLowerCase();
+  return message !== undefined
+    && message.includes("response_format")
+    && (
+      message.includes("unavailable")
+      || message.includes("unsupported")
+      || message.includes("not supported")
+      || (
+        message.includes("json_schema")
+        && (message.includes("invalid") || message.includes("format error"))
+      )
+    );
+}
+
 export class OpenAiCompatibleProvider implements LlmProvider {
   public readonly id: OpenAiCompatibleProviderOptions["id"];
   readonly #endpoint: URL;
@@ -118,6 +139,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   readonly #fetch: FetchLike;
   readonly #timeoutMs: number;
   readonly #maxTokensField: "max_tokens" | "max_completion_tokens";
+  readonly #capabilities: ProviderCapabilities;
+  #jsonSchemaUnavailable = false;
 
   public constructor(options: OpenAiCompatibleProviderOptions) {
     const baseUrl = new URL(options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`);
@@ -143,6 +166,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     this.#fetch = options.fetchImplementation ?? fetch;
     this.#timeoutMs = options.timeoutMs ?? 60_000;
     this.#maxTokensField = options.maxTokensField ?? "max_completion_tokens";
+    this.#capabilities = providerCapabilities(options.id);
   }
 
   public async generate(request: GenerateRequest): Promise<GenerateResponse> {
@@ -156,16 +180,32 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     if (request.maxOutputTokens !== undefined) {
       body[this.#maxTokensField] = request.maxOutputTokens;
     }
-    if (request.temperature !== undefined) {
+    if (request.temperature !== undefined && this.#capabilities.acceptsTemperature) {
       body["temperature"] = request.temperature;
     }
     if (request.responseFormat === "json") {
-      body["response_format"] = { type: "json_object" };
+      body["response_format"] =
+        this.#capabilities.acceptsJsonSchema
+          && request.responseSchema !== undefined
+          && !this.#jsonSchemaUnavailable
+          && !prefersJsonObject(this.#capabilities, request.model)
+          ? {
+              type: "json_schema",
+              json_schema: {
+                name: "conclave_agent_output",
+                strict: true,
+                schema: request.responseSchema,
+              },
+            }
+          : { type: "json_object" };
+    }
+    if (this.#capabilities.disablesReasoningEffort) {
+      body["reasoning_effort"] = "none";
     }
 
-    let response: Response;
-    try {
-      response = await this.#fetch(this.#endpoint, {
+    const send = async (): Promise<{ readonly response: Response; readonly payload: unknown }> => {
+      let response: Response;
+      const fetchOnce = (): Promise<Response> => this.#fetch(this.#endpoint, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -174,17 +214,42 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
-    } catch (error) {
-      const rawReason = error instanceof Error ? error.message : "unknown network error";
-      const reason = redactSecret(rawReason, this.#apiKey);
-      throw new ProviderError(`Provider request failed: ${reason}`, this.id);
-    }
+      try {
+        response = await fetchOnce();
+      } catch (error) {
+        const rawReason = error instanceof Error ? error.message : "unknown network error";
+        if (this.#capabilities.retriesNetworkFailure && isRetriableNetworkError(error)) {
+          try {
+            response = await fetchOnce();
+          } catch (retryError) {
+            const retryReason = retryError instanceof Error ? retryError.message : "unknown network error";
+            throw new ProviderError(`Provider request failed after one retry: ${redactSecret(retryReason, this.#apiKey)}`, this.id);
+          }
+        } else {
+          const reason = redactSecret(rawReason, this.#apiKey);
+          throw new ProviderError(`Provider request failed: ${reason}`, this.id);
+        }
+      }
 
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new ProviderError("Provider returned a non-JSON response", this.id, response.status);
+      try {
+        return { response, payload: await response.json() };
+      } catch {
+        throw new ProviderError("Provider returned a non-JSON response", this.id, response.status);
+      }
+    };
+
+    let { response, payload } = await send();
+    const responseFormat = body["response_format"];
+    if (
+      !response.ok
+      && response.status === 400
+      && isRecord(responseFormat)
+      && responseFormat["type"] === "json_schema"
+      && structuredOutputUnsupported(payload)
+    ) {
+      this.#jsonSchemaUnavailable = true;
+      body["response_format"] = { type: "json_object" };
+      ({ response, payload } = await send());
     }
 
     if (!response.ok) {

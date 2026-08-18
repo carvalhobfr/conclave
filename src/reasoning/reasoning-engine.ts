@@ -7,6 +7,7 @@ import type {
   Claim,
   FollowUpRetrievalResult,
   ReasoningCaseState,
+  ReasoningChangeContext,
   ReasoningLimits,
   ReasoningMetrics,
   ReasoningPreset,
@@ -50,7 +51,15 @@ export interface ReasoningEngineOptions {
   readonly retrieval: CodeRetrievalService;
   readonly runtime: StructuredAgentRuntime;
   readonly preset: ReasoningPreset;
+  readonly changeContext?: ReasoningChangeContext;
   readonly limits?: ReasoningLimits;
+}
+
+function retrievalQuery(question: string, context: ReasoningChangeContext | undefined): string {
+  if (context === undefined) return question;
+  const symbols = context.symbols.length === 0 ? "" : `\nChanged symbols: ${context.symbols.join(", ")}`;
+  const related = context.relatedSymbols.length === 0 ? "" : `\nDirectly related symbols: ${context.relatedSymbols.join(", ")}`;
+  return `${question}\nCurrent Git change paths: ${context.paths.join(", ")}${symbols}${related}`;
 }
 
 function stableId(prefix: string, ...parts: readonly (string | number)[]): string {
@@ -132,12 +141,14 @@ export class ReasoningEngine {
   readonly #retrieval: CodeRetrievalService;
   readonly #runtime: StructuredAgentRuntime;
   readonly #preset: ReasoningPreset;
+  readonly #changeContext: ReasoningChangeContext | undefined;
   readonly #limits: ReasoningLimits;
 
   public constructor(options: ReasoningEngineOptions) {
     this.#retrieval = options.retrieval;
     this.#runtime = options.runtime;
     this.#preset = options.preset;
+    this.#changeContext = options.changeContext;
     this.#limits = options.limits ?? DEFAULT_REASONING_LIMITS;
   }
 
@@ -163,9 +174,17 @@ export class ReasoningEngine {
         ...fields,
       });
     };
-    emit("reasoning_started", `Started ${mode} reasoning`);
+    emit(
+      "reasoning_started",
+      this.#changeContext === undefined
+        ? `Started ${mode} reasoning`
+        : `Started ${mode} reasoning with ${this.#changeContext.source} Git context`,
+      this.#changeContext === undefined
+        ? {}
+        : { data: { changeContext: this.#changeContext.source, changedPaths: this.#changeContext.paths.length } },
+    );
 
-    const initialRetrieval = await this.#retrieval.retrieve(question, {
+    const initialRetrieval = await this.#retrieval.retrieve(retrievalQuery(question, this.#changeContext), {
       budget: {
         graphDepth: 2,
         graphNodes: Math.min(30, this.#limits.maxEvidenceUnits * 2),
@@ -229,7 +248,7 @@ export class ReasoningEngine {
     );
     const investigator = await executeAgent(
       "investigator",
-      investigatorPrompt(question, initialContext),
+      investigatorPrompt(question, initialContext, this.#changeContext),
       (raw) => parseInvestigatorOutput(raw, initialEvidenceIds),
     );
     if (investigator !== undefined) {
@@ -361,6 +380,12 @@ export class ReasoningEngine {
         parseArchitectOutput(raw, claimIds),
       );
       if (output !== undefined) {
+        if (output.discardedItems > 0) {
+          emit("agent_output_sanitized", `Discarded ${String(output.discardedItems)} invalid optional architect items`, {
+            role: "architect",
+            data: { discardedItems: output.discardedItems },
+          });
+        }
         addChallenges(output.challenges, "architect");
         for (const requested of output.retrievalRequests) {
           enqueue(requested.request, "architect", requested.claimId);
@@ -549,6 +574,7 @@ export class ReasoningEngine {
     };
     const state: ReasoningCaseState = {
       question,
+      ...(this.#changeContext === undefined ? {} : { changeContext: this.#changeContext }),
       iteration,
       initialRetrieval,
       initialContext,

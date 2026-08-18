@@ -5,7 +5,10 @@ import { basename, resolve } from "node:path";
 import { MultiLanguageCodeParser } from "../code-intelligence/multi-language-parser.js";
 import type { RepositoryCodeIndex } from "../domain/code-index.js";
 import { loadReasoningConfiguration } from "../config/reasoning-config.js";
-import { loadRuntimeConfig } from "../config/runtime-config.js";
+import { writeConclaveEnvironment } from "../config/environment-file.js";
+import { describeRuntimeConfig, loadRuntimeConfig } from "../config/runtime-config.js";
+import type { RuntimeConfig } from "../domain/execution-mode.js";
+import type { CredentialSource } from "../domain/storage.js";
 import type { Evidence } from "../domain/evidence.js";
 import { DEFAULT_REASONING_LIMITS, type ReasoningResult } from "../domain/reasoning.js";
 import type { ChangeSet, ChangeSource, ValidationReport } from "../domain/validation.js";
@@ -13,8 +16,11 @@ import { LocalHashEmbeddingProvider } from "../embeddings/local-hash-embedding.j
 import { InMemoryCodeIndexStore } from "../indexing/in-memory-index-store.js";
 import { RepositoryIndexer } from "../indexing/repository-indexer.js";
 import { createProvider } from "../providers/provider-factory.js";
+import type { FetchLike } from "../providers/openai-compatible-provider.js";
+import { diagnoseProvider, type ProviderDiagnostics } from "../providers/provider-diagnostics.js";
 import { LocalFolderRepository } from "../repositories/local-folder-repository.js";
 import { StructuredAgentRuntime } from "../reasoning/agent-runtime.js";
+import { inferReasoningChangeContext } from "../reasoning/change-context.js";
 import { ReasoningEngine, type ReasoningMode } from "../reasoning/reasoning-engine.js";
 import { CodeRetrievalService } from "../retrieval/code-retrieval-service.js";
 import { isPathInside, resolveRepositoryRoot } from "../security/path-policy.js";
@@ -36,6 +42,10 @@ import type {
   ProductRunView,
   ProjectView,
   RuntimeModeView,
+  RuntimeConfigurationRequest,
+  RuntimeConfigurationResult,
+  RuntimeModelDiscoveryRequest,
+  RuntimeModelsView,
   TraceView,
   ValidationRunView,
   ReviewHistoryView,
@@ -60,6 +70,13 @@ export class ProductServiceError extends Error {
     super(message);
     this.name = "ProductServiceError";
   }
+}
+
+function maskCredential(value: string | undefined): string | undefined {
+  const credential = value?.trim();
+  if (credential === undefined || credential === "") return undefined;
+  if (credential.length < 12) return "••••••";
+  return `${credential.slice(0, 2)}••••••${credential.slice(-4)}`;
 }
 
 function viewEvidence(item: Evidence): EvidenceView {
@@ -144,7 +161,12 @@ function reasoningView(intent: "ask" | "investigate", result: ReasoningResult, r
     evidence: result.verdict.evidence.map(viewEvidence),
     trace: trace(result),
     retrieval: {
-      operations: result.state.initialRetrieval.plan.operations.map((operation) => ({ label: operation.kind, status: operation.status === "executed" ? "executed" : "skipped" })),
+      operations: [
+        ...(result.state.changeContext === undefined
+          ? []
+          : [{ label: `change-context:${result.state.changeContext.source}`, status: "executed" as const }]),
+        ...result.state.initialRetrieval.plan.operations.map((operation) => ({ label: operation.kind, status: operation.status === "executed" ? "executed" as const : "skipped" as const })),
+      ],
       evidenceCount: result.metrics.evidenceCount,
       sourceBytes,
       approximateTokens: result.state.initialContext.stats.approximateTokens,
@@ -244,10 +266,25 @@ export class ConclaveProductService {
   readonly #sessions = new Map<string, ProjectSession>();
   readonly #demoRoot: string;
   readonly #allowedRoot: string;
+  readonly #environment: NodeJS.ProcessEnv;
+  readonly #environmentPath: string;
+  readonly #diagnose: (config: RuntimeConfig, credentials: CredentialSource) => Promise<ProviderDiagnostics>;
+  readonly #fetch: FetchLike;
 
-  public constructor(options: { readonly demoRoot?: string; readonly allowedRoot?: string } = {}) {
+  public constructor(options: {
+    readonly demoRoot?: string;
+    readonly allowedRoot?: string;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly environmentPath?: string;
+    readonly diagnose?: (config: RuntimeConfig, credentials: CredentialSource) => Promise<ProviderDiagnostics>;
+    readonly fetchImplementation?: FetchLike;
+  } = {}) {
     this.#demoRoot = resolve(options.demoRoot ?? "demo/auth-repository");
     this.#allowedRoot = resolve(options.allowedRoot ?? process.env["CONCLAVE_WEB_ALLOWED_ROOT"] ?? process.cwd());
+    this.#environment = options.environment ?? process.env;
+    this.#environmentPath = resolve(options.environmentPath ?? ".env");
+    this.#diagnose = options.diagnose ?? diagnoseProvider;
+    this.#fetch = options.fetchImplementation ?? fetch;
   }
 
   public async openDemo(): Promise<ProjectView> {
@@ -335,7 +372,7 @@ export class ConclaveProductService {
     if (question.trim() === "") throw new ProductServiceError("empty_query", "Enter a repository question before running Conclave.", "Write a specific code question.");
     const session = this.#session(id);
     try {
-      const engine = session.source === "demo" ? await createDemoReasoningEngine(session.root) : this.#liveReasoning(session.retrieval);
+      const engine = session.source === "demo" ? await createDemoReasoningEngine(session.root) : await this.#liveReasoning(session);
       const mode: ReasoningMode = intent === "ask" ? "investigator-judge" : "conclave";
       return reasoningView(intent, await engine.ask(question, mode), session.retrieval);
     } catch (error) {
@@ -349,19 +386,171 @@ export class ConclaveProductService {
 
   public runtime(): RuntimeModeView {
     try {
-      const config = loadRuntimeConfig();
-      const reasoning = loadReasoningConfiguration(config);
+      const config = loadRuntimeConfig(this.#environment);
+      const credentials = new EnvironmentCredentialSource(this.#environment);
+      const publicConfig = describeRuntimeConfig(config, credentials);
+      const reasoning = loadReasoningConfiguration(config, this.#environment);
+      const credential = config.mode === "local" ? undefined : credentials.get(config.credentialEnvironmentVariable);
+      const credentialHint = maskCredential(credential);
       return {
         active: config.mode,
         available: true,
         provider: config.providerSelection.provider,
         ...(config.providerSelection.model === undefined ? {} : { model: config.providerSelection.model }),
+        ...(config.providerSelection.baseUrl === undefined ? {} : { baseUrl: config.providerSelection.baseUrl }),
+        credentialConfigured: publicConfig.credentialConfigured,
+        ...(credentialHint === undefined ? {} : { credentialHint }),
+        reasoningPreset: reasoning.preset,
         message: config.mode === "local" ? "Configured loopback model endpoint; repository excerpts stay on this machine when every selected component is local." : "Provider configuration is held by the local server process.",
         roles: reasoning.assignments.map((assignment) => ({ role: assignment.role, provider: assignment.providerId, model: assignment.modelId })),
       };
     } catch (error) {
       return { active: "demo", available: false, message: error instanceof Error ? error.message : "Provider configuration is unavailable.", roles: [] };
     }
+  }
+
+  public async configureRuntime(input: RuntimeConfigurationRequest): Promise<RuntimeConfigurationResult> {
+    const model = input.model.trim();
+    const baseUrl = input.baseUrl.trim();
+    const apiKey = input.apiKey?.trim();
+    if (model === "") throw new ProductServiceError("invalid_runtime_configuration", "A model is required.", "Choose a model and try again.");
+    if (baseUrl === "") throw new ProductServiceError("invalid_runtime_configuration", "A provider endpoint is required.", "Choose a provider endpoint and try again.");
+    if (input.mode === "local" && input.reasoningPreset !== "local") {
+      throw new ProductServiceError("invalid_runtime_configuration", "Local Mode requires the local reasoning preset.", "Select Local Mode again.");
+    }
+    if (input.mode === "api" && input.reasoningPreset === "local") {
+      throw new ProductServiceError("invalid_runtime_configuration", "External providers cannot use the local reasoning preset.", "Select fast or full reasoning.");
+    }
+
+    const existingApiKey = this.#environment["CONCLAVE_API_KEY"]?.trim();
+    const effectiveApiKey = apiKey === undefined || apiKey === "" ? existingApiKey : apiKey;
+    if (input.mode === "api" && effectiveApiKey === undefined) {
+      throw new ProductServiceError("credential_required", "An API key is required for this provider.", "Paste the provider key; it will not be returned to the browser.");
+    }
+
+    const values: Record<string, string> = {
+      CONCLAVE_MODE: input.mode,
+      CONCLAVE_PROVIDER: input.provider,
+      CONCLAVE_MODEL: model,
+      CONCLAVE_BASE_URL: baseUrl,
+      CONCLAVE_REASONING_PRESET: input.reasoningPreset,
+    };
+    for (const role of ["INVESTIGATOR", "SKEPTIC", "ARCHITECT", "VERIFIER", "JUDGE"] as const) {
+      values[`CONCLAVE_${role}_PROVIDER`] = input.provider;
+      values[`CONCLAVE_${role}_MODEL`] = model;
+    }
+    if (input.mode === "api" && effectiveApiKey !== undefined) values["CONCLAVE_API_KEY"] = effectiveApiKey;
+
+    const candidate = { ...this.#environment, ...values };
+    let config: RuntimeConfig;
+    try {
+      config = loadRuntimeConfig(candidate);
+      loadReasoningConfiguration(config, candidate);
+      createProvider(config, new EnvironmentCredentialSource(candidate));
+    } catch (error) {
+      throw new ProductServiceError(
+        "invalid_runtime_configuration",
+        error instanceof Error ? error.message : "Provider configuration is invalid.",
+        "Check the provider, endpoint, model, and reasoning preset.",
+      );
+    }
+
+    await writeConclaveEnvironment(this.#environmentPath, values);
+    Object.assign(this.#environment, values);
+    const diagnostic = await this.#diagnose(config, new EnvironmentCredentialSource(this.#environment)).catch(() => ({
+      mode: config.mode,
+      provider: config.providerSelection.provider,
+      endpoint: config.providerSelection.baseUrl,
+      modelConfigured: config.providerSelection.model !== undefined,
+      endpointReachable: false,
+      inferenceAvailable: false,
+      retrievalLocal: true as const,
+      externalCallsDisabled: config.mode === "local",
+      message: "Conclave could not complete the bounded provider inference check. Check endpoint, model, and server-side credentials.",
+    }));
+    return {
+      saved: true,
+      credentialUpdated: apiKey !== undefined && apiKey !== "",
+      runtime: this.runtime(),
+      diagnostic,
+    };
+  }
+
+  public async discoverModels(input: RuntimeModelDiscoveryRequest): Promise<RuntimeModelsView> {
+    const baseUrl = input.baseUrl.trim();
+    if (baseUrl === "") throw new ProductServiceError("invalid_runtime_configuration", "A provider endpoint is required.", "Choose a provider endpoint and try again.");
+    const apiKey = input.apiKey?.trim();
+    const effectiveApiKey = apiKey === undefined || apiKey === "" ? this.#environment["CONCLAVE_API_KEY"]?.trim() : apiKey;
+    if (input.mode === "api" && effectiveApiKey === undefined) {
+      throw new ProductServiceError("credential_required", "An API key is required to list models for this provider.", "Paste the provider key, then load the available models.");
+    }
+    const candidate: NodeJS.ProcessEnv = {
+      ...this.#environment,
+      CONCLAVE_MODE: input.mode,
+      CONCLAVE_PROVIDER: input.provider,
+      CONCLAVE_MODEL: "model-discovery",
+      CONCLAVE_BASE_URL: baseUrl,
+      ...(effectiveApiKey === undefined ? {} : { CONCLAVE_API_KEY: effectiveApiKey }),
+    };
+    let config: RuntimeConfig;
+    try {
+      config = loadRuntimeConfig(candidate);
+    } catch (error) {
+      throw new ProductServiceError(
+        "invalid_runtime_configuration",
+        error instanceof Error ? error.message : "Provider configuration is invalid.",
+        "Check the provider and endpoint.",
+      );
+    }
+    const configuredBaseUrl = config.providerSelection.baseUrl;
+    if (configuredBaseUrl === undefined) {
+      throw new ProductServiceError("provider_models_unavailable", "This provider does not expose a configured models endpoint.", "Enter an explicit provider endpoint.");
+    }
+    const endpoint = new URL("models", configuredBaseUrl.endsWith("/") ? configuredBaseUrl : `${configuredBaseUrl}/`).toString();
+    let response: Response;
+    try {
+      response = await this.#fetch(endpoint, {
+        headers: effectiveApiKey === undefined ? {} : { authorization: `Bearer ${effectiveApiKey}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      throw new ProductServiceError("provider_models_unreachable", "Conclave could not reach the provider models endpoint.", "Check the endpoint and network connection.");
+    }
+    if (!response.ok) {
+      const message = response.status === 401
+        ? "The provider rejected the API key while listing models (HTTP 401)."
+        : response.status === 403
+          ? "The provider denied access to its model list (HTTP 403)."
+          : `The provider models endpoint returned HTTP ${String(response.status)}.`;
+      throw new ProductServiceError("provider_models_rejected", message, "Check the provider key, subscription, and endpoint.");
+    }
+    const text = await response.text();
+    if (text.length > 2_000_000) {
+      throw new ProductServiceError("provider_models_invalid", "The provider model list exceeds the local response limit.", "Use a provider with a bounded OpenAI-compatible models response.");
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new ProductServiceError("provider_models_invalid", "The provider returned an invalid model list.", "Check that the endpoint implements the OpenAI-compatible /models contract.");
+    }
+    const record = typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : undefined;
+    const entries = Array.isArray(record?.["data"])
+      ? record["data"]
+      : Array.isArray(record?.["models"])
+        ? record["models"]
+        : Array.isArray(payload) ? payload : [];
+    const models = [...new Set(entries.flatMap((entry) => {
+      if (typeof entry === "string") return [entry.trim()];
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+      const model = entry as Record<string, unknown>;
+      const id = typeof model["id"] === "string" ? model["id"] : typeof model["name"] === "string" ? model["name"] : undefined;
+      return id === undefined ? [] : [id.trim()];
+    }).filter((id) => id !== "" && id.length <= 256))].slice(0, 250);
+    if (models.length === 0) {
+      throw new ProductServiceError("provider_models_empty", "The provider returned no selectable model IDs.", "Check the provider account and models endpoint.");
+    }
+    return { provider: input.provider, endpoint, models };
   }
 
   public async history(id: string): Promise<readonly ReviewHistoryView[]> {
@@ -418,11 +607,17 @@ export class ConclaveProductService {
     return session;
   }
 
-  #liveReasoning(retrieval: CodeRetrievalService): ReasoningEngine {
-    const runtime = loadRuntimeConfig();
-    const reasoning = loadReasoningConfiguration(runtime);
-    const provider = createProvider(runtime, new EnvironmentCredentialSource());
-    return new ReasoningEngine({ retrieval, runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoning.assignments, DEFAULT_REASONING_LIMITS), preset: reasoning.preset });
+  async #liveReasoning(session: ProjectSession): Promise<ReasoningEngine> {
+    const runtime = loadRuntimeConfig(this.#environment);
+    const reasoning = loadReasoningConfiguration(runtime, this.#environment);
+    const provider = createProvider(runtime, new EnvironmentCredentialSource(this.#environment));
+    const changeContext = await inferReasoningChangeContext(session.root, session.retrieval);
+    return new ReasoningEngine({
+      retrieval: session.retrieval,
+      runtime: new StructuredAgentRuntime(new Map([[provider.id, provider]]), reasoning.assignments, DEFAULT_REASONING_LIMITS),
+      preset: reasoning.preset,
+      ...(changeContext === undefined ? {} : { changeContext }),
+    });
   }
 
   #error(intent: Exclude<ProductIntent, "validate">, error: unknown, action: string, retrieval: CodeRetrievalService): ProductRunView {

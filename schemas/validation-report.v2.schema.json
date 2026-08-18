@@ -4,7 +4,7 @@
   "title": "Conclave Validation Report v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "verdict", "summary", "objective", "changeSet", "findings", "claims", "impact", "metrics", "trustBoundary", "lineage", "findingLifecycle", "receipts", "challengePlan"],
+  "required": ["schemaVersion", "verdict", "summary", "objective", "changeSet", "findings", "claims", "impact", "metrics", "trustBoundary", "lineage", "findingLifecycle", "receipts", "challengePlan", "escalation"],
   "properties": {
     "schemaVersion": { "const": 2 },
     "verdict": { "enum": ["pass", "warn", "block", "inconclusive"] },
@@ -28,7 +28,8 @@
     "lineage": { "$ref": "#/$defs/lineage" },
     "findingLifecycle": { "$ref": "#/$defs/findingLifecycle" },
     "receipts": { "$ref": "#/$defs/receipts" },
-    "challengePlan": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/challenge" } }
+    "challengePlan": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/challenge" } },
+    "escalation": { "$ref": "#/$defs/escalation" }
   },
   "$defs": {
     "nonNegativeNumber": { "type": "number", "minimum": 0 },
@@ -299,6 +300,28 @@
       "properties": {
         "items": { "type": "array", "items": { "$ref": "#/$defs/receipt" } },
         "counts": { "$ref": "#/$defs/receiptCounts" }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recommended", "dimensions", "reasons"],
+      "properties": {
+        "recommended": { "type": "boolean" },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["dimension", "coverage", "reason"],
+            "properties": {
+              "dimension": { "enum": ["baseline", "security", "data-integrity", "lifecycle-state", "public-api-compatibility", "blast-radius", "performance", "ux-accessibility", "test-gap"] },
+              "coverage": { "enum": ["evidenced", "checked-clean", "unchecked"] },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "reasons": { "$ref": "#/$defs/stringArray" }
       }
     },
     "challenge": {

@@ -44,6 +44,28 @@ describe("ReasoningEngine", () => {
     expect(result.verdict.traceSummary.agentsExecuted).toEqual(["investigator"]);
   });
 
+  it("uses deterministic Git change hints for initial retrieval without changing the user question", async () => {
+    const result = await (
+      await createReasoningFixtureEngine(reasoningFixtureProvider(), 10, undefined, {
+        source: "latest-commit",
+        paths: ["src/auth/AuthProvider.ts"],
+        hunks: [],
+        reviewDimensions: [],
+        symbols: ["bootstrapSession"],
+        relatedSymbols: ["getStoredToken"],
+      })
+    ).ask("Review the current implementation.", "single-pass");
+
+    expect(result.state.question).toBe("Review the current implementation.");
+    expect(result.state.initialRetrieval.query).toContain("src/auth/AuthProvider.ts");
+    expect(result.state.initialContext.evidence[0]?.path).toBe("src/auth/AuthProvider.ts");
+    expect(result.state.changeContext?.source).toBe("latest-commit");
+    expect(result.trace[0]).toMatchObject({
+      type: "reasoning_started",
+      data: { changeContext: "latest-commit", changedPaths: 1 },
+    });
+  });
+
   it("terminates gracefully when the model-call budget is exhausted", async () => {
     const result = await (
       await createReasoningFixtureEngine(reasoningFixtureProvider(), 1)

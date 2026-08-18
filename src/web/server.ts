@@ -5,9 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import { loadConclaveEnvironment } from "../config/environment-file.js";
 import type { ChangeSource } from "../domain/validation.js";
+import type { ConfigurableProviderId, RuntimeConfigurationRequest, RuntimeModelDiscoveryRequest } from "./contracts.js";
 import { ConclaveProductService, ProductServiceError } from "./product-service.js";
 
 const BODY_LIMIT_BYTES = 64_000;
+const CONFIGURABLE_PROVIDERS = new Set<ConfigurableProviderId>(["openai", "openrouter", "anthropic", "opencode-go", "opencode-zen", "ollama", "lm-studio", "openai-compatible"]);
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -44,6 +46,94 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
 function string(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() === "") throw new ProductServiceError("invalid_request", `${label} is required.`, "Provide the missing value.");
   return value;
+}
+
+function runtimeConfiguration(payload: Record<string, unknown>): RuntimeConfigurationRequest {
+  const mode = string(payload["mode"], "Runtime mode");
+  if (mode !== "api" && mode !== "local") {
+    throw new ProductServiceError("invalid_runtime_configuration", "Runtime mode must be API or local.", "Select a supported runtime mode.");
+  }
+  const provider = string(payload["provider"], "Provider");
+  if (!CONFIGURABLE_PROVIDERS.has(provider as ConfigurableProviderId)) {
+    throw new ProductServiceError("invalid_runtime_configuration", "Provider is not configurable from this cockpit.", "Select a supported provider.");
+  }
+  const reasoningPreset = string(payload["reasoningPreset"], "Reasoning preset");
+  if (reasoningPreset !== "free-like" && reasoningPreset !== "full" && reasoningPreset !== "local") {
+    throw new ProductServiceError("invalid_runtime_configuration", "Reasoning preset is invalid.", "Select fast, full, or local reasoning.");
+  }
+  const rawApiKey = payload["apiKey"];
+  if (rawApiKey !== undefined && typeof rawApiKey !== "string") {
+    throw new ProductServiceError("invalid_runtime_configuration", "API key must be text.", "Paste a valid provider key.");
+  }
+  if (typeof rawApiKey === "string" && rawApiKey.length > 8_192) {
+    throw new ProductServiceError("invalid_runtime_configuration", "API key exceeds the local configuration limit.", "Paste a valid provider key.");
+  }
+  return {
+    mode,
+    provider: provider as ConfigurableProviderId,
+    model: string(payload["model"], "Model"),
+    baseUrl: string(payload["baseUrl"], "Provider endpoint"),
+    reasoningPreset,
+    ...(rawApiKey === undefined ? {} : { apiKey: rawApiKey }),
+  };
+}
+
+function runtimeModelDiscovery(payload: Record<string, unknown>): RuntimeModelDiscoveryRequest {
+  const mode = string(payload["mode"], "Runtime mode");
+  if (mode !== "api" && mode !== "local") {
+    throw new ProductServiceError("invalid_runtime_configuration", "Runtime mode must be API or local.", "Select a supported runtime mode.");
+  }
+  const provider = string(payload["provider"], "Provider");
+  if (!CONFIGURABLE_PROVIDERS.has(provider as ConfigurableProviderId)) {
+    throw new ProductServiceError("invalid_runtime_configuration", "Provider is not configurable from this cockpit.", "Select a supported provider.");
+  }
+  const rawApiKey = payload["apiKey"];
+  if (rawApiKey !== undefined && typeof rawApiKey !== "string") {
+    throw new ProductServiceError("invalid_runtime_configuration", "API key must be text.", "Paste a valid provider key.");
+  }
+  if (typeof rawApiKey === "string" && rawApiKey.length > 8_192) {
+    throw new ProductServiceError("invalid_runtime_configuration", "API key exceeds the local configuration limit.", "Paste a valid provider key.");
+  }
+  return {
+    mode,
+    provider: provider as ConfigurableProviderId,
+    baseUrl: string(payload["baseUrl"], "Provider endpoint"),
+    ...(rawApiKey === undefined ? {} : { apiKey: rawApiKey }),
+  };
+}
+
+function assertLocalBrowserOrigin(request: IncomingMessage): void {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  try {
+    if (origin === undefined || host === undefined) throw new Error("missing origin");
+    const parsedOrigin = new URL(origin);
+    const parsedHost = new URL(`http://${host}`);
+    const loopback = new Set(["127.0.0.1", "[::1]", "localhost"]);
+    if (parsedOrigin.protocol !== "http:" || parsedOrigin.host !== parsedHost.host || !loopback.has(parsedOrigin.hostname)) {
+      throw new Error("untrusted origin");
+    }
+  } catch {
+    throw new ProductServiceError("untrusted_origin", "Runtime settings can only be changed from this local Conclave page.", "Open Settings from the loopback cockpit and try again.");
+  }
+}
+
+/**
+ * Every mutating route is guarded, not only the runtime settings. A cross-site POST with a
+ * simple content type skips the preflight, so without both checks any page open in the same
+ * browser could drive this loopback server: index a repository, spend the configured provider
+ * key, and ship repository excerpts to that provider. The response stays unreadable to the
+ * attacker, but the side effects are real.
+ */
+function assertLocalJsonPost(request: IncomingMessage): void {
+  assertLocalBrowserOrigin(request);
+  if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+    throw new ProductServiceError(
+      "invalid_content_type",
+      "This local API only accepts JSON requests.",
+      "Use the local Conclave cockpit.",
+    );
+  }
 }
 
 function changeSource(value: unknown): ChangeSource {
@@ -101,8 +191,17 @@ export function createConclaveWebServer(options: ConclaveWebServerOptions = {}) 
   const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (request.method === "POST") assertLocalJsonPost(request);
       if (url.pathname === "/api/health" && request.method === "GET") { send(response, 200, { ok: true }); return; }
       if (url.pathname === "/api/runtime" && request.method === "GET") { send(response, 200, product.runtime()); return; }
+      if (url.pathname === "/api/runtime" && request.method === "POST") {
+        send(response, 200, await product.configureRuntime(runtimeConfiguration(await body(request))));
+        return;
+      }
+      if (url.pathname === "/api/runtime/models" && request.method === "POST") {
+        send(response, 200, await product.discoverModels(runtimeModelDiscovery(await body(request))));
+        return;
+      }
       if (url.pathname === "/api/projects/demo" && request.method === "POST") { send(response, 200, await product.openDemo()); return; }
       if (url.pathname === "/api/projects/open" && request.method === "POST") {
         const payload = await body(request);

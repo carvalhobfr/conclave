@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,6 +165,48 @@ describe("RepositoryIndexer", () => {
     expect(rebuilt.stats.filesAdded).toBe(2);
     expect(rebuilt.stats.filesUnchanged).toBe(0);
     expect(rebuilt.stats.embeddingsCreated).toBe(2);
+  });
+
+  it("rebuilds instead of failing when a cached index describes a different root", async () => {
+    const root = await repositoryFixture();
+    const indexer = new RepositoryIndexer({
+      repositorySource: new LocalFolderRepository(),
+      parser: new TypeScriptCodeParser(),
+      embeddingProvider: new CountingEmbeddingProvider(),
+      indexStore: new FileSystemCodeIndexStore(),
+    });
+    await indexer.index(root);
+
+    // Reproduces a moved or renamed repository: the cache on disk still names the old path.
+    const indexPath = join(root, CODE_INDEX_DIRECTORY, CODE_INDEX_FILENAME);
+    const persisted = JSON.parse(await readFile(indexPath, "utf8")) as {
+      repository: { rootPath: string };
+    };
+    persisted.repository.rootPath = join(tmpdir(), "conclave-index-somewhere-else");
+    await writeFile(indexPath, JSON.stringify(persisted));
+
+    const rebuilt = await indexer.index(root);
+    expect(rebuilt.stats.filesAdded).toBe(2);
+    expect(rebuilt.stats.filesUnchanged).toBe(0);
+    expect(rebuilt.index.repository.rootPath).toBe(await realpath(root));
+  });
+
+  it("still refuses a cached index whose structure was tampered with", async () => {
+    const root = await repositoryFixture();
+    const indexer = new RepositoryIndexer({
+      repositorySource: new LocalFolderRepository(),
+      parser: new TypeScriptCodeParser(),
+      embeddingProvider: new CountingEmbeddingProvider(),
+      indexStore: new FileSystemCodeIndexStore(),
+    });
+    await indexer.index(root);
+
+    const indexPath = join(root, CODE_INDEX_DIRECTORY, CODE_INDEX_FILENAME);
+    const persisted = JSON.parse(await readFile(indexPath, "utf8")) as Record<string, unknown>;
+    persisted["units"] = "not a record";
+    await writeFile(indexPath, JSON.stringify(persisted));
+
+    await expect(indexer.index(root)).rejects.toThrow("Code index is corrupt or belongs to another repository");
   });
 });
 

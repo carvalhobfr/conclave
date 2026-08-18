@@ -8,7 +8,8 @@ import { App } from "./app.js";
 const project: ProjectView = {
   id: "demo:project", name: "auth-repository", path: "Demo repository · auth lifecycle", source: "demo", gitStatus: "demo", languages: ["typescript"], indexedFiles: 5, symbols: 6, graphNodes: 11, graphEdges: 22, updatedAt: "now",
 };
-const runtime: RuntimeModeView = { active: "demo", available: false, message: "Demo", roles: [] };
+const runtime: RuntimeModeView = { active: "local", available: true, provider: "ollama", model: "qwen2.5-coder:3b", baseUrl: "http://127.0.0.1:11434/v1", credentialConfigured: false, reasoningPreset: "local", message: "Local", roles: [] };
+const configuredRuntime: RuntimeModeView = { active: "api", available: true, provider: "opencode-go", model: "kimi-k2.7-code", baseUrl: "https://opencode.ai/zen/go/v1", credentialConfigured: true, credentialHint: "op••••••9x7z", reasoningPreset: "free-like", message: "API", roles: [] };
 const validation: ValidationRunView = {
   intent: "validate",
   verdict: "pass",
@@ -29,6 +30,7 @@ const validation: ValidationRunView = {
       patchBytes: 120,
     },
     findings: [],
+    escalation: { recommended: false, dimensions: [], reasons: [] },
     claims: [{
       claim: { id: "restore", statement: "bootstrapSession exists.", check: { kind: "symbol-exists", symbol: "bootstrapSession", expectation: "present" } },
       outcome: "supported",
@@ -90,11 +92,17 @@ const run: ProductRunView = {
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mockFetch(): void {
-  vi.stubGlobal("fetch", vi.fn((url: string) => {
-    const body = url === "/api/runtime" ? runtime : url === "/api/projects/demo" ? project : url === "/api/validate" ? validation : url.startsWith("/api/history") ? [] : run;
+function mockFetch(): ReturnType<typeof vi.fn> {
+  const mock = vi.fn((url: string, init?: RequestInit) => {
+    const body = url === "/api/runtime/models"
+      ? { provider: "opencode-go", endpoint: "https://opencode.ai/zen/go/v1/models", models: ["kimi-k2.7-code", "deepseek-v4-flash"] }
+      : url === "/api/runtime" && init?.method === "POST"
+      ? { saved: true, credentialUpdated: true, runtime: configuredRuntime, diagnostic: { mode: "api", provider: "opencode-go", endpoint: "https://opencode.ai/zen/go/v1", modelConfigured: true, endpointReachable: true, inferenceAvailable: true, retrievalLocal: true, externalCallsDisabled: false, message: "Bounded provider inference succeeded." } }
+      : url === "/api/runtime" ? runtime : url === "/api/projects/demo" ? project : url === "/api/validate" ? validation : url.startsWith("/api/history") ? [] : run;
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
-  }));
+  });
+  vi.stubGlobal("fetch", mock);
+  return mock;
 }
 
 describe("Conclave product UI", () => {
@@ -141,8 +149,8 @@ describe("Conclave product UI", () => {
     expect(await screen.findByText("setSession(null);")).toBeTruthy();
   });
 
-  it("keeps graph, retrieval, and server-owned provider settings reachable by keyboard-labelled controls", async () => {
-    mockFetch();
+  it("keeps graph and retrieval reachable and changes providers from labelled Settings controls", async () => {
+    const fetchMock = mockFetch();
     render(<App />);
     await screen.findByText("auth-repository");
     fireEvent.click(within(screen.getByRole("navigation", { name: "Workspace navigation" })).getByRole("button", { name: "Investigate" }));
@@ -154,6 +162,27 @@ describe("Conclave product UI", () => {
     expect(screen.getByRole("region", { name: "Graph explorer" })).toBeTruthy();
     fireEvent.click(within(screen.getByRole("navigation", { name: "Workspace navigation" })).getByRole("button", { name: /Settings/ }));
     expect(screen.getByRole("region", { name: "Provider and role configuration" })).toBeTruthy();
-    expect(screen.getByText(/Browser code never receives provider credentials/i)).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Conclave composer" })).toBeNull();
+    const navigation = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+    expect(navigation.getByRole("button", { name: /Settings/ }).getAttribute("aria-current")).toBe("page");
+    expect(navigation.getByRole("button", { name: "Review" }).getAttribute("aria-current")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "opencode-go" } });
+    expect(screen.getByLabelText<HTMLInputElement>("Model").value).toBe("");
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "test-browser-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load available models" }));
+    expect(await screen.findByRole("option", { name: "kimi-k2.7-code" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "kimi-k2.7-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and test" }));
+    expect(await screen.findByText("Saved · inference test passed")).toBeTruthy();
+    expect(screen.getAllByText("op••••••9x7z").length).toBeGreaterThan(0);
+    const configurationCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/runtime" && (init as RequestInit | undefined)?.method === "POST");
+    const request = configurationCall?.[1] as RequestInit | undefined;
+    expect(typeof request?.body).toBe("string");
+    expect(JSON.parse(request?.body as string)).toEqual(expect.objectContaining({
+      provider: "opencode-go",
+      model: "kimi-k2.7-code",
+      apiKey: "test-browser-key",
+    }));
+    expect(screen.getByLabelText<HTMLInputElement>("API key").value).toBe("");
   });
 });

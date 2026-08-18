@@ -18,6 +18,7 @@ function report(overrides: Partial<ValidationReport> = {}): ValidationReport {
     },
     findings: [],
     claims: [],
+    escalation: { recommended: false, dimensions: [], reasons: [] },
     impact: { changedSymbols: ["restoreSession"], impactedFiles: ["src/session.ts"], impactedSymbols: ["restoreSession"] },
     metrics: { filesChanged: 1, symbolsChanged: 1, impactedFiles: 1, impactedSymbols: 1, graphEdgesInspected: 1, deterministicChecks: 0, durationMs: 1 },
     trustBoundary: {

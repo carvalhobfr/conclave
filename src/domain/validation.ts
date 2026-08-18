@@ -86,7 +86,10 @@ export type ValidationFindingKind =
   | "contract-drift"
   | "receipt-invalid"
   | "receipt-stale"
-  | "receipt-failed";
+  | "receipt-failed"
+  | "unreleased-resource"
+  | "discarded-error"
+  | "inconsistent-key";
 
 export interface ValidationEvidence {
   readonly path: string;
@@ -274,6 +277,16 @@ export interface ValidationChallenge {
   readonly suggestedProbes: readonly string[];
 }
 
+export interface ValidationEscalation {
+  readonly recommended: boolean;
+  readonly dimensions: readonly {
+    readonly dimension: ValidationChallengeStrategy;
+    readonly coverage: "evidenced" | "checked-clean" | "unchecked";
+    readonly reason: string;
+  }[];
+  readonly reasons: readonly string[];
+}
+
 export interface ValidationReport {
   readonly schemaVersion: 2;
   readonly verdict: ValidationVerdict;
@@ -293,4 +306,6 @@ export interface ValidationReport {
   readonly findingLifecycle: ValidationFindingLifecycle;
   readonly receipts: ValidationReceiptSummary;
   readonly challengePlan: readonly ValidationChallenge[];
+  /** Whether a model pass can still answer something the structural layer cannot. */
+  readonly escalation: ValidationEscalation;
 }

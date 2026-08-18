@@ -145,11 +145,14 @@ describe("SuperValidator", () => {
     }));
     expect(report.lineage.reportDigest).toMatch(/^report_[a-f0-9]{64}$/u);
     expect(report.findings.every((item) => /^fingerprint_[a-f0-9]{20}$/u.test(item.fingerprint))).toBe(true);
+    // public-api-compatibility ranks below test-gap but is a defect probe, so the process
+    // signal no longer takes its slot.
     expect(report.challengePlan.map((item) => item.strategy)).toEqual([
       "baseline",
       "security",
       "test-gap",
       "data-integrity",
+      "public-api-compatibility",
     ]);
   });
 

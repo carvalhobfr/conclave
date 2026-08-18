@@ -53,6 +53,9 @@ export function createProvider(
       ? {}
       : { fetchImplementation: options.fetchImplementation }),
     allowInsecureHttp: config.mode === "local",
+    ...(config.mode === "local" || selection.provider === "opencode-go" || selection.provider === "opencode-zen"
+      ? { timeoutMs: 180_000 }
+      : {}),
     maxTokensField: config.mode === "local" ? "max_tokens" : "max_completion_tokens",
   });
 }

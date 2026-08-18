@@ -3,6 +3,10 @@ import type {
   ProductRunView,
   ProjectView,
   ReviewHistoryView,
+  RuntimeConfigurationRequest,
+  RuntimeConfigurationResult,
+  RuntimeModelDiscoveryRequest,
+  RuntimeModelsView,
   RuntimeModeView,
   ValidationRequestView,
   ValidationRunView,
@@ -32,6 +36,8 @@ function contractValue(contractText: string): unknown {
 
 export const api = {
   runtime: (): Promise<RuntimeModeView> => request("/api/runtime"),
+  configureRuntime: (configuration: RuntimeConfigurationRequest): Promise<RuntimeConfigurationResult> => request("/api/runtime", json(configuration)),
+  discoverModels: (configuration: RuntimeModelDiscoveryRequest): Promise<RuntimeModelsView> => request("/api/runtime/models", json(configuration)),
   demo: (): Promise<ProjectView> => request("/api/projects/demo", json({})),
   open: (path: string): Promise<ProjectView> => request("/api/projects/open", json({ path })),
   validate: (

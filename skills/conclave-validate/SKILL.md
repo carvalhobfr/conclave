@@ -42,8 +42,10 @@ Review needs no API key. `conclave check` is the recommended complete PR pass: i
 
    `--receipt` is repeatable. Use `--series <id>` only to assert the expected series. Use `--new-series` only for an intentional, human-visible rebaseline and never combine it with `--previous-report`.
 5. Read the complete report. Consult [references/report-schema.md](references/report-schema.md) when interpreting fields or exit codes.
-6. Present the decision in this order: verdict and summary; contract status and lineage; review progress; largest blocking or warning finding; claim outcomes; receipt status; selected challenge strategies; impacted files and symbols; evidence; next action; limitations.
-7. Provide the raw report path or exact JSON when the user asks for raw output. A `PASS` is evidence that the structural checks found no blocker, not human approval; tests, runtime checks, and the reviewer still matter.
+6. Open the changed code at every path and hunk the report cites, and read it against the objective. The report bounds *where* to look — changed files, hunk ranges, impacted symbols, and the challenge plan — but `changeSet` carries `patchBytes` rather than the patch itself, so the report alone never shows what the code now does. Conclave's deterministic layer is syntax-aware, not type-aware or semantic: it cannot see a wrong string literal, an inverted condition, a listener that is never removed, an unawaited promise, or a swallowed error. Those defects are found only by reading the lines.
+7. Report what that reading found under a heading that names it as model review, separate from Conclave's findings. State each defect with its path and line. A model-reviewed defect never changes the Conclave verdict or the exit code; it is additional evidence for the human, and it is fallible in a way the deterministic findings are not.
+8. Present the decision in this order: verdict and summary; contract status and lineage; review progress; largest blocking or warning finding; claim outcomes; receipt status; selected challenge strategies; impacted files and symbols; evidence; next action; limitations.
+9. Provide the raw report path or exact JSON when the user asks for raw output. A `PASS` is evidence that the structural checks found no blocker, not human approval; tests, runtime checks, and the reviewer still matter.
 
 When the user names two refs, use an explicit `branch` source with both base and head. Otherwise prefer `workspace`: local edits are intentional review inputs, not a reason to fail or silently omit files. The `.conclave/code-index-v2.json` cache is never the change source.
 
@@ -58,6 +60,12 @@ When the user names two refs, use an explicit `branch` source with both base and
 - Distinguish Conclave findings from any additional commentary.
 - Stop with an actionable error if the runner cannot locate Conclave, parse the report, or reconcile the report verdict with the process exit code.
 - Do not run repository scripts unless the user separately authorizes them. This workflow is read-only and deterministic by default.
+
+## Mechanical checks the deterministic layer cannot replace
+
+A type checker and a linter find defect classes that both Conclave and model review miss, and they find them cheaply and without judgement. A wrong `null` assignment surfaces in `tsc`; an unawaited promise surfaces in `@typescript-eslint/no-floating-promises`. Neither appears in a structural report.
+
+Conclave never runs them: it does not execute repository scripts. Ask the user to run the repository's own check and verify commands, then bind each result to this review with `--receipt` so the outcome is tied to the reviewed artifact rather than reported from memory. When the user declines or no such command exists, say plainly which defect classes therefore went unchecked.
 
 ## Invocation alternatives
 

@@ -13,6 +13,11 @@ function isMissingFile(error: unknown): boolean {
 export interface EnvironmentFileLoadResult {
   readonly path: string;
   readonly loadedKeys: readonly string[];
+  /**
+   * Keys the file defines more than once. The last definition silently wins, so an earlier
+   * block that still looks active is the usual cause of a provider that will not switch.
+   */
+  readonly duplicateKeys: readonly string[];
 }
 
 export interface EnvironmentFileWriteResult {
@@ -35,15 +40,20 @@ function decodeValue(value: string): string {
   return (comment === -1 ? trimmed : trimmed.slice(0, comment)).trim();
 }
 
-function entries(content: string): ReadonlyMap<string, string> {
+function entries(content: string): {
+  readonly values: ReadonlyMap<string, string>;
+  readonly duplicates: readonly string[];
+} {
   const parsed = new Map<string, string>();
+  const duplicates = new Set<string>();
   for (const line of content.split(/\r?\n/u)) {
     const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     if (!KEY_PATTERN.test(match[1])) continue;
+    if (parsed.has(match[1])) duplicates.add(match[1]);
     parsed.set(match[1], decodeValue(match[2]));
   }
-  return parsed;
+  return { values: parsed, duplicates: [...duplicates].sort() };
 }
 
 /** Loads only CONCLAVE_* values, never overwriting values supplied by the process. */
@@ -56,16 +66,17 @@ export function loadConclaveEnvironment(
   try {
     content = readFileSync(resolvedPath, "utf8");
   } catch (error) {
-    if (isMissingFile(error)) return { path: resolvedPath, loadedKeys: [] };
+    if (isMissingFile(error)) return { path: resolvedPath, loadedKeys: [], duplicateKeys: [] };
     throw error;
   }
   const loadedKeys: string[] = [];
-  for (const [key, value] of entries(content)) {
+  const { values, duplicates } = entries(content);
+  for (const [key, value] of values) {
     if (environment[key] !== undefined) continue;
     environment[key] = value;
     loadedKeys.push(key);
   }
-  return { path: resolvedPath, loadedKeys };
+  return { path: resolvedPath, loadedKeys, duplicateKeys: duplicates };
 }
 
 function ensureSafeEntry(key: string, value: string): void {

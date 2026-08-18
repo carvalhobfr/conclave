@@ -11,10 +11,27 @@ interface ChallengeCandidate extends ValidationChallenge {
   readonly priority: number;
 }
 
+/**
+ * Git's own diff header vocabulary (`index <hash>..<hash> <mode>`, `--- a/...`, `similarity
+ * index NN%`) matches several risk keywords by accident, notably "index" and "similarity"
+ * inside "similarity index". Left in, the "performance" dimension fires on the mere presence
+ * of a modified file rather than on anything the diff actually does. Only Git's own metadata
+ * lines are removed; hunk headers keep their trailing source context, and unchanged
+ * surrounding lines that unified diffs may include stay in.
+ */
+const GIT_HEADER_LINE = /^(?:diff --git |index [0-9a-f]|--- |\+\+\+ |(?:old|new) (?:file )?mode |similarity index |rename (?:from|to) |dissimilarity index |Binary files )/u;
+
+function diffContent(patch: string): string {
+  return patch
+    .split("\n")
+    .filter((line) => !GIT_HEADER_LINE.test(line))
+    .join("\n");
+}
+
 function signalText(changeSet: ChangeSet, contract: ValidationContract, units: readonly IndexedCodeUnit[]): string {
   return [
     contract.objective,
-    changeSet.patch.slice(0, 100_000),
+    diffContent(changeSet.patch.slice(0, 100_000)),
     ...changeSet.files.map((file) => file.path),
     ...units.flatMap((unit) => [unit.path, unit.symbol]),
   ].join(" ").toLowerCase();
@@ -120,9 +137,17 @@ export function createChallengePlan(
     evidenceIds: findings.slice(0, 8).map((item) => item.id),
     suggestedProbes: ["Review the highest-severity deterministic finding and its cited evidence."],
   };
-  const selected = candidates
-    .sort((left, right) => right.priority - left.priority || left.strategy.localeCompare(right.strategy))
-    .slice(0, 3)
+  // Test gaps and blast radius describe how the change was made, not a class of defect. Ranked
+  // together they outrank probes like lifecycle-state and silently take their slots, so each
+  // group keeps its own budget.
+  const processStrategies = new Set<ValidationChallengeStrategy>(["test-gap", "blast-radius"]);
+  const byPriority = (left: ChallengeCandidate, right: ChallengeCandidate): number =>
+    right.priority - left.priority || left.strategy.localeCompare(right.strategy);
+  const selected = [
+    ...candidates.filter((item) => !processStrategies.has(item.strategy)).sort(byPriority).slice(0, 3),
+    ...candidates.filter((item) => processStrategies.has(item.strategy)).sort(byPriority).slice(0, 2),
+  ]
+    .sort(byPriority)
     .map((item): ValidationChallenge => ({
       strategy: item.strategy,
       reason: item.reason,

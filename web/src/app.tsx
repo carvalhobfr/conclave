@@ -7,6 +7,8 @@ import type {
   ProductRunView,
   ProjectView,
   ReviewHistoryView,
+  RuntimeConfigurationRequest,
+  RuntimeConfigurationResult,
   RuntimeModeView,
   ValidationRequestView,
   ValidationRunView,
@@ -118,9 +120,130 @@ function HistoryPanel({ records }: { readonly records: readonly ReviewHistoryVie
   return <section className="history-panel" aria-label="Review history"><header><h2>Review history</h2><p>Local to this repository. Nothing is uploaded.</p></header>{records.map((record) => <article key={record.id}><span className={`decision-badge ${record.verdict}`}>{record.verdict}</span><div><strong>{record.title}</strong><p>{record.objective}</p><small>{new Date(record.createdAt).toLocaleString()}</small></div></article>)}</section>;
 }
 
-function ConfigurationPanel({ runtime }: { readonly runtime: RuntimeModeView | undefined }) {
+type ConfigurationProfileId = "ollama" | "lm-studio" | "opencode-go" | "opencode-zen" | "openrouter" | "custom";
+
+interface ConfigurationProfile extends RuntimeConfigurationRequest {
+  readonly id: ConfigurationProfileId;
+  readonly label: string;
+  readonly models: readonly string[];
+}
+
+const DEFAULT_CONFIGURATION_PROFILE: ConfigurationProfile = { id: "ollama", label: "Ollama · local", mode: "local", provider: "ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen2.5-coder:3b", reasoningPreset: "local", models: ["qwen2.5-coder:3b"] };
+
+const CONFIGURATION_PROFILES: readonly ConfigurationProfile[] = [
+  DEFAULT_CONFIGURATION_PROFILE,
+  { id: "lm-studio", label: "LM Studio · local", mode: "local", provider: "lm-studio", baseUrl: "http://127.0.0.1:1234/v1", model: "local-model", reasoningPreset: "local", models: [] },
+  { id: "opencode-go", label: "OpenCode Go", mode: "api", provider: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", model: "", reasoningPreset: "free-like", models: ["kimi-k2.7-code", "kimi-k2.6", "deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "glm-5.1", "minimax-m3", "minimax-m2.7", "mimo-v2.5", "mimo-v2.5-pro", "grok-4.5"] },
+  { id: "opencode-zen", label: "OpenCode Zen", mode: "api", provider: "opencode-zen", baseUrl: "https://opencode.ai/zen/v1", model: "", reasoningPreset: "free-like", models: ["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free", "nemotron-3-ultra-free", "kimi-k2.7-code", "deepseek-v4-flash", "glm-5.2", "big-pickle"] },
+  { id: "openrouter", label: "OpenRouter", mode: "api", provider: "openrouter", baseUrl: "https://openrouter.ai/api/v1", model: "", reasoningPreset: "free-like", models: [] },
+  { id: "custom", label: "Custom OpenAI-compatible", mode: "api", provider: "openai-compatible", baseUrl: "https://provider.example/v1", model: "", reasoningPreset: "free-like", models: [] },
+];
+
+function profileFor(runtime: RuntimeModeView): ConfigurationProfile {
+  return CONFIGURATION_PROFILES.find((profile) => profile.provider === runtime.provider && profile.mode === runtime.active)
+    ?? DEFAULT_CONFIGURATION_PROFILE;
+}
+
+function ConfigurationPanel({ runtime, onRuntime }: { readonly runtime: RuntimeModeView | undefined; readonly onRuntime: (runtime: RuntimeModeView) => void }) {
+  const initial = runtime === undefined ? DEFAULT_CONFIGURATION_PROFILE : profileFor(runtime);
+  const [profileId, setProfileId] = useState<ConfigurationProfileId>(initial.id);
+  const [model, setModel] = useState(runtime?.model ?? initial.model);
+  const [baseUrl, setBaseUrl] = useState(runtime?.baseUrl ?? initial.baseUrl);
+  const [reasoningPreset, setReasoningPreset] = useState<RuntimeConfigurationRequest["reasoningPreset"]>(runtime?.reasoningPreset ?? initial.reasoningPreset);
+  const [apiKey, setApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState<readonly string[]>([]);
+  const [result, setResult] = useState<RuntimeConfigurationResult>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (runtime === undefined) return;
+    const next = profileFor(runtime);
+    setProfileId(next.id);
+    setModel(runtime.model ?? next.model);
+    setBaseUrl(runtime.baseUrl ?? next.baseUrl);
+    setReasoningPreset(runtime.reasoningPreset ?? next.reasoningPreset);
+  }, [runtime]);
   if (runtime === undefined) return <Empty title="Configuration unavailable" detail="The server runtime has not responded yet." />;
-  return <section className="retrieval-panel configuration-panel" aria-label="Provider and role configuration"><h2>Provider and role configuration</h2><p className="muted">Configuration belongs to the local server. Browser code never receives provider credentials.</p><div className="provider-grid"><article className={runtime.active === "free" ? "active" : ""}><strong>Free Mode</strong><p>Hosted free access is not enabled in this local-first release.</p></article><article className={runtime.active === "api" ? "active" : ""}><strong>API Mode</strong><p>Configure an API key in the server environment; it remains unavailable to the browser.</p></article><article className={runtime.active === "local" ? "active" : ""}><strong>Local Mode</strong><p>Configure an OpenAI-compatible local endpoint in the server environment.</p></article></div><dl><div><dt>Active mode</dt><dd>{runtime.active}</dd></div><div><dt>Server configured</dt><dd>{runtime.available ? "yes" : "no"}</dd></div></dl><p className="warning">Role prompts and model settings are server-owned in Phase 5; changing them from the browser is intentionally unsupported.</p></section>;
+  const profile = CONFIGURATION_PROFILES.find((item) => item.id === profileId) ?? initial;
+  const chooseProfile = (id: ConfigurationProfileId) => {
+    const next = CONFIGURATION_PROFILES.find((item) => item.id === id) ?? DEFAULT_CONFIGURATION_PROFILE;
+    setProfileId(next.id);
+    setModel(next.model);
+    setBaseUrl(next.baseUrl);
+    setReasoningPreset(next.reasoningPreset);
+    setApiKey("");
+    setAvailableModels([]);
+    setResult(undefined);
+    setError("");
+  };
+  const discoverModels = async () => {
+    setLoadingModels(true);
+    setError("");
+    setResult(undefined);
+    try {
+      const discovered = await api.discoverModels({
+        mode: profile.mode,
+        provider: profile.provider,
+        baseUrl,
+        ...(profile.mode === "api" && apiKey !== "" ? { apiKey } : {}),
+      });
+      setAvailableModels(discovered.models);
+      if (!discovered.models.includes(model)) setModel("");
+    } catch (discoveryError) {
+      setError(discoveryError instanceof Error ? discoveryError.message : "Could not load provider models.");
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    setResult(undefined);
+    try {
+      const next = await api.configureRuntime({
+        mode: profile.mode,
+        provider: profile.provider,
+        model,
+        baseUrl,
+        reasoningPreset,
+        ...(profile.mode === "api" && apiKey !== "" ? { apiKey } : {}),
+      });
+      setApiKey("");
+      setResult(next);
+      onRuntime(next.runtime);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save provider settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <section className="retrieval-panel configuration-panel" aria-label="Provider and role configuration">
+    <header><div><span className="decision-kicker">Local server settings</span><h2>Provider and model</h2></div><span className={`runtime-state ${runtime.available ? "ready" : "unavailable"}`}>{runtime.available ? "CONFIGURED" : "NEEDS SETUP"}</span></header>
+    <p className="muted">Choose a provider here. Save and test updates the running cockpit immediately and writes the configuration to the local ignored <code>.env</code>.</p>
+    <form className="configuration-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <label htmlFor="provider-profile">Provider</label>
+      <select id="provider-profile" value={profileId} onChange={(event) => chooseProfile(event.target.value as ConfigurationProfileId)}>{CONFIGURATION_PROFILES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+      <label htmlFor="provider-model">Model</label>
+      <div className="model-field">{availableModels.length > 0
+        ? <select id="provider-model" value={model} onChange={(event) => setModel(event.target.value)}><option value="">Choose an available model</option>{availableModels.map((item) => <option value={item} key={item}>{item}</option>)}</select>
+        : <input id="provider-model" list="provider-models" value={model} onChange={(event) => setModel(event.target.value)} placeholder="Load models or enter an ID" autoComplete="off" />}
+        <button type="button" onClick={() => void discoverModels()} disabled={loadingModels}>{loadingModels ? "Loading…" : "Load available models"}</button></div>
+      <datalist id="provider-models">{profile.models.map((item) => <option value={item} key={item} />)}</datalist>
+      <label htmlFor="provider-endpoint">Endpoint</label>
+      <input id="provider-endpoint" type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} autoComplete="off" />
+      <label htmlFor="reasoning-preset">Reasoning</label>
+      <select id="reasoning-preset" value={reasoningPreset} onChange={(event) => setReasoningPreset(event.target.value as RuntimeConfigurationRequest["reasoningPreset"])} disabled={profile.mode === "local"}>
+        {profile.mode === "local" ? <option value="local">Local bounded route</option> : <><option value="free-like">Fast · investigator + judge</option><option value="full">Full · all five roles</option></>}
+      </select>
+      {profile.mode === "api" && <><label htmlFor="provider-api-key">API key</label><div className="secret-field"><input id="provider-api-key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={runtime.credentialConfigured ? "Leave blank to keep current key" : "Paste provider key"} autoComplete="off" spellCheck={false} /><small>{runtime.credentialHint === undefined ? "The server never returns the complete value." : <>Current key: <code>{runtime.credentialHint}</code>. Only this masked hint is returned.</>}</small></div></>}
+      <button type="submit" className="run-button" disabled={saving}>{saving ? "Saving and testing…" : "Save and test"}</button>
+    </form>
+    <p className="configuration-security">The key is sent over this loopback connection and stored in the local <code>.env</code> with owner-only permissions. Runtime responses include only its masked first 2 and last 4 characters.</p>
+    {error !== "" && <div className="configuration-result failed" role="alert"><strong>Not saved</strong><span>{error}</span></div>}
+    {result !== undefined && <div className={`configuration-result ${result.diagnostic.inferenceAvailable ? "passed" : "failed"}`} role="status"><strong>{result.diagnostic.inferenceAvailable ? "Saved · inference test passed" : "Saved · inference test failed"}</strong><span>{result.diagnostic.message}</span><small>{result.diagnostic.provider} · {result.runtime.model} · {result.diagnostic.endpoint}</small></div>}
+    <dl><div><dt>Active mode</dt><dd>{runtime.active}</dd></div><div><dt>Provider</dt><dd>{runtime.provider ?? "not configured"}</dd></div><div><dt>Model</dt><dd>{runtime.model ?? "not configured"}</dd></div><div><dt>Credential</dt><dd>{runtime.active === "local" ? "not required" : runtime.credentialConfigured ? runtime.credentialHint ?? "configured" : "missing"}</dd></div></dl>
+  </section>;
 }
 
 export function App() {
@@ -186,16 +309,17 @@ export function App() {
   };
   const explore = async (symbol: string) => { if (project === undefined) return; try { const next = await api.graph(project.id, symbol); setRun((current) => current === undefined ? current : { ...current, graph: next }); setTab("graph"); } catch (error) { setNotice(error instanceof Error ? error.message : "Graph lookup failed."); } };
   const showResults = tab !== "settings" && run !== undefined;
+  const workspaceNavigationActive = tab !== "settings" && tab !== "history";
 
   return <main className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="mark">C</span><div><strong>Conclave</strong><small>Your PR review companion</small></div></div>
       <nav aria-label="Workspace navigation">
-        <button className={intent === "validate" ? "nav-active" : ""} onClick={() => setActiveIntent("validate")}>Review</button>
-        <button onClick={() => setActiveIntent("ask")}>Ask</button>
-        <button onClick={() => setActiveIntent("investigate")}>Investigate</button>
-        <button onClick={() => setTab("history")}>History</button>
-        <button onClick={() => setTab("settings")}>Settings <small>local</small></button>
+        <button className={workspaceNavigationActive && intent === "validate" ? "nav-active" : ""} aria-current={workspaceNavigationActive && intent === "validate" ? "page" : undefined} onClick={() => setActiveIntent("validate")}>Review</button>
+        <button className={workspaceNavigationActive && intent === "ask" ? "nav-active" : ""} aria-current={workspaceNavigationActive && intent === "ask" ? "page" : undefined} onClick={() => setActiveIntent("ask")}>Ask</button>
+        <button className={workspaceNavigationActive && intent === "investigate" ? "nav-active" : ""} aria-current={workspaceNavigationActive && intent === "investigate" ? "page" : undefined} onClick={() => setActiveIntent("investigate")}>Investigate</button>
+        <button className={tab === "history" ? "nav-active" : ""} aria-current={tab === "history" ? "page" : undefined} onClick={() => setTab("history")}>History</button>
+        <button className={tab === "settings" ? "nav-active" : ""} aria-current={tab === "settings" ? "page" : undefined} onClick={() => setTab("settings")}>Settings <small>local</small></button>
       </nav>
       <section className="repo-picker">
         <h2>Repository</h2>
@@ -209,6 +333,7 @@ export function App() {
       <header className="topbar"><div>{project === undefined ? <span>Opening project…</span> : <><strong>{project.name}</strong><span>{project.path}</span></>}</div><div className="mode-badge">{runtime?.active === "local" ? "LOCAL MODEL" : runtime?.available ? "REASONING READY" : "REVIEW READY"}</div></header>
       {notice !== "" && <div className="notice" role="status">{notice}</div>}
       {busy && <div className="review-progress" role="progressbar" aria-label="Conclave is analyzing the repository"><span /></div>}
+      {tab !== "settings" && tab !== "history" && <>
       <section className="composer" aria-label="Conclave composer">
         <div className="intent-switch"><IntentButton intent="validate" active={intent === "validate"} onSelect={setActiveIntent} /><IntentButton intent="ask" active={intent === "ask"} onSelect={setActiveIntent} /><IntentButton intent="investigate" active={intent === "investigate"} onSelect={setActiveIntent} /></div>
         <div className="composer-title"><h1>{modeCopy}</h1><p>{intent === "validate" ? "Compare the real Git change, follow affected code, and prepare it for human review." : "Explore the repository with bounded evidence. These optional modes may use your configured provider."}</p></div>
@@ -218,7 +343,8 @@ export function App() {
         <button type="button" className="run-button" onClick={() => void submit()} disabled={busy || project === undefined}>{busy ? "Reviewing…" : intent === "validate" ? "Review change" : `Run ${intent}`}</button>
       </section>
       <section className="project-stats">{project !== undefined && <><span>{project.indexedFiles} files indexed</span><span>{project.symbols} functions, classes, and code units</span><span>{project.graphEdges} code relationships</span></>}</section>
-      {tab === "settings" ? <ConfigurationPanel runtime={runtime} /> : tab === "history" ? <HistoryPanel records={history} /> : intent === "validate" ? (validationRun === undefined ? <Empty title="From code change to a safer PR" detail="Choose the change, confirm its objective, and let Conclave collect the context a reviewer or coding agent needs next." /> : <ValidationWorkspace result={validationRun} tab={tab} onSelect={setTab} />) : !showResults ? <Empty title="Ask the repository" detail="Open a repository, then ask a focused question or investigate a suspected behavior." /> : <><div className="result-tabs" role="tablist" aria-label="Result views"><button role="tab" aria-selected={tab === "verdict"} onClick={() => setTab("verdict")}>Verdict</button><button role="tab" aria-selected={tab === "evidence"} onClick={() => setTab("evidence")}>Evidence</button><button role="tab" aria-selected={tab === "graph"} onClick={() => setTab("graph")}>Graph</button><button role="tab" aria-selected={tab === "retrieval"} onClick={() => setTab("retrieval")}>Retrieval</button></div>{run.error !== undefined ? <section className="error-card"><span>Error · {run.error.code}</span><h2>{run.title}</h2><p>{run.error.message}</p><p>{run.error.action}</p></section> : tab === "verdict" ? <section className="verdict"><header><span className={`verdict-status ${run.status}`}>{statusLabel(run.status)}</span><h2>{run.title}</h2></header><p className="answer">{run.answer}</p><Claims run={run} onEvidence={(id) => { setSelectedEvidence(id); setTab("evidence"); }} /><section className="trace"><h3>Bounded role route</h3>{run.trace.map((item) => <div key={item.role}><strong>{item.role}</strong><span>{item.status === "ran" ? "✓ ran" : "○ skipped"}</span><small>{item.reason}</small></div>)}</section><section className="metrics">{run.metrics.map((metric) => <div key={metric.label}><strong>{metric.value}</strong><span>{metric.label}</span></div>)}</section></section> : tab === "evidence" ? <EvidencePanel evidence={run.evidence} selected={selectedEvidence} onSelect={setSelectedEvidence} /> : tab === "graph" ? <GraphPanel graph={run.graph} onSearch={(value) => void explore(value)} /> : <RetrievalPanel run={run} />}</>}
+      </>}
+      {tab === "settings" ? <ConfigurationPanel runtime={runtime} onRuntime={setRuntime} /> : tab === "history" ? <HistoryPanel records={history} /> : intent === "validate" ? (validationRun === undefined ? <Empty title="From code change to a safer PR" detail="Choose the change, confirm its objective, and let Conclave collect the context a reviewer or coding agent needs next." /> : <ValidationWorkspace result={validationRun} tab={tab} onSelect={setTab} />) : !showResults ? <Empty title="Ask the repository" detail="Open a repository, then ask a focused question or investigate a suspected behavior." /> : <><div className="result-tabs" role="tablist" aria-label="Result views"><button role="tab" aria-selected={tab === "verdict"} onClick={() => setTab("verdict")}>Verdict</button><button role="tab" aria-selected={tab === "evidence"} onClick={() => setTab("evidence")}>Evidence</button><button role="tab" aria-selected={tab === "graph"} onClick={() => setTab("graph")}>Graph</button><button role="tab" aria-selected={tab === "retrieval"} onClick={() => setTab("retrieval")}>Retrieval</button></div>{run.error !== undefined ? <section className="error-card"><span>Error · {run.error.code}</span><h2>{run.title}</h2><p>{run.error.message}</p><p>{run.error.action}</p></section> : tab === "verdict" ? <section className="verdict"><header><span className={`verdict-status ${run.status}`}>{statusLabel(run.status)}</span><h2>{run.title}</h2></header><p className="answer">{run.answer}</p><Claims run={run} onEvidence={(id) => { setSelectedEvidence(id); setTab("evidence"); }} /><section className="trace"><h3>Bounded role route</h3>{run.trace.map((item) => <div key={item.role}><strong>{item.role}</strong><span>{item.status === "ran" ? "✓ ran" : "○ skipped"}</span><small>{item.reason}</small></div>)}</section><section className="metrics">{run.metrics.map((metric) => <div key={metric.label}><strong>{metric.value}</strong><span>{metric.label}</span></div>)}</section></section> : tab === "evidence" ? <EvidencePanel evidence={run.evidence} selected={selectedEvidence} onSelect={setSelectedEvidence} /> : tab === "graph" ? <GraphPanel graph={run.graph} onSearch={(value) => void explore(value)} /> : <RetrievalPanel run={run} />}</>}
     </section>
   </main>;
 }

@@ -59,6 +59,12 @@ function validatePersistedIndex(value: unknown, canonicalRoot: string): Reposito
     throw new UnsupportedCodeIndexSchemaError();
   }
   const repository = value["repository"];
+  // A cache describing another root is stale, not tampered with: moving or renaming the
+  // repository directory produces one. It is discarded and rebuilt like an outdated schema,
+  // rather than failing every command until the user deletes the cache by hand.
+  if (isRecord(repository) && typeof repository["rootPath"] === "string" && repository["rootPath"] !== canonicalRoot) {
+    throw new UnsupportedCodeIndexSchemaError();
+  }
   const files = value["files"];
   const units = value["units"];
   const embedding = value["embedding"];

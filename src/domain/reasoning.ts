@@ -7,10 +7,30 @@ export type AgentRole = "investigator" | "skeptic" | "architect" | "verifier" | 
 
 export type ReasoningPreset = "free-like" | "full" | "local";
 
+export type ReasoningChangeContextSource = "workspace" | "working" | "latest-commit";
+
+/** Deterministic Git hints used only to seed repository retrieval, never as model instructions. */
+/** A bounded slice of the unified diff, so agents can see what changed and not only where. */
+export interface ReasoningChangeHunk {
+  readonly path: string;
+  readonly patch: string;
+}
+
+export interface ReasoningChangeContext {
+  readonly source: ReasoningChangeContextSource;
+  readonly paths: readonly string[];
+  readonly symbols: readonly string[];
+  readonly relatedSymbols: readonly string[];
+  readonly hunks: readonly ReasoningChangeHunk[];
+  /** Deterministic review dimensions selected from the diff, not defect descriptions. */
+  readonly reviewDimensions: readonly string[];
+}
+
 export interface AgentAssignment {
   readonly role: AgentRole;
   readonly providerId: string;
   readonly modelId: string;
+  readonly fallbackModelId?: string;
 }
 
 export type ClaimStatus = "proposed" | "challenged" | "supported" | "rejected" | "uncertain";
@@ -133,7 +153,7 @@ export const DEFAULT_REASONING_LIMITS: ReasoningLimits = {
   maxApproximateInputTokens: 18_000,
   maxRepeatedRequestCount: 1,
   structuredOutputRepairAttempts: 1,
-  maxOutputTokensPerCall: 1_200,
+  maxOutputTokensPerCall: 4_000,
 };
 
 export type ReasoningTraceEventType =
@@ -143,6 +163,7 @@ export type ReasoningTraceEventType =
   | "agent_started"
   | "agent_completed"
   | "agent_output_repair_requested"
+  | "agent_output_sanitized"
   | "claim_proposed"
   | "claim_challenged"
   | "retrieval_requested"
@@ -213,6 +234,7 @@ export interface Verdict {
 
 export interface ReasoningCaseState {
   readonly question: string;
+  readonly changeContext?: ReasoningChangeContext;
   readonly iteration: number;
   readonly initialRetrieval: PlannedRetrieval;
   readonly initialContext: ContextBundle;

@@ -108,8 +108,12 @@ function mentionedSymbols(index: RepositoryCodeIndex, query: string): readonly s
 
 function mentionedPaths(index: RepositoryCodeIndex, query: string): readonly string[] {
   return Object.keys(index.files)
-    .filter((path) => query.includes(path))
-    .sort((left, right) => left.localeCompare(right));
+    .flatMap((path) => {
+      const position = query.indexOf(path);
+      return position < 0 ? [] : [{ path, position }];
+    })
+    .sort((left, right) => left.position - right.position || left.path.localeCompare(right.path))
+    .map((entry) => entry.path);
 }
 
 function quotedText(query: string): string | undefined {
@@ -183,10 +187,9 @@ export class RetrievalPlanner {
     }
 
     if (paths.length > 0) {
-      const path = paths[0];
-      if (path !== undefined) {
-        operations.push(operation("exact-path", "executed", `exact indexed path detected: ${path}`, paths.length));
-        reasons.push(`exact indexed path detected: ${path}`);
+      operations.push(operation("exact-path", "executed", `exact indexed paths detected: ${paths.join(", ")}`, paths.length));
+      reasons.push(`exact indexed paths detected: ${paths.join(", ")}`);
+      for (const path of paths) {
         const fileEvidence = this.#reader.findSymbolsInFile(path);
         if (fileEvidence.length === 0) {
           deterministicResults.push(

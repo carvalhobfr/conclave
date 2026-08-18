@@ -3,6 +3,7 @@ export type ProviderId =
   | "openrouter"
   | "anthropic"
   | "gemini"
+  | "opencode-go"
   | "opencode-zen"
   | "ollama"
   | "lm-studio"
@@ -22,6 +23,7 @@ export interface GenerateRequest {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly responseFormat?: "text" | "json";
+  readonly responseSchema?: Readonly<Record<string, unknown>>;
 }
 
 export interface TokenUsage {

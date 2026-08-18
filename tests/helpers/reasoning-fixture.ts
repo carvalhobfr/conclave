@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { TypeScriptCodeParser } from "../../src/code-intelligence/typescript-parser.js";
 import type { GenerateRequest, GenerateResponse } from "../../src/domain/provider.js";
-import type { AgentRole } from "../../src/domain/reasoning.js";
+import type { AgentRole, ReasoningChangeContext } from "../../src/domain/reasoning.js";
 import { DEFAULT_REASONING_LIMITS } from "../../src/domain/reasoning.js";
 import { LocalHashEmbeddingProvider } from "../../src/embeddings/local-hash-embedding.js";
 import { InMemoryCodeIndexStore } from "../../src/indexing/in-memory-index-store.js";
@@ -137,6 +137,7 @@ export async function createReasoningFixtureEngine(
   provider = reasoningFixtureProvider(),
   maxAgentCalls = 10,
   fixtureRoot = reasoningFixturePath,
+  changeContext?: ReasoningChangeContext,
 ): Promise<ReasoningEngine> {
   const embedding = new LocalHashEmbeddingProvider();
   const indexed = await new RepositoryIndexer({
@@ -156,5 +157,6 @@ export async function createReasoningFixtureEngine(
     ),
     preset: "full",
     limits,
+    ...(changeContext === undefined ? {} : { changeContext }),
   });
 }

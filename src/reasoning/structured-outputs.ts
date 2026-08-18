@@ -45,6 +45,7 @@ export interface ArchitectOutput {
     readonly claimId?: string;
     readonly request: RetrievalRequest;
   }[];
+  readonly discardedItems: number;
 }
 
 export interface VerifierDecisionOutput {
@@ -292,19 +293,47 @@ export function parseSkepticOutput(raw: string, claimIds: ReadonlySet<string>): 
 export function parseArchitectOutput(raw: string, claimIds: ReadonlySet<string>): ArchitectOutput {
   const parsed = parseObject(raw, "Architect");
   assertKeys(parsed, ["summary", "challenges", "retrievalRequests"], "Architect output");
-  const retrievalRequests = array(parsed["retrievalRequests"], "retrievalRequests", 10).map((value) => {
-    if (!isRecord(value)) throw new StructuredOutputError("Architect retrieval request must be an object");
-    assertKeys(value, ["claimId", "request"], "Architect retrieval request");
-    const claimId = value["claimId"] === undefined ? undefined : text(value["claimId"], "Architect claimId", 200);
-    if (claimId !== undefined && !claimIds.has(claimId)) {
-      throw new StructuredOutputError(`Architect request references unknown claim: ${claimId}`);
+  let discardedItems = 0;
+  const retrievalRequests = array(parsed["retrievalRequests"], "retrievalRequests", 10).flatMap((value) => {
+    if (!isRecord(value)) {
+      discardedItems += 1;
+      return [];
     }
-    return { ...(claimId === undefined ? {} : { claimId }), request: parseRetrievalRequest(value["request"]) };
+    try {
+      const claimId = value["claimId"] === undefined ? undefined : text(value["claimId"], "Architect claimId", 200);
+      if (claimId !== undefined && !claimIds.has(claimId)) {
+        throw new StructuredOutputError(`Architect request references unknown claim: ${claimId}`);
+      }
+      return [{ ...(claimId === undefined ? {} : { claimId }), request: parseRetrievalRequest(value["request"]) }];
+    } catch (error) {
+      if (!(error instanceof StructuredOutputError)) throw error;
+      discardedItems += 1;
+      return [];
+    }
+  });
+  const challenges = array(parsed["challenges"], "challenges", 20).flatMap((value) => {
+    if (!isRecord(value)) {
+      discardedItems += 1;
+      return [];
+    }
+    try {
+      return [parseChallenge({
+        claimId: value["claimId"],
+        type: value["type"],
+        explanation: value["explanation"],
+        retrievalRequests: value["retrievalRequests"],
+      }, claimIds)];
+    } catch (error) {
+      if (!(error instanceof StructuredOutputError)) throw error;
+      discardedItems += 1;
+      return [];
+    }
   });
   return {
     summary: text(parsed["summary"], "Architect summary"),
-    challenges: array(parsed["challenges"], "challenges", 20).map((value) => parseChallenge(value, claimIds)),
+    challenges,
     retrievalRequests,
+    discardedItems,
   };
 }
 

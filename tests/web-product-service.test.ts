@@ -1,7 +1,11 @@
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { RuntimeConfig } from "../src/domain/execution-mode.js";
+import type { ProviderDiagnostics } from "../src/providers/provider-diagnostics.js";
 import { ConclaveProductService } from "../src/web/product-service.js";
 
 const demoRoot = resolve("demo/auth-repository");
@@ -36,5 +40,98 @@ describe("ConclaveProductService", () => {
 
   it("refuses local paths outside the server configured root", async () => {
     await expect(service().openLocal(resolve("."))).rejects.toMatchObject({ code: "repository_denied" });
+  });
+
+  it("persists a selected OpenCode Go runtime, updates every role, and returns only safe diagnostics", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conclave-web-runtime-"));
+    const environment: NodeJS.ProcessEnv = {
+      CONCLAVE_MODE: "local",
+      CONCLAVE_PROVIDER: "ollama",
+      CONCLAVE_MODEL: "qwen2.5-coder:3b",
+      CONCLAVE_BASE_URL: "http://127.0.0.1:11434/v1",
+      CONCLAVE_REASONING_PRESET: "local",
+    };
+    const diagnose = vi.fn((config: RuntimeConfig): Promise<ProviderDiagnostics> => Promise.resolve({
+      mode: config.mode,
+      provider: config.providerSelection.provider,
+      endpoint: config.providerSelection.baseUrl,
+      modelConfigured: true,
+      endpointReachable: true,
+      inferenceAvailable: true,
+      retrievalLocal: true as const,
+      externalCallsDisabled: false,
+      message: "Bounded provider inference succeeded.",
+    }));
+    try {
+      const product = new ConclaveProductService({
+        environment,
+        environmentPath: join(root, ".env"),
+        diagnose,
+      });
+      const result = await product.configureRuntime({
+        mode: "api",
+        provider: "opencode-go",
+        model: "kimi-k2.7-code",
+        baseUrl: "https://opencode.ai/zen/go/v1",
+        reasoningPreset: "free-like",
+        apiKey: "op-test-go-key-9x7z",
+      });
+
+      expect(result).toMatchObject({
+        saved: true,
+        credentialUpdated: true,
+        runtime: {
+          active: "api",
+          provider: "opencode-go",
+          model: "kimi-k2.7-code",
+          credentialConfigured: true,
+          credentialHint: "op••••••9x7z",
+        },
+        diagnostic: { inferenceAvailable: true },
+      });
+      expect(result.runtime.roles.every((role) => role.provider === "opencode-go" && role.model === "kimi-k2.7-code")).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("op-test-go-key-9x7z");
+      expect(environment["CONCLAVE_API_KEY"]).toBe("op-test-go-key-9x7z");
+      const contents = await readFile(join(root, ".env"), "utf8");
+      expect(contents).toContain('CONCLAVE_PROVIDER="opencode-go"');
+      expect(contents).toContain('CONCLAVE_MODEL="kimi-k2.7-code"');
+      expect(diagnose).toHaveBeenCalledOnce();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers selectable models without returning the provider credential", async () => {
+    const environment: NodeJS.ProcessEnv = {
+      CONCLAVE_MODE: "api",
+      CONCLAVE_PROVIDER: "opencode-go",
+      CONCLAVE_MODEL: "kimi-k2.7-code",
+      CONCLAVE_BASE_URL: "https://opencode.ai/zen/go/v1",
+      CONCLAVE_API_KEY: "test-model-list-key",
+    };
+    const product = new ConclaveProductService({
+      environment,
+      fetchImplementation: (input, init) => {
+        const endpoint = input instanceof URL ? input.toString() : input instanceof Request ? input.url : input;
+        expect(endpoint).toBe("https://opencode.ai/zen/go/v1/models");
+        expect(init?.headers).toEqual({ authorization: "Bearer test-model-list-key" });
+        return Promise.resolve(new Response(JSON.stringify({
+          data: [{ id: "kimi-k2.7-code" }, { id: "deepseek-v4-flash" }, { id: "kimi-k2.7-code" }],
+        }), { status: 200 }));
+      },
+    });
+
+    const result = await product.discoverModels({
+      mode: "api",
+      provider: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+    });
+
+    expect(result).toEqual({
+      provider: "opencode-go",
+      endpoint: "https://opencode.ai/zen/go/v1/models",
+      models: ["kimi-k2.7-code", "deepseek-v4-flash"],
+    });
+    expect(JSON.stringify(result)).not.toContain("test-model-list-key");
   });
 });

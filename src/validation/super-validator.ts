@@ -21,7 +21,9 @@ import type {
   EvidenceReceiptInput,
 } from "../domain/validation.js";
 import { createChallengePlan } from "./challenge-router.js";
+import { assessEscalation } from "./escalation.js";
 import { evaluateEvidenceReceipts } from "./evidence-receipts.js";
+import { findSourceDefects } from "./source-defects.js";
 import {
   createFindingLifecycle,
   createValidationLineage,
@@ -368,6 +370,19 @@ export class SuperValidator {
       }
     }
 
+    // Text-visible defect classes the graph cannot express. These cost no model call, so the
+    // free review path reports them too.
+    for (const defect of findSourceDefects(index, changeSet.files)) {
+      findings.push(finding(
+        defect.kind,
+        "warning",
+        defect.title,
+        defect.detail,
+        defect.remediation,
+        [defect.evidence],
+      ));
+    }
+
     const deletedSource = changeSet.files.filter((changed) =>
       isSourceFile(changed.path) && !isTestFile(changed.path) && isDeletionOnly(changed));
     if (deletedSource.length > 0) {
@@ -609,6 +624,7 @@ export class SuperValidator {
       findingLifecycle,
       receipts,
       challengePlan,
+      escalation: assessEscalation(challengePlan, findings, claims),
     };
     return finalizeReportDigest(report);
   }

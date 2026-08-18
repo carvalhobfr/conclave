@@ -49,14 +49,15 @@ describe("portable Conclave agent skill", () => {
       readonly files: readonly string[];
     };
     const workflow = await readFile(resolve("examples/github-actions/conclave-review.yml"), "utf8");
-    expect(packageJson.version).toBe("0.7.0");
     expect(packageJson.files).toContain("docs/review-lineage.md");
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("--base \"${BASE_REF}\"");
     expect(workflow).toContain("--head \"${HEAD_REF}\"");
     expect(workflow).toContain("GITHUB_STEP_SUMMARY");
     expect(workflow).toContain("actions/upload-artifact@v4");
-    expect(workflow).toContain("--package=conclave-ai@0.7.0");
+    // The template pins the published version, so a release that forgets to move the pin
+    // would hand users a workflow installing the previous package.
+    expect(workflow).toContain(`--package=conclave-ai@${packageJson.version}`);
     expect(workflow).not.toContain("npm ci");
     expect(workflow).toContain("actions/github-script@v7");
   });

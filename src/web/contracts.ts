@@ -1,4 +1,6 @@
 import type { ChangeSource, ValidationReport } from "../domain/validation.js";
+import type { ProviderId } from "../domain/provider.js";
+import type { ProviderDiagnostics } from "../providers/provider-diagnostics.js";
 
 export type ProductIntent = "validate" | "ask" | "investigate";
 export type ProductRunStatus = "completed" | "completed-with-uncertainty" | "failed" | "blocked" | "error";
@@ -125,6 +127,41 @@ export interface RuntimeModeView {
   readonly available: boolean;
   readonly provider?: string;
   readonly model?: string;
+  readonly baseUrl?: string;
+  readonly credentialConfigured?: boolean;
+  readonly credentialHint?: string;
+  readonly reasoningPreset?: "free-like" | "full" | "local";
   readonly message: string;
   readonly roles: readonly { readonly role: string; readonly provider: string; readonly model: string }[];
+}
+
+export type ConfigurableProviderId = Exclude<ProviderId, "fake" | "gemini">;
+
+export interface RuntimeConfigurationRequest {
+  readonly mode: "api" | "local";
+  readonly provider: ConfigurableProviderId;
+  readonly model: string;
+  readonly baseUrl: string;
+  readonly reasoningPreset: "free-like" | "full" | "local";
+  readonly apiKey?: string;
+}
+
+export interface RuntimeConfigurationResult {
+  readonly saved: true;
+  readonly credentialUpdated: boolean;
+  readonly runtime: RuntimeModeView;
+  readonly diagnostic: ProviderDiagnostics;
+}
+
+export interface RuntimeModelDiscoveryRequest {
+  readonly mode: "api" | "local";
+  readonly provider: ConfigurableProviderId;
+  readonly baseUrl: string;
+  readonly apiKey?: string;
+}
+
+export interface RuntimeModelsView {
+  readonly provider: ConfigurableProviderId;
+  readonly endpoint: string;
+  readonly models: readonly string[];
 }

@@ -4,11 +4,16 @@ Todas as mudanças relevantes do Conclave são documentadas aqui. O projeto segu
 
 [English](CHANGELOG.md) · [Português (Brasil)](CHANGELOG.pt-BR.md)
 
-## [Não publicado] — planejado para 0.7.0
+## [0.8.0] — 2026-08-18
 
-Esta é a próxima versão atualmente presente no repositório. A versão mais recente publicada no npm ainda é a `0.2.8`.
+A primeira versão da linha de companion de PR a chegar ao npm. A versão publicada anteriormente é a `0.2.8`.
 
 ### Adicionado
+
+- Checagens determinísticas de defeito que não custam nenhuma chamada de modelo: recurso que o projeto nunca libera (listener, intervalo, inscrição), erro descartado por um `catch` vazio e armazenamento endereçado por literal onde o mesmo arquivo usa uma constante nomeada. Cada uma aponta a linha alterada exata.
+- `escalation` no relatório: quais dimensões de risco a camada determinística conseguiu evidenciar, quais checou e liberou, e quais não tem checagem alguma. A decisão de gastar uma chamada de modelo passa a ser ela mesma determinística.
+- Setup guiado para `opencode-go`, com perfis de modelo escolhidos por custo e confiabilidade medidos, não por ordem de fornecedor.
+- Os agentes de raciocínio recebem as próprias linhas alteradas, então a revisão enxerga o que a mudança faz e não apenas onde ela caiu.
 
 - Linhagem de review no schema v2 com digests de objetivo, contrato, diff, artefato, relatório anterior e relatório atual.
 - Gates contra mudança silenciosa do contrato, séries explícitas de rebaseline, fingerprints estáveis e acompanhamento de progresso/estagnação no ciclo de correção.
@@ -28,6 +33,9 @@ Esta é a próxima versão atualmente presente no repositório. A versão mais r
 
 ### Alterado
 
+- Os planos de desafio orçam sondas de defeito e sinais de processo em faixas separadas. Um achado de falta de teste não expulsa mais uma sonda de ciclo de vida do plano.
+- O schema v2 do relatório declara `escalation` e permite até seis desafios.
+
 - Conclave foi reposicionado como companheiro de PR read-only: fornece contexto, evidências e próximos passos, enquanto a autoridade do merge continua humana.
 - Task Mode autônomo e toda mutação pública do repositório foram removidos. Conclave aponta o problema; o desenvolvedor ou seu coding agent realiza a correção.
 - O review agora cria um snapshot novo e não depende de `.conclave/code-index-v2.json`; o índice persistente é apenas um cache opcional para search, graph, Ask e Investigate.
@@ -35,7 +43,18 @@ Esta é a próxima versão atualmente presente no repositório. A versão mais r
 - O README ficou mais curto, bilíngue, orientado a tarefas e explícito sobre review determinístico versus reasoning opcional por provider.
 - As chaves do JSON continuam estáveis em inglês independentemente do idioma da interface humana.
 
+### Corrigido
+
+- O Conclave não revisa mais o próprio diretório `.conclave/` como parte de uma mudança. O relatório guardado por uma execução entrava no conjunto de mudanças da execução seguinte e contaminava seus sinais de risco.
+- Os cabeçalhos de diff do próprio Git deixaram de contar como sinal de risco. A palavra `index` dentro de `index <hash>..<hash> <modo>` fazia a dimensão de performance disparar em quase todo arquivo modificado.
+- Um índice em cache que descreve outro caminho de repositório é reconstruído em vez de derrubar todos os comandos, que é o que acontece depois de mover ou renomear o repositório.
+- O Modo Local recusa um papel de raciocínio hospedado no momento da configuração e nomeia as variáveis a mudar, em vez de falhar no meio do pipeline com um erro de provider não registrado.
+- O `conclave config` avisa quando o arquivo de ambiente define a mesma chave mais de uma vez, caso em que a última definição vence silenciosamente.
+- A repetição de requisição ao provider classifica a falha de transporte pela causa, não pelo texto de erro do runtime, que muda entre versões do Node.
+
 ### Segurança
+
+- Toda rota local que altera estado verifica a origem da requisição e o tipo de conteúdo JSON, não apenas as rotas de configuração de runtime. Um post cross-site conseguia antes alcançar as rotas de projeto, revisão e raciocínio.
 
 - Claims de confiança dos recibos são tratados conservadoramente como autorrelatados; o Conclave nunca diz que executou um comando reportado externamente.
 - Recibos de worktree mutável precisam do digest do artefato ou do diff e não podem depender apenas do `HEAD`.

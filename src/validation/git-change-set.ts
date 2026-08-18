@@ -14,6 +14,12 @@ import type {
 const MAX_GIT_OUTPUT_BYTES = 5_000_000;
 const GIT_TIMEOUT_MS = 15_000;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/@{}+-]*$/u;
+/**
+ * Conclave writes its index and review history here. Reviewing its own output would let one
+ * run contaminate the next: the stored reports carry every risk term the router looks for.
+ */
+const ARTIFACT_DIRECTORY = ".conclave";
+const EXCLUDE_ARTIFACTS = `:(exclude,glob)${ARTIFACT_DIRECTORY}/**`;
 
 interface GitOutput {
   readonly stdout: string;
@@ -209,29 +215,29 @@ function sourceArguments(source: ChangeSource): {
   switch (source.kind) {
     case "working":
       return {
-        patch: ["diff", ...commonPatch, "HEAD", "--"],
-        names: ["diff", ...commonNames, "HEAD", "--"],
+        patch: ["diff", ...commonPatch, "HEAD", "--", EXCLUDE_ARTIFACTS],
+        names: ["diff", ...commonNames, "HEAD", "--", EXCLUDE_ARTIFACTS],
       };
     case "workspace":
       throw new Error("Workspace comparisons require a resolved merge base");
     case "staged":
       return {
-        patch: ["diff", "--cached", ...commonPatch, "--"],
-        names: ["diff", "--cached", ...commonNames, "--"],
+        patch: ["diff", "--cached", ...commonPatch, "--", EXCLUDE_ARTIFACTS],
+        names: ["diff", "--cached", ...commonNames, "--", EXCLUDE_ARTIFACTS],
       };
     case "branch": {
       const base = safeRef(source.base, "Branch");
       const head = source.head === undefined ? "HEAD" : safeRef(source.head, "Head branch");
       return {
-        patch: ["diff", ...commonPatch, base + "..." + head, "--"],
-        names: ["diff", ...commonNames, base + "..." + head, "--"],
+        patch: ["diff", ...commonPatch, base + "..." + head, "--", EXCLUDE_ARTIFACTS],
+        names: ["diff", ...commonNames, base + "..." + head, "--", EXCLUDE_ARTIFACTS],
       };
     }
     case "commit": {
       const commit = safeRef(source.commit, "Commit");
       return {
-        patch: ["show", "--format=", ...commonPatch, commit, "--"],
-        names: ["show", "--format=", ...commonNames, commit, "--"],
+        patch: ["show", "--format=", ...commonPatch, commit, "--", EXCLUDE_ARTIFACTS],
+        names: ["show", "--format=", ...commonNames, commit, "--", EXCLUDE_ARTIFACTS],
       };
     }
   }
@@ -294,8 +300,12 @@ export class GitChangeSetService {
   public async collect(repositoryRoot: string, source: ChangeSource): Promise<ChangeSet> {
     const root = resolve(repositoryRoot);
     const statusEntries = (await runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]))
-      .stdout.split("\0").filter((entry) => entry !== "");
-    const untracked = statusEntries.filter((entry) => entry.startsWith("?? "));
+      .stdout.split("\0")
+      .filter((entry) => entry !== "")
+      .filter((entry) => !entry.slice(3).startsWith(`${ARTIFACT_DIRECTORY}/`));
+    const untracked = statusEntries
+      .filter((entry) => entry.startsWith("?? "))
+      .filter((entry) => !entry.slice(3).startsWith(`${ARTIFACT_DIRECTORY}/`));
     if (source.kind === "staged" && untracked.length > 0) {
       throw new Error(
         "Untracked files are not silently excluded from this validation; stage them, add them to ignore rules, or choose a branch/commit comparison",
@@ -327,8 +337,8 @@ export class GitChangeSetService {
       ? await (async () => {
         const mergeBase = (await runGit(root, ["merge-base", safeRef(source.base, "Base"), "HEAD"])).stdout.trim();
         return {
-          patch: ["diff", "--no-ext-diff", "--no-color", "--unified=0", mergeBase, "--"],
-          names: ["diff", "--no-ext-diff", "--name-status", "-z", mergeBase, "--"],
+          patch: ["diff", "--no-ext-diff", "--no-color", "--unified=0", mergeBase, "--", EXCLUDE_ARTIFACTS],
+          names: ["diff", "--no-ext-diff", "--name-status", "-z", mergeBase, "--", EXCLUDE_ARTIFACTS],
         };
       })()
       : sourceArguments(source);

@@ -30,6 +30,14 @@ const ANSI = {
 } as const;
 
 const GUIDES_EN: Readonly<Record<GuidedProviderId, ProviderSetupGuide>> = {
+  "opencode-go": {
+    label: "OpenCode Zen (Go)",
+    summary: "One OpenAI-compatible endpoint for DeepSeek, Kimi, GLM, Qwen, and other hosted models.",
+    keyHint: "Use an inference API key created in your OpenCode account.",
+    billingHint: "Requests use that OpenCode account's credits and limits.",
+    caution: "Model behaviour varies widely here; keep the baseline profile unless you have measured an alternative.",
+    keyUrl: "https://opencode.ai/auth",
+  },
   openai: {
     label: "OpenAI Platform / Codex API",
     summary: "Direct access to GPT and Codex API models through api.openai.com.",
@@ -58,6 +66,14 @@ const GUIDES_EN: Readonly<Record<GuidedProviderId, ProviderSetupGuide>> = {
 
 const GUIDES_TRANSLATED: Readonly<Record<Exclude<InterfaceLanguage, "en">, Readonly<Record<GuidedProviderId, ProviderSetupGuide>>>> = {
   "pt-BR": {
+    "opencode-go": {
+      label: "OpenCode Zen (Go)",
+      summary: "Um endpoint compatível com OpenAI para DeepSeek, Kimi, GLM, Qwen e outros modelos hospedados.",
+      keyHint: "Use uma chave de API de inferência criada na sua conta OpenCode.",
+      billingHint: "As chamadas usam os créditos e limites dessa conta OpenCode.",
+      caution: "O comportamento varia muito entre modelos aqui; mantenha o perfil base a menos que você tenha medido uma alternativa.",
+      keyUrl: "https://opencode.ai/auth",
+    },
     openai: {
       label: "OpenAI Platform / Codex API",
       summary: "Acesso direto aos modelos GPT e Codex API por api.openai.com.",
@@ -84,6 +100,14 @@ const GUIDES_TRANSLATED: Readonly<Record<Exclude<InterfaceLanguage, "en">, Reado
     },
   },
   "es-ES": {
+    "opencode-go": {
+      label: "OpenCode Zen (Go)",
+      summary: "Un endpoint compatible con OpenAI para DeepSeek, Kimi, GLM, Qwen y otros modelos alojados.",
+      keyHint: "Usa una clave de API de inferencia creada en tu cuenta de OpenCode.",
+      billingHint: "Las solicitudes usan los créditos y límites de esa cuenta de OpenCode.",
+      caution: "El comportamiento varía mucho entre modelos aquí; mantén el perfil base salvo que hayas medido una alternativa.",
+      keyUrl: "https://opencode.ai/auth",
+    },
     openai: {
       label: "OpenAI Platform / Codex API",
       summary: "Acceso directo a los modelos GPT y Codex API mediante api.openai.com.",
@@ -121,6 +145,14 @@ const SETUP_COPY = {
     local: "Validation remains local and deterministic. Provider-backed reasoning is opt-in.",
   },
   "pt-BR": {
+    "opencode-go": {
+      label: "OpenCode Zen (Go)",
+      summary: "Um endpoint compatível com OpenAI para DeepSeek, Kimi, GLM, Qwen e outros modelos hospedados.",
+      keyHint: "Use uma chave de API de inferência criada na sua conta OpenCode.",
+      billingHint: "As chamadas usam os créditos e limites dessa conta OpenCode.",
+      caution: "O comportamento varia muito entre modelos aqui; mantenha o perfil base a menos que você tenha medido uma alternativa.",
+      keyUrl: "https://opencode.ai/auth",
+    },
     subtitle: "Setup seguro de reasoning · validação determinística continua local",
     credentialGuide: "Guia da credencial",
     key: "Chave", usage: "Uso", create: "Criar", note: "Nota",

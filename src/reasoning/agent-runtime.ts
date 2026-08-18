@@ -2,7 +2,7 @@ import type { LlmProvider, TokenUsage } from "../domain/provider.js";
 import type { AgentAssignment, AgentRole, ReasoningLimits } from "../domain/reasoning.js";
 import { approximateTokenCount } from "../retrieval/context-packer.js";
 import { StructuredOutputError } from "./structured-outputs.js";
-import { roleSystemPrompt } from "./role-prompts.js";
+import { ROLE_OUTPUT_JSON_SCHEMAS, roleSystemPrompt } from "./role-prompts.js";
 
 export interface AgentCallRecord {
   readonly role: AgentRole;
@@ -13,6 +13,7 @@ export interface AgentCallRecord {
   readonly providerUsage?: TokenUsage;
   readonly latencyMs: number;
   readonly repaired: boolean;
+  readonly failed: boolean;
 }
 
 export interface AgentExecution<T> {
@@ -73,6 +74,7 @@ export class StructuredAgentRuntime {
       throw new AgentExecutionError(`No model-call budget remains for ${role}`, role);
     }
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (calls.length >= callBudget) break;
       const systemPrompt =
         repairReason === undefined
           ? roleSystemPrompt(role)
@@ -81,31 +83,60 @@ export class StructuredAgentRuntime {
         { role: "system" as const, content: systemPrompt },
         { role: "user" as const, content: userPrompt },
       ];
-      const started = performance.now();
+      const preferredModel = repairReason === undefined || assignment.fallbackModelId === undefined
+        ? assignment.modelId
+        : assignment.fallbackModelId;
+      const alternateModel = preferredModel === assignment.modelId
+        ? assignment.fallbackModelId
+        : assignment.modelId;
+      const modelCandidates = alternateModel === undefined
+        ? [preferredModel]
+        : [preferredModel, alternateModel];
       let response;
-      try {
-        response = await provider.generate({
-          model: assignment.modelId,
-          messages,
-          maxOutputTokens: this.#limits.maxOutputTokensPerCall,
-          temperature: 0,
-          responseFormat: "json",
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown provider failure";
-        throw new AgentExecutionError(`${role} provider failed: ${message}`, role, calls);
+      let selectedModel = preferredModel;
+      let lastFailure = "unknown provider failure";
+      for (const modelId of modelCandidates) {
+        if (calls.length >= callBudget) break;
+        selectedModel = modelId;
+        const started = performance.now();
+        try {
+          response = await provider.generate({
+            model: modelId,
+            messages,
+            maxOutputTokens: this.#limits.maxOutputTokensPerCall,
+            temperature: 0,
+            responseFormat: "json",
+            responseSchema: ROLE_OUTPUT_JSON_SCHEMAS[role],
+          });
+          calls.push({
+            role,
+            providerId: assignment.providerId,
+            modelId,
+            approximateInputTokens: approximateTokenCount(Buffer.byteLength(messages.map((message) => message.content).join("\n"))),
+            approximateOutputTokens: approximateTokenCount(Buffer.byteLength(response.text)),
+            ...(response.usage === undefined ? {} : { providerUsage: response.usage }),
+            latencyMs: Math.max(0, performance.now() - started),
+            repaired: attempt > 0,
+            failed: false,
+          });
+          break;
+        } catch (error) {
+          lastFailure = error instanceof Error ? error.message : "unknown provider failure";
+          calls.push({
+            role,
+            providerId: assignment.providerId,
+            modelId,
+            approximateInputTokens: approximateTokenCount(Buffer.byteLength(messages.map((message) => message.content).join("\n"))),
+            approximateOutputTokens: 0,
+            latencyMs: Math.max(0, performance.now() - started),
+            repaired: attempt > 0,
+            failed: true,
+          });
+        }
       }
-      const record: AgentCallRecord = {
-        role,
-        providerId: assignment.providerId,
-        modelId: assignment.modelId,
-        approximateInputTokens: approximateTokenCount(Buffer.byteLength(messages.map((message) => message.content).join("\n"))),
-        approximateOutputTokens: approximateTokenCount(Buffer.byteLength(response.text)),
-        ...(response.usage === undefined ? {} : { providerUsage: response.usage }),
-        latencyMs: Math.max(0, performance.now() - started),
-        repaired: attempt > 0,
-      };
-      calls.push(record);
+      if (response === undefined) {
+        throw new AgentExecutionError(`${role} provider failed: ${lastFailure}`, role, calls);
+      }
       try {
         return { output: validate(response.text), calls };
       } catch (error) {
@@ -115,7 +146,7 @@ export class StructuredAgentRuntime {
         repairReason = error.message;
         if (attempt + 1 >= attempts) {
           throw new AgentExecutionError(
-            `${role} returned invalid structured output after ${String(attempts)} attempts: ${error.message}`,
+            `${role} returned invalid structured output from ${selectedModel} after ${String(calls.length)} calls: ${error.message}`,
             role,
             calls,
           );

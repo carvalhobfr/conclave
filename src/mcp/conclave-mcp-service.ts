@@ -112,7 +112,7 @@ export class ConclaveMcpService {
     this.#reasoning = reasoning;
   }
 
-  public static async open(options: { readonly repositoryRoot: string; readonly allowedRoot?: string; readonly embeddingProvider?: EmbeddingProvider; readonly reasoning?: Pick<ReasoningEngine, "ask">; readonly createReasoning?: (retrieval: CodeRetrievalService) => Pick<ReasoningEngine, "ask"> }): Promise<ConclaveMcpService> {
+  public static async open(options: { readonly repositoryRoot: string; readonly allowedRoot?: string; readonly embeddingProvider?: EmbeddingProvider; readonly reasoning?: Pick<ReasoningEngine, "ask">; readonly createReasoning?: (retrieval: CodeRetrievalService, repositoryRoot: string) => Pick<ReasoningEngine, "ask"> | Promise<Pick<ReasoningEngine, "ask">> }): Promise<ConclaveMcpService> {
     const root = await resolveRepositoryRoot(options.repositoryRoot);
     const allowed = resolve(options.allowedRoot ?? root);
     if (!isPathInside(allowed, root)) throw new McpInputError("MCP repository root is outside the configured allowed root");
@@ -123,7 +123,7 @@ export class ConclaveMcpService {
       retrieval,
       indexed.index.repository.id,
       root,
-      options.reasoning ?? options.createReasoning?.(retrieval),
+      options.reasoning ?? await options.createReasoning?.(retrieval, root),
     );
   }
 

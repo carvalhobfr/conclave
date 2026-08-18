@@ -13,6 +13,8 @@ describe("guided setup", () => {
     expect(providerProfiles("openai")).toHaveLength(4);
     expect(providerProfiles("openrouter")).toHaveLength(4);
     expect(providerProfiles("anthropic")).toHaveLength(4);
+    expect(providerProfiles("opencode-go")).toHaveLength(4);
+    expect(providerProfiles("opencode-go")[0]?.model).toBe("deepseek-v4-flash");
   });
 
   it("builds API-mode configuration without changing deterministic validation", () => {

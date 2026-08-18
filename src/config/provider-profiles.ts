@@ -1,6 +1,6 @@
 import type { ReasoningPreset } from "../domain/reasoning.js";
 
-export type GuidedProviderId = "openai" | "openrouter" | "anthropic";
+export type GuidedProviderId = "openai" | "openrouter" | "anthropic" | "opencode-go";
 
 export interface ProviderProfile {
   readonly id: string;
@@ -17,6 +17,12 @@ export interface ReasoningStyle {
 }
 
 const PROFILES: Readonly<Record<GuidedProviderId, readonly ProviderProfile[]>> = {
+  "opencode-go": [
+    { id: "baseline", label: "Baseline", model: "deepseek-v4-flash", description: "Recommended minimum. Completes the full reasoning pipeline at the lowest measured token cost." },
+    { id: "fast", label: "Fast", model: "gpt-5.6-luna", description: "Lowest measured latency; costs more output tokens than the baseline." },
+    { id: "balanced", label: "Balanced", model: "glm-5", description: "More verbose reasoning at roughly twice the baseline token cost." },
+    { id: "code", label: "Coding", model: "kimi-k2.7-code", description: "Deeper code analysis, but slower and prone to structured-output failures in the full pipeline." },
+  ],
   openai: [
     { id: "balanced", label: "Balanced", model: "gpt-5.6-terra", description: "Strong code reasoning with a balance of quality and cost." },
     { id: "frontier", label: "Frontier", model: "gpt-5.6-sol", description: "Maximum reasoning quality for complex repository questions." },
@@ -43,7 +49,7 @@ export const REASONING_STYLES: readonly ReasoningStyle[] = [
 ];
 
 export function isGuidedProviderId(value: string): value is GuidedProviderId {
-  return value === "openai" || value === "openrouter" || value === "anthropic";
+  return value === "openai" || value === "openrouter" || value === "anthropic" || value === "opencode-go";
 }
 
 export function providerProfiles(provider: GuidedProviderId): readonly ProviderProfile[] {

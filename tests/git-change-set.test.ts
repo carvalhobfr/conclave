@@ -133,4 +133,27 @@ describe("GitChangeSetService parsers", () => {
     await expect(service.collect(root, { kind: "branch", base: "HEAD" })).resolves.toBeDefined();
   });
 
+  it("never reviews its own index cache or history as part of the change", async () => {
+    const root = await gitFixture();
+    await mkdir(join(root, ".conclave"), { recursive: true });
+    await writeFile(join(root, ".conclave", "code-index-v2.json"), "{\"performance\":true}\n");
+    await writeFile(join(root, ".conclave", "review-history.json"), "{\"cache\":true}\n");
+
+    const changeSet = await new GitChangeSetService().collect(root, { kind: "working" });
+
+    expect(changeSet.files.map((file) => file.path)).toEqual(["src/session.ts"]);
+    expect(changeSet.patch).not.toContain(".conclave");
+  });
+
+  it("excludes a staged .conclave artifact instead of failing the staged guard on it", async () => {
+    const root = await gitFixture();
+    await runGit(root, ["add", "--", "src/session.ts"]);
+    await mkdir(join(root, ".conclave"), { recursive: true });
+    await writeFile(join(root, ".conclave", "code-index-v2.json"), "{}\n");
+
+    const changeSet = await new GitChangeSetService().collect(root, { kind: "staged" });
+
+    expect(changeSet.files.map((file) => file.path)).toEqual(["src/session.ts"]);
+  });
+
 });

@@ -1,6 +1,6 @@
 {
   "name": "conclave-ai",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Graph-aware independent validator for code changes and agent claims",
   "keywords": [
     "ai",
@@ -64,13 +64,11 @@
     "test:web": "vitest run --config vitest.web.config.ts --maxWorkers=1",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
-    "verify": "npm test && npm run test:web && npm run typecheck && npm run lint && npm run build && npm run eval && npm run eval:graph && npm run eval:release && npm run eval:reasoning && npm run eval:validation && npm run eval:skill && npm run audit",
+    "verify": "npm run typecheck && npm run lint && npm run build && npm test && npm run test:web && npm run eval && npm run eval:graph && npm run eval:release && npm run audit",
     "eval:validation": "vitest run tests/git-change-set.test.ts tests/super-validator.test.ts tests/validation-web.test.ts --maxWorkers=1"
   },
   "dependencies": {
     "ignore": "7.0.6",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
     "typescript": "6.0.3"
   },
   "devDependencies": {
@@ -81,9 +79,12 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "10.8.1",
     "globals": "17.9.0",
     "jsdom": "^30.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript-eslint": "8.66.0",
     "vite": "^8.2.1",
     "vitest": "4.1.10"

@@ -4,12 +4,16 @@ All notable changes to Conclave are documented here. The project follows [Semant
 
 [English](CHANGELOG.md) · [Português (Brasil)](CHANGELOG.pt-BR.md)
 
-## [Unreleased] — planned for 0.7.0
+## [0.8.0] — 2026-08-18
 
-This is the next release currently present in the repository. The latest version published to npm is `0.2.8`.
+The first release of the PR-companion line to reach npm. The previously published version is `0.2.8`.
 
 ### Added
 
+- Deterministic defect checks that cost no model call: a resource the project never releases (listener, interval, subscription), an error discarded by an empty catch, and a store addressed by a literal where the same file uses a named constant. Each one reports the exact changed line.
+- `escalation` in the report: which risk dimensions the deterministic layer evidenced, which it checked and cleared, and which it has no check for at all. The decision to spend a model call is itself deterministic.
+- Guided setup for `opencode-go`, with model profiles chosen from measured cost and reliability rather than vendor ordering.
+- Reasoning agents receive the changed lines themselves, so a review can see what a change does and not only where it landed.
 - Schema-v2 review lineage with objective, contract, diff, artifact, previous-report, and report digests.
 - Contract drift gates, explicit rebaseline series, stable finding fingerprints, and correction-loop progress/stagnation tracking.
 - External evidence receipts bound to the reviewed artifact plus deterministic risk-selected challenge plans.
@@ -28,6 +32,8 @@ This is the next release currently present in the repository. The latest version
 
 ### Changed
 
+- Challenge plans budget defect probes and process signals separately. A test-gap finding no longer evicts a lifecycle-state probe from the plan.
+- Report schema v2 declares `escalation` and allows up to six challenges.
 - Positioned Conclave as a read-only PR companion: it supplies context, evidence, and next actions while humans retain merge authority.
 - Removed autonomous Task Mode and all public repository-mutation behavior. Conclave points to problems; the developer or their coding agent performs corrections.
 - Review now builds a fresh snapshot and no longer depends on `.conclave/code-index-v2.json`; the persistent index is only an optional cache for search, graph, Ask, and Investigate.
@@ -35,8 +41,18 @@ This is the next release currently present in the repository. The latest version
 - The README is shorter, bilingual, task-oriented, and explicit about deterministic review versus optional provider-backed reasoning.
 - JSON field names remain stable in English regardless of the selected human-interface language.
 
+### Fixed
+
+- Conclave no longer reviews its own `.conclave/` index and history as part of a change. One run's stored report used to enter the next run's change set and contaminate its risk signals.
+- Git's own diff headers no longer count as risk signals. The word `index` inside `index <hash>..<hash> <mode>` made the performance dimension fire on nearly every modified file.
+- A cached index describing a different repository path is rebuilt instead of failing every command, which is what happens after the repository is moved or renamed.
+- Local Mode refuses a hosted reasoning role at configuration time and names the variables to change, instead of failing deep in the pipeline with an unregistered-provider error.
+- `conclave config` reports environment-file keys defined more than once, where the last definition silently wins.
+- Provider retry classifies a transport failure by its cause rather than by the runtime's error text, which differs across Node releases.
+
 ### Security
 
+- Every mutating local API route verifies the request origin and JSON content type, not only the runtime settings routes. A cross-site form post could previously reach project, review, and reasoning routes.
 - Receipt trust claims are conservatively treated as self-reported; Conclave never claims to have run an externally reported command.
 - Mutable-worktree receipts require an artifact or diff digest and cannot rely on `HEAD` alone.
 - User language preferences are stored outside the repository with owner-only file permissions.

@@ -49,6 +49,18 @@ function claim(check: Claim["check"], evidenceIds: readonly string[] = []): Clai
 }
 
 describe("bounded reasoning retrieval", () => {
+  it("preserves change-path priority and includes evidence from each named path", async () => {
+    const service = await reasoningFixture();
+    const retrieval = await service.retrieve(
+      "Review src/auth/storage.ts and src/auth/AuthProvider.tsx",
+    );
+
+    expect(retrieval.results.map((result) => result.evidence.path)).toEqual(
+      expect.arrayContaining(["src/auth/storage.ts", "src/auth/AuthProvider.tsx"]),
+    );
+    expect(retrieval.results[0]?.evidence.path).toBe("src/auth/storage.ts");
+  });
+
   it("executes graph callers and bounded paths through existing retrieval services", async () => {
     const service = await reasoningFixture();
     const executor = new FollowUpRetrievalExecutor(service, 10, 3);
