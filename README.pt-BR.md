@@ -107,7 +107,7 @@ O review é uma análise determinística de código, não uma resposta de chat.
 1. O Git fornece a comparação e o patch exatos.
 2. Parsers locais identificam arquivos e **unidades de código**: funções, métodos, classes, interfaces e módulos nomeados. A documentação antiga chamava isso de “símbolos”.
 3. Um grafo acompanha imports, exports, chamadas, referências, containers e consumidores.
-4. Checks determinísticos desafiam escopo, mudança pública sem teste alterado, erro visível ao parser, impacto fora do diff, deleções e claims opcionais.
+4. Checks determinísticos desafiam escopo, mudança pública sem teste alterado, erro visível ao parser, impacto fora do diff, deleções e claims opcionais. Defeitos visíveis no próprio texto alterado saem do mesmo jeito: recurso que a mudança adquire e o projeto nunca libera, erro jogado fora por um `catch` vazio e armazenamento endereçado por literal onde o mesmo arquivo usa uma constante nomeada.
 5. Conclave retorna `PASS`, `WARN`, `BLOCK` ou `INCONCLUSIVE`, com arquivo e linha sempre que houver evidência disponível.
 
 Nenhum código é enviado a uma LLM durante o review. Não precisa de chave de API. Isso é evidência útil, não compilador, test runner, scanner de segurança, prova de runtime nem aprovação automática. A autoridade do merge continua humana.
@@ -121,6 +121,24 @@ Nenhum código é enviado a uma LLM durante o review. Não precisa de chave de A
 | Java | Sim | Sim | Sim | Sim |
 
 Outras linguagens textuais ainda entram no diff e no controle de escopo, mas sem a mesma profundidade do grafo. Veja [ROADMAP.md](ROADMAP.md).
+
+## Quando vale gastar um modelo
+
+Um review que não custa nada não deveria entregar a decisão a um modelo por hábito. Todo relatório responde, de forma determinística e antes de qualquer chamada, se ainda sobrou algo para o modelo fazer.
+
+O Conclave já deriva do próprio diff as dimensões de risco que a mudança carrega. O campo `escalation` informa o que a camada estrutural conseguiu fazer sobre cada uma:
+
+| Cobertura | Significado |
+| --- | --- |
+| `evidenced` | Uma checagem determinística disparou aqui. A resposta já está nos achados. |
+| `checked-clean` | Existe checagem para essa classe e ela não encontrou nada. |
+| `unchecked` | Nenhuma checagem determinística cobre essa classe. |
+
+`recommended` só é verdadeiro enquanto algo continua sem resposta. Renomear um helper local não deixa nada em aberto e dispensa modelo. Mexer em uma fronteira de autorização, não: nenhuma checagem estrutural resolve intenção.
+
+```bash
+conclave check . --json | jq '.report.escalation'
+```
 
 ## Ajuda da CLI e idiomas
 
@@ -210,7 +228,7 @@ conclave init
 conclave provider-check
 ```
 
-O setup guiado aceita chaves compatíveis com OpenAI/Codex, OpenRouter — incluindo chaves do plano OpenRouter Go — e Anthropic, com perfis prontos e IDs de modelos personalizados. A entrada é escondida e salva somente no `.env` local ignorado pelo Git. O navegador nunca recebe a chave.
+O setup guiado aceita chaves compatíveis com OpenAI/Codex, OpenRouter — incluindo chaves do plano OpenRouter Go —, Anthropic e OpenCode Zen, com perfis prontos e IDs de modelos personalizados. A entrada é escondida e salva somente no `.env` local ignorado pelo Git. O navegador nunca recebe a chave.
 
 ## Atualização e diagnóstico
 

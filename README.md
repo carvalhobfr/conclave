@@ -107,7 +107,7 @@ Review is a deterministic code-analysis pipeline, not a chat completion.
 1. Git supplies the exact comparison and patch.
 2. Local parsers identify files and **code units**—named functions, methods, classes, interfaces, and modules. Older docs called these “symbols.”
 3. A relationship graph follows imports, exports, calls, references, containers, and consumers.
-4. Deterministic checks challenge scope, changed public code without changed tests, parser-visible errors, impact outside the diff, deletions, and optional completion claims.
+4. Deterministic checks challenge scope, changed public code without changed tests, parser-visible errors, impact outside the diff, deletions, and optional completion claims. Defects visible in the changed text are reported the same way: a resource the change acquires but the project never releases, an error thrown away by an empty catch, and a store addressed by a literal where the same file uses a named constant.
 5. Conclave reports `PASS`, `WARN`, `BLOCK`, or `INCONCLUSIVE`, always with traceable file and line evidence where available.
 
 No source is sent to an LLM during review. No API key is required. This is useful evidence, not a compiler, test runner, security scanner, runtime proof, or automatic approval. A human remains the merge authority.
@@ -123,6 +123,24 @@ Conclave's structural parsers currently understand:
 | Java | Yes | Yes | Yes | Yes |
 
 Other text languages still appear in Git change and scope evidence, but do not yet receive the same code-unit graph depth. See [ROADMAP.md](ROADMAP.md).
+
+## When a model is worth its cost
+
+A review that costs nothing should not hand the decision to a model out of habit. Every report answers, deterministically and before any call is made, whether a model still has something to add.
+
+Conclave already derives the risk dimensions a change carries from the diff itself. The `escalation` field reports what the structural layer managed to do about each one:
+
+| Coverage | Meaning |
+| --- | --- |
+| `evidenced` | A deterministic check fired here. The answer is already in the findings. |
+| `checked-clean` | A check covers this class and found nothing. |
+| `unchecked` | No deterministic check covers this class at all. |
+
+`recommended` is true only while something stays unanswered. Renaming a local helper leaves nothing open and needs no model. Touching an authorization boundary does, because no structural check can settle intent.
+
+```bash
+conclave check . --json | jq '.report.escalation'
+```
 
 ## CLI help and languages
 
@@ -216,7 +234,7 @@ conclave init
 conclave provider-check
 ```
 
-The guided setup supports OpenAI/Codex-compatible keys, OpenRouter—including OpenRouter Go plan keys—and Anthropic, with maintained model profiles and custom model IDs. Hidden input is stored only in the local Git-ignored `.env`. Browser code never receives it.
+The guided setup supports OpenAI/Codex-compatible keys, OpenRouter—including OpenRouter Go plan keys—Anthropic, and OpenCode Zen, with maintained model profiles and custom model IDs. Hidden input is stored only in the local Git-ignored `.env`. Browser code never receives it.
 
 ## Update and diagnose
 

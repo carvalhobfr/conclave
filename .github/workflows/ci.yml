@@ -40,7 +40,10 @@ jobs:
       # Built before the suites so the CLI end-to-end smoke test has a bundle to run.
       - run: npm run build
       - run: npm test
+      # jsdom 30 pulls undici 8, which calls worker_threads.markAsUncloneable — a Node 22 API.
+      # The product itself runs on Node 20; only this browser-environment test tooling does not.
       - run: npm run test:web
+        if: matrix.node != 20
 
   verify:
     runs-on: ubuntu-latest
