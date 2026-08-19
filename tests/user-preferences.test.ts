@@ -1,8 +1,10 @@
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { expectOwnerOnlyFile } from "./helpers/file-mode.js";
 
 import {
   languageFromEnvironment,
@@ -43,7 +45,7 @@ describe("CLI user preferences", () => {
         preferences: { schemaVersion: 1, language: "pt-BR" },
       }));
       expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ schemaVersion: 1, language: "pt-BR" });
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFile(path);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -68,9 +70,15 @@ describe("CLI user preferences", () => {
   });
 
   it("resolves the standard user configuration locations", () => {
-    expect(userPreferencesPath({ XDG_CONFIG_HOME: "/tmp/xdg" }, "/users/demo", "linux")).toBe("/tmp/xdg/conclave/config.json");
-    expect(userPreferencesPath({}, "/users/demo", "linux")).toBe("/users/demo/.config/conclave/config.json");
-    expect(userPreferencesPath({ APPDATA: "C:\\Users\\demo\\AppData" }, "C:\\Users\\demo", "win32")).toContain("Conclave/config.json");
+    // The function stores preferences on the machine it runs on, so it resolves with the host
+    // separator. Building the expectation the same way keeps the contract under test — which
+    // directory wins — instead of asserting POSIX separators on every platform.
+    expect(userPreferencesPath({ XDG_CONFIG_HOME: "/tmp/xdg" }, "/users/demo", "linux"))
+      .toBe(resolve("/tmp/xdg", "conclave", "config.json"));
+    expect(userPreferencesPath({}, "/users/demo", "linux"))
+      .toBe(["/users/demo", ".config", "conclave", "config.json"].join(sep).replace(/\//gu, sep));
+    expect(userPreferencesPath({ APPDATA: "C:\\Users\\demo\\AppData" }, "C:\\Users\\demo", "win32"))
+      .toContain(join("Conclave", "config.json"));
   });
 
   it("renders a complete localized command catalog and detailed command help", () => {

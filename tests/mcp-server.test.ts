@@ -123,5 +123,7 @@ describe("Conclave MCP", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  }, 15_000);
+    // No per-test timeout: this file is listed as process-heavy in vitest.config.ts and
+    // inherits that budget. A tighter local override silently undoes the calibration.
+  });
 });

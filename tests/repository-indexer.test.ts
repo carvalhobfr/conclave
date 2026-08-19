@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { expectOwnerOnlyFile } from "./helpers/file-mode.js";
 
 import { TypeScriptCodeParser } from "../src/code-intelligence/typescript-parser.js";
 import type {
@@ -128,7 +130,7 @@ describe("RepositoryIndexer", () => {
     const result = await indexer.index(root);
     const indexPath = join(root, CODE_INDEX_DIRECTORY, CODE_INDEX_FILENAME);
 
-    expect((await stat(indexPath)).mode & 0o777).toBe(0o600);
+    await expectOwnerOnlyFile(indexPath);
     await expect(store.load(root)).resolves.toEqual(result.index);
     expect(await readFile(indexPath, "utf8")).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
 

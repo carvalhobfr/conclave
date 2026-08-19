@@ -1,0 +1,12 @@
+# Conclave hashes source text to decide what changed and to key its index cache. A checkout
+# that rewrites line endings would produce a different contentHash for identical code, so the
+# working tree keeps LF on every platform and the index stays reproducible across them.
+* text=auto eol=lf
+
+# Binary assets must never be normalized.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

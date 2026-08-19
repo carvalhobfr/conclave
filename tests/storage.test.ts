@@ -1,8 +1,10 @@
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
+
+import { expectOwnerOnlyFile } from "./helpers/file-mode.js";
 
 import { InMemoryStore } from "../src/storage/in-memory-store.js";
 import { JsonFileStore } from "../src/storage/json-file-store.js";
@@ -38,7 +40,7 @@ describe("JsonFileStore security", () => {
     const store = new JsonFileStore(filePath);
     await store.set("settings", "mode", "local");
 
-    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    await expectOwnerOnlyFile(filePath);
     expect(() => store.set("../outside", "key", "value")).toThrow("unsupported characters");
   });
 });

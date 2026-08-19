@@ -1,8 +1,10 @@
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { expectOwnerOnlyFile } from "./helpers/file-mode.js";
 
 import { loadConclaveEnvironment, writeConclaveEnvironment } from "../src/config/environment-file.js";
 import { providerProfiles } from "../src/config/provider-profiles.js";
@@ -60,7 +62,7 @@ describe("guided setup", () => {
       expect(contents).toContain("UNRELATED=value");
       expect(contents).toContain("CONCLAVE_MODEL=\"claude-opus-5\"");
       expect(contents).not.toContain("test-key");
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFile(path);
 
       const environment: NodeJS.ProcessEnv = { CONCLAVE_PROVIDER: "openai" };
       const loaded = loadConclaveEnvironment(environment, path);
